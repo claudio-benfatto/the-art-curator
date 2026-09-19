@@ -153,22 +153,26 @@ Python 3.12+, FastAPI, SQLAlchemy 2.0 + Alembic, Postgres 16 + PostGIS + pgvecto
 
 ## Commands
 
-Not yet implemented — this is the intended surface as of P0. Update as it lands.
+Managed with `uv`. Commands not yet implemented are the intended surface; update as they land.
 
 ```bash
+uv sync                                             # create .venv from uv.lock
+uv run ruff check . && uv run ruff format --check .
+uv run python -m art_curator.cli config             # print effective settings
+
 docker compose up -d db langfuse
-alembic upgrade head
+uv run alembic upgrade head
 
-python -m art_curator.cli smoke              # traced test call, verifies cost recording
-python -m art_curator.cli sync-graf          # pull GRAF facts, snapshot events
-python -m art_curator.cli crawl --pilot      # crawl the ~20 pilot venues
-python -m art_curator.cli extract           # venue pages -> exhibitions
-python -m art_curator.cli embed             # summaries -> pgvector (P3)
-python -m art_curator.cli eval-extraction    # score against the gold set
-python -m art_curator.cli chat               # talk to the curator in the terminal
+uv run python -m art_curator.cli smoke              # traced test call, verifies cost recording
+uv run python -m art_curator.cli sync-graf          # pull GRAF facts, snapshot events
+uv run python -m art_curator.cli crawl --pilot      # crawl the ~20 pilot venues
+uv run python -m art_curator.cli extract            # venue pages -> exhibitions
+uv run python -m art_curator.cli embed              # summaries -> pgvector (P3)
+uv run python -m art_curator.cli eval-extraction    # score against the gold set
+uv run python -m art_curator.cli chat               # talk to the curator in the terminal
 
-pytest
-docker compose up -d                         # full stack incl. api + bot
+uv run pytest
+docker compose up -d                                # full stack incl. api + bot
 ```
 
 `mcp_server.py` is a dev-time MCP surface over `queries/events.py`, for interrogating the corpus from Claude Code while building the P2 gold set. It is **not** on the serving path.
