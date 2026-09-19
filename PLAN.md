@@ -1,4 +1,4 @@
-# Art Navigator — v1 Plan
+# The Art Curator — v1 Plan
 
 Scope, decisions and build order. Operational rules for working in the codebase are in [CLAUDE.md](CLAUDE.md).
 
@@ -13,7 +13,7 @@ There is no good way to answer *"I have Saturday afternoon in Barcelona, I like 
 
 The information exists, but it is scattered across 130+ venue websites and an aggregator agenda, in three languages, with no notion of who is asking. Search gives you a list; it doesn't give you a plan for an afternoon.
 
-Art Navigator ingests venue and exhibition data for Catalunya, learns a user's taste implicitly from conversation, and answers with a curated, geographically-ordered itinerary.
+The Art Curator ingests venue and exhibition data for Catalunya, learns a user's taste implicitly from conversation, and answers with a curated, geographically-ordered itinerary.
 
 **v1 is a proof of concept** — exploration, not a product. No GDPR/consent work, no public launch. The question it exists to answer: *is the curator actually any good?* Everything else is deferred until that has an answer.
 
@@ -103,13 +103,13 @@ venue websites  ───┘   (crawl +   (facts +            (capped loop      
 ### Repository layout
 
 ```
-art_navigator/
+the_art_curator/
   docker-compose.yml           # postgres+postgis, langfuse, api, bot, scheduler
   pyproject.toml
   pricing.yaml                 # per-model token prices; config, not code
   .env.example
   alembic/versions/
-  src/art_navigator/
+  src/the_art_curator/
     config.py                  # pydantic-settings; model IDs and knobs env-driven
     db/models.py, db/session.py
     llm/client.py              # instrumented Anthropic() wrapper — the only call site
@@ -322,23 +322,23 @@ P0 absorbs the cross-cutting work so every later phase inherits it.
 docker compose up -d db langfuse && alembic upgrade head
 
 # P0 — instrumentation is unavoidable and correct
-python -m art_navigator.cli smoke
+python -m the_art_curator.cli smoke
 psql -c "select model, input_tokens, cache_read_tokens, cost_usd from llm_calls;"
 # and the trace visible in the Langfuse UI
 
 # P1 — facts land, no prose columns exist
-python -m art_navigator.cli sync-graf
+python -m the_art_curator.cli sync-graf
 psql -c "select count(*) from venues where geom is not null;"   # expect ~568
 psql -c "\d graf_event_snapshots"                                # assert: no desc/summary column
 
 # P2 — extraction scored, not eyeballed
-python -m art_navigator.cli crawl --pilot
-python -m art_navigator.cli extract --batch
-python -m art_navigator.cli eval-extraction     # precision/recall per field vs gold set
+python -m the_art_curator.cli crawl --pilot
+python -m the_art_curator.cli extract --batch
+python -m the_art_curator.cli eval-extraction     # precision/recall per field vs gold set
 pytest tests/test_no_verbatim.py
 
 # P3 — the assertions that matter
-python -m art_navigator.cli chat
+python -m the_art_curator.cli chat
 #  > "I'm free Saturday afternoon near Poblenou, I like video art and installation,
 #     nothing that needs a ticket. Build me a route."
 psql -c "select avg(cache_read_tokens::float/nullif(input_tokens,0)) from llm_calls where purpose='chat';"  -- >0.8
