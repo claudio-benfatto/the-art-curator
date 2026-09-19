@@ -3,7 +3,7 @@
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
 **Status:** approved, nothing implemented. Next step is P0.
-**Last updated:** 2026-09-19 (rev. 4)
+**Last updated:** 2026-09-19 (rev. 5)
 
 ---
 
@@ -83,12 +83,16 @@ src/art_curator/
 
 ## 4. Data model
 
-| Layer | Tables |
-|---|---|
-| Facts (GRAF) | `venues` (ids, name, address, `geom`, website/instagram URL, crawl flags) · `graf_event_snapshots` (ids, venue, title, start/end, category, free, price range, URLs, first/last seen) — **no description columns** |
-| Derived (LLM) | `venue_pages` (url, status, `content_hash`, `raw_text`; **7-day TTL**) · `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, `embedding`, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) |
-| User | `users` · `profile_facts` (append-only, `superseded_by`) · `conversations` · `messages` · `interactions` · `itineraries` |
-| Telemetry | `llm_calls` (trace/span, provider, model, purpose `chat/extract/embed/judge`, tokens incl. cache, cost, latency, stop_reason) · `feedback` |
+Each table lands in the phase that first writes it — no speculative schema.
+
+| Layer | Tables | Phase |
+|---|---|---|
+| Facts (GRAF) | `venues` (ids, name, address, `geom`, website/instagram URL, crawl flags) · `graf_event_snapshots` (ids, venue, title, start/end, category, free, price range, URLs, first/last seen) — **no description columns** | P0 |
+| Derived (LLM) | `venue_pages` (url, status, `content_hash`, `raw_text`; **7-day TTL**) | P0 |
+| | `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, `embedding`, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) | P2 (`embedding` P3) |
+| User | `users` · `profile_facts` (append-only, `superseded_by`) · `conversations` · `messages` · `interactions` · `itineraries` | P3 (`itineraries` P4) |
+| Telemetry | `llm_calls` (trace/span, provider, model, purpose `chat/extract/embed/judge`, tokens incl. cache, cost, latency, stop_reason) | P0 |
+| | `feedback` | P3 |
 
 ---
 
@@ -138,7 +142,7 @@ Embeddings are noise. Start chat on Opus 5; measure whether Sonnet 5 holds the b
 
 | Phase | Deliverable | Done when |
 |---|---|---|
-| **P0** | Compose (Postgres+PostGIS+pgvector, Langfuse), schema, config, Terraform (state backend + least-privilege Bedrock IAM + GitHub OIDC role), GitHub Actions CI, instrumented Bedrock client, OTel + `llm_calls` | Smoke call to Opus 5 on Bedrock traced with correct cost; cache read verified on 2nd call |
+| **P0** | Compose (Postgres+PostGIS+pgvector, Langfuse), schema (facts, `venue_pages`, `llm_calls`), config, Terraform (state backend + least-privilege Bedrock IAM + GitHub OIDC role), GitHub Actions CI, instrumented Bedrock client, OTel + `llm_calls` | Smoke call to Opus 5 on Bedrock traced with correct cost; cache read verified on 2nd call |
 | **P1** | `sync-graf` | 568 venues with geometry, 146 URLs joined, idempotent snapshots |
 | **P2** | `crawl` + `extract` + gold-set eval + dev MCP server | Extraction scored against ~30 hand-checked pages, re-runnable |
 | **P3** | Agent loop, `/chat`, `cli chat`, feedback, **pgvector ranking** | Sensible curated answers; cache hit >80%; cost within 2× estimate; `iteration_count` recorded; semantic ranking A/B'd against filters-only |
@@ -148,6 +152,30 @@ Embeddings are noise. Start chat on Opus 5; measure whether Sonnet 5 holds the b
 | **P7** | Move to AWS (RDS/Aurora, scheduled jobs) via Terraform | `terraform apply` from clean builds the environment; app is a connection-string swap |
 
 **P3 is the real checkpoint.** If the curator isn't good over 20 venues, scaling won't fix it.
+
+### P0 breakdown
+
+**Pre-work (manual, nothing committed):** Opus 5 + Haiku 4.5 access in console · throwaway two-call script confirms Mantle auto-caching (scratchpad only — constraint 2) · Langfuse SDK/OTLP vs live docs · Bedrock list prices.
+
+```
+Python:     1 scaffold ─┬─ 2 CI baseline
+                        └─ 3 compose ─ 4 schema ─┐
+            5 pricing ───────────────────────────┼─ 6 client ─ 7 telemetry ─┐
+Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────────────────┴─ 10 smoke
+```
+
+| # | PR | Done when |
+|---|---|---|
+| 1 | Scaffold: uv, `pyproject.toml`, `src/art_curator/`, `config.py`, typer `cli.py`, ruff/pytest, `.env.example` | `ruff` clean, config test green |
+| 2 | CI baseline: ruff, pytest + Postgres service, model-client grep; SHA-pinned actions | Green; a planted client import fails the grep |
+| 3 | Compose: db image (PostGIS + pgvector, pushed to GHCR for CI) + Langfuse | Healthy; both extensions load |
+| 4 | Schema + Alembic: `llm_calls`, `venues`, `graf_event_snapshots`, `venue_pages`; schema half of `test_no_verbatim.py` | Migrates locally + CI; invariant test green |
+| 5 | `pricing.yaml` + `llm/pricing.py` (in/out/cache-write/cache-read) | Pure unit tests vs hand-computed costs |
+| 6 | `llm/client.py`: Mantle + Converse, one `llm_calls` row per call, static-prefix breakpoint helper, test stub | Stubbed tests: row per call, correct cost |
+| 7 | `obs/telemetry.py`: OTel spans, trace/span ids on `llm_calls`, Langfuse export behind a flag, **extract-purpose bodies masked** (constraint 1) | Span ids land in row; masking test green |
+| 8 | Terraform: README manual steps, S3 backend + lock, Bedrock policy scoped to model ARNs, app role | fmt/validate/plan clean; applied once |
+| 9 | GitHub OIDC: plan-only role, apply role, `plan` on `infra/` PRs, gated `apply` on `main` | PR posts plan; apply needs approval |
+| 10 | `cli smoke` + `workflow_dispatch` smoke job | P0 done-when met |
 
 ---
 
