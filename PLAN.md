@@ -109,7 +109,7 @@ the_art_curator/
   pricing.yaml                 # per-model token prices; config, not code
   .env.example
   alembic/versions/
-  src/the_art_curator/
+  src/art_curator/
     config.py                  # pydantic-settings; model IDs and knobs env-driven
     db/models.py, db/session.py
     llm/client.py              # instrumented Anthropic() wrapper — the only call site
@@ -322,23 +322,23 @@ P0 absorbs the cross-cutting work so every later phase inherits it.
 docker compose up -d db langfuse && alembic upgrade head
 
 # P0 — instrumentation is unavoidable and correct
-python -m the_art_curator.cli smoke
+python -m art_curator.cli smoke
 psql -c "select model, input_tokens, cache_read_tokens, cost_usd from llm_calls;"
 # and the trace visible in the Langfuse UI
 
 # P1 — facts land, no prose columns exist
-python -m the_art_curator.cli sync-graf
+python -m art_curator.cli sync-graf
 psql -c "select count(*) from venues where geom is not null;"   # expect ~568
 psql -c "\d graf_event_snapshots"                                # assert: no desc/summary column
 
 # P2 — extraction scored, not eyeballed
-python -m the_art_curator.cli crawl --pilot
-python -m the_art_curator.cli extract --batch
-python -m the_art_curator.cli eval-extraction     # precision/recall per field vs gold set
+python -m art_curator.cli crawl --pilot
+python -m art_curator.cli extract --batch
+python -m art_curator.cli eval-extraction     # precision/recall per field vs gold set
 pytest tests/test_no_verbatim.py
 
 # P3 — the assertions that matter
-python -m the_art_curator.cli chat
+python -m art_curator.cli chat
 #  > "I'm free Saturday afternoon near Poblenou, I like video art and installation,
 #     nothing that needs a ticket. Build me a route."
 psql -c "select avg(cache_read_tokens::float/nullif(input_tokens,0)) from llm_calls where purpose='chat';"  -- >0.8

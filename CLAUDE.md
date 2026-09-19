@@ -133,15 +133,15 @@ Not yet implemented — this is the intended surface as of P0. Update as it land
 docker compose up -d db langfuse
 alembic upgrade head
 
-python -m the_art_curator.cli smoke              # traced test call, verifies cost recording
-python -m the_art_curator.cli sync-graf          # pull GRAF facts, snapshot events
-python -m the_art_curator.cli crawl --pilot      # crawl the ~20 pilot venues
-python -m the_art_curator.cli extract [--batch]  # venue pages -> exhibitions
-python -m the_art_curator.cli eval-extraction    # score against the gold set
-python -m the_art_curator.cli chat               # talk to the curator in the terminal
+python -m art_curator.cli smoke              # traced test call, verifies cost recording
+python -m art_curator.cli sync-graf          # pull GRAF facts, snapshot events
+python -m art_curator.cli crawl --pilot      # crawl the ~20 pilot venues
+python -m art_curator.cli extract [--batch]  # venue pages -> exhibitions
+python -m art_curator.cli eval-extraction    # score against the gold set
+python -m art_curator.cli chat               # talk to the curator in the terminal
 
 pytest
-docker compose up -d                                # full stack incl. api + bot
+docker compose up -d                            # full stack incl. api + bot
 ```
 
 `mcp_server.py` is a dev-time MCP surface over `queries/events.py`, for interrogating the corpus from Claude Code while building the P2 gold set. It is **not** on the serving path.
