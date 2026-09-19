@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Claude Code: settings.json is shared, local overrides are not
+.claude/settings.local.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

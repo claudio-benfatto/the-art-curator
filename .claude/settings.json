@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(file *)",
+      "Bash(stat *)",
+      "Bash(tree *)",
+      "Bash(pwd)",
+      "Bash(which *)",
+      "Bash(grep *)",
+      "Bash(rg *)",
+      "Bash(diff *)",
+      "Bash(jq *)",
+
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git blame *)",
+      "Bash(git branch --list *)",
+      "Bash(git branch -a)",
+      "Bash(git branch)",
+      "Bash(git remote -v)",
+      "Bash(git ls-files *)",
+      "Bash(git rev-parse *)",
+
+      "Bash(python --version)",
+      "Bash(python3 --version)",
+      "Bash(pip list *)",
+      "Bash(pip show *)",
+      "Bash(uv pip list *)",
+      "Bash(alembic current *)",
+      "Bash(alembic history *)",
+
+      "Bash(docker ps *)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose config *)",
+
+      "Bash(gh pr view *)",
+      "Bash(gh pr list *)",
+      "Bash(gh pr diff *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh issue view *)",
+      "Bash(gh issue list *)",
+      "Bash(gh run view *)",
+      "Bash(gh run list *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(cat .env*)"
+    ]
+  }
+}
