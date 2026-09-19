@@ -19,6 +19,25 @@ htmlcov/
 .env.*
 !.env.example
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+# The provider lock file IS committed — omit it from version control and
+# `terraform init` silently re-resolves versions, which is what CLAUDE.md #9
+# calls drift.
+!.terraform.lock.hcl
+
 # Claude Code: settings.json is shared, local overrides are not
 .claude/settings.local.json
 
