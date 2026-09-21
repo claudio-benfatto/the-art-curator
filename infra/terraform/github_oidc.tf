@@ -9,13 +9,12 @@
 #          reviewer can obtain it — a modified workflow on any branch still
 #          stops at the approval prompt.
 #
-# No thumbprint_list: AWS validates GitHub's OIDC certificate chain against
-# its own trusted CAs for this provider (see aws_iam_openid_connect_provider
-# docs) — the previously-required SHA1 thumbprint is not needed.
+# thumbprint_list is omitted on purpose: AWS validates GitHub's certificate
+# chain against its own trusted CAs, and fills in a thumbprint by itself when
+# none is given. Setting `[]` makes every plan try to strip that value.
 resource "aws_iam_openid_connect_provider" "github_actions" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = []
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
 }
 
 locals {
@@ -31,8 +30,8 @@ locals {
 
 data "aws_iam_policy_document" "github_assume_role" {
   for_each = {
-    plan  = ["repo:${var.github_repo}:pull_request", "repo:${var.github_repo}:ref:refs/heads/main"]
-    apply = ["repo:${var.github_repo}:environment:${var.apply_environment}"]
+    plan  = ["${var.github_oidc_sub_prefix}:pull_request", "${var.github_oidc_sub_prefix}:ref:refs/heads/main"]
+    apply = ["${var.github_oidc_sub_prefix}:environment:${var.apply_environment}"]
   }
 
   statement {

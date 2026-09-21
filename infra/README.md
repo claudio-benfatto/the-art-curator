@@ -77,6 +77,15 @@ gh variable set AWS_REGION         --body "eu-west-1"
 gh variable set TF_STATE_BUCKET    --body "<bucket-name>"
 ```
 
+Both roles trust GitHub's OIDC `sub` claim exactly. This repo uses GitHub's
+immutable-subject format (`repo:<owner>@<id>/<repo>@<id>:…`), held in
+`github_oidc_sub_prefix` (`variables.tf`). If CI fails with "Not authorized to
+perform sts:AssumeRoleWithWebIdentity", compare that variable against:
+
+```bash
+gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+```
+
 Then create the protected `infra-apply` environment (Settings → Environments):
 
 - **Required reviewers:** yourself. This is the control that grants write

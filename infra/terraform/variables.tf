@@ -10,6 +10,17 @@ variable "github_repo" {
   default     = "claudio-benfatto/the-art-curator"
 }
 
+# GitHub issues OIDC tokens with immutable subjects for this repo:
+# `repo:<owner>@<owner_id>/<repo>@<repo_id>:<context>`. The numeric IDs mean a
+# renamed or deleted-and-recreated repo can't satisfy this trust policy.
+# Read the current value with:
+#   gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
+variable "github_oidc_sub_prefix" {
+  description = "Prefix of the GitHub OIDC `sub` claim for this repo (immutable-subject format). Must match GitHub exactly, or every CI role assumption is denied."
+  type        = string
+  default     = "repo:claudio-benfatto@7601067/the-art-curator@1376843713"
+}
+
 variable "apply_environment" {
   description = "GitHub environment whose OIDC subject may assume the apply role. Must match the `environment:` of the apply job in .github/workflows/terraform.yml, and must have a required reviewer (infra/README.md step 4)."
   type        = string
