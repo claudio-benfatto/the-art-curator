@@ -60,8 +60,29 @@ resource "aws_iam_role_policy" "app_bedrock_access" {
 # aws-marketplace:* permissions. Creating an agreement accepts the model's
 # EULA (https://aws.amazon.com/legal/bedrock/third-party-models/).
 #
-# The Anthropic first-time-use form (aws_bedrock_use_case_for_model_access)
-# is not needed: it doesn't apply to models called through bedrock-mantle.
+# The Anthropic first-time-use (FTU) form below is a prerequisite for
+# *creating the agreement* for some models (Haiku 4.5 was refused without
+# it), even though Mantle calls themselves don't need it. It is one-time per
+# account, cannot be updated or deleted once submitted, and `terraform
+# destroy` only drops it from state. Its content is a statement to Anthropic
+# and AWS — change it only with the account owner's say-so.
+resource "aws_bedrock_use_case_for_model_access" "anthropic" {
+  form_data = jsonencode({
+    companyName         = "Claudio Benfatto (individual developer)"
+    companyWebsite      = "https://github.com/claudio-benfatto"
+    intendedUsers       = "0" # internal
+    industryOption      = "Arts and entertainment"
+    otherIndustryOption = ""
+    useCases            = "Proof-of-concept art curator for Catalunya: an assistant that recommends current exhibitions and events. Claude writes original short summaries from public venue listings and answers users' questions in chat with recommended itineraries. No personal data beyond chat messages; outputs are original text, not reproductions of source material."
+  })
+
+  lifecycle {
+    # Updates are unsupported by the API; a drifted form must not trigger a
+    # replacement attempt.
+    ignore_changes = [form_data]
+  }
+}
+
 data "aws_bedrock_foundation_model_agreement_offers" "enabled" {
   for_each = toset(var.bedrock_agreement_model_ids)
   model_id = each.value
@@ -71,6 +92,8 @@ resource "aws_bedrock_foundation_model_agreement" "enabled" {
   for_each    = toset(var.bedrock_agreement_model_ids)
   model_id    = each.value
   offer_token = data.aws_bedrock_foundation_model_agreement_offers.enabled[each.value].offers[0].offer_token
+
+  depends_on = [aws_bedrock_use_case_for_model_access.anthropic]
 
   # Offer tokens are reissued over time. A new token must not destroy and
   # recreate a working agreement.

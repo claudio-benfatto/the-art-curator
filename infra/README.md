@@ -41,8 +41,10 @@ AWS Marketplace agreement, which Terraform declares
 (https://aws.amazon.com/legal/bedrock/third-party-models/).
 
 - The account needs a valid payment method for Marketplace purchases.
-- The Anthropic first-time-use form is **not** needed: it doesn't apply to
-  models called through the bedrock-mantle endpoint.
+- The Anthropic first-time-use form is declared too
+  (`aws_bedrock_use_case_for_model_access`). Mantle calls don't need it, but
+  creating some agreements does (Haiku 4.5 was refused without it). It is
+  one-time per account and can't be updated or deleted once submitted.
 - Agreement IDs are **catalog** IDs (`anthropic.claude-haiku-4-5-20251001-v1:0`),
   not the Mantle IDs in `chat_model_id` / `extract_model_id`. Check access
   with `aws bedrock get-foundation-model-availability --model-id <catalog id>`

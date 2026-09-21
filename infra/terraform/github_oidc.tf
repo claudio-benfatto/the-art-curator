@@ -29,6 +29,7 @@ locals {
   bedrock_agreement_read = [
     "bedrock:ListFoundationModelAgreementOffers",
     "bedrock:GetFoundationModelAvailability",
+    "bedrock:GetUseCaseForModelAccess",
   ]
 }
 
@@ -188,6 +189,7 @@ data "aws_iam_policy_document" "github_apply" {
     actions = concat(local.bedrock_agreement_read, [
       "bedrock:CreateFoundationModelAgreement",
       "bedrock:DeleteFoundationModelAgreement",
+      "bedrock:PutUseCaseForModelAccess",
       "aws-marketplace:Subscribe",
       "aws-marketplace:Unsubscribe",
       "aws-marketplace:ViewSubscriptions",
