@@ -52,3 +52,29 @@ resource "aws_iam_role_policy" "app_bedrock_access" {
   role   = aws_iam_role.app.id
   policy = data.aws_iam_policy_document.app_bedrock_access.json
 }
+
+# Model enablement (replaces the old console "Model access" page). Third-party
+# models are subscribed through AWS Marketplace on first use; declaring the
+# agreement here makes that explicit and reviewable instead of a side effect
+# of whichever principal calls first — and means the app role never needs
+# aws-marketplace:* permissions. Creating an agreement accepts the model's
+# EULA (https://aws.amazon.com/legal/bedrock/third-party-models/).
+#
+# The Anthropic first-time-use form (aws_bedrock_use_case_for_model_access)
+# is not needed: it doesn't apply to models called through bedrock-mantle.
+data "aws_bedrock_foundation_model_agreement_offers" "enabled" {
+  for_each = toset(var.bedrock_agreement_model_ids)
+  model_id = each.value
+}
+
+resource "aws_bedrock_foundation_model_agreement" "enabled" {
+  for_each    = toset(var.bedrock_agreement_model_ids)
+  model_id    = each.value
+  offer_token = data.aws_bedrock_foundation_model_agreement_offers.enabled[each.value].offers[0].offer_token
+
+  # Offer tokens are reissued over time. A new token must not destroy and
+  # recreate a working agreement.
+  lifecycle {
+    ignore_changes = [offer_token]
+  }
+}

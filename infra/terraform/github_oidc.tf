@@ -26,6 +26,10 @@ locals {
   project_roles  = "arn:${local.partition}:iam::${local.account_id}:role/art-curator-*"
   oidc_provider  = "arn:${local.partition}:iam::${local.account_id}:oidc-provider/token.actions.githubusercontent.com"
   iam_read_roles = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies"]
+  bedrock_agreement_read = [
+    "bedrock:ListFoundationModelAgreementOffers",
+    "bedrock:GetFoundationModelAvailability",
+  ]
 }
 
 data "aws_iam_policy_document" "github_assume_role" {
@@ -102,6 +106,13 @@ data "aws_iam_policy_document" "github_plan" {
     actions   = ["iam:GetOpenIDConnectProvider"]
     resources = [local.oidc_provider]
   }
+
+  # No resource types exist for these actions, hence "*".
+  statement {
+    sid       = "ReadModelAgreements"
+    actions   = local.bedrock_agreement_read
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "github_plan" {
@@ -168,6 +179,20 @@ data "aws_iam_policy_document" "github_apply" {
       "iam:UntagOpenIDConnectProvider",
     ]
     resources = [local.oidc_provider]
+  }
+
+  # Model enablement (bedrock.tf). None of these actions has a resource type,
+  # hence "*"; Marketplace Subscribe is what an agreement creates underneath.
+  statement {
+    sid = "ManageModelAgreements"
+    actions = concat(local.bedrock_agreement_read, [
+      "bedrock:CreateFoundationModelAgreement",
+      "bedrock:DeleteFoundationModelAgreement",
+      "aws-marketplace:Subscribe",
+      "aws-marketplace:Unsubscribe",
+      "aws-marketplace:ViewSubscriptions",
+    ])
+    resources = ["*"]
   }
 }
 

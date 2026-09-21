@@ -47,3 +47,16 @@ variable "extract_model_id" {
   type        = string
   default     = "anthropic.claude-haiku-4-5"
 }
+
+# Catalog IDs, not Mantle IDs: model agreements are keyed on the Bedrock
+# catalog ID, which for older models carries a date/version suffix that the
+# Mantle ID drops (anthropic.claude-haiku-4-5 on Mantle). List them with
+#   aws bedrock list-foundation-models --by-provider anthropic --query 'modelSummaries[].modelId'
+variable "bedrock_agreement_model_ids" {
+  description = "Bedrock catalog model IDs to enable (Marketplace agreement) — one per model behind chat_model_id / extract_model_id."
+  type        = list(string)
+  default = [
+    "anthropic.claude-opus-5",
+    "anthropic.claude-haiku-4-5-20251001-v1:0",
+  ]
+}

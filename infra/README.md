@@ -32,21 +32,27 @@ aws s3api put-public-access-block \
   --public-access-block-configuration BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
 ```
 
-## 2. Accept Bedrock model access terms
+## 2. Bedrock model access — nothing to do by hand
 
-Bedrock model access is opt-in per model, per account, and has no Terraform
-resource. In the AWS Console: **Bedrock → Model access → Manage model
-access**, request access to the Claude models named in
-`infra/terraform/variables.tf` (`chat_model_id`, `extract_model_id`). This is
-also the "confirm Opus 5 access" check from PLAN.md's P0 open risks — Opus 5
-isn't open to every account.
+There is no console "Model access" step any more. Models are enabled by an
+AWS Marketplace agreement, which Terraform declares
+(`aws_bedrock_foundation_model_agreement` in `bedrock.tf`, one per ID in
+`bedrock_agreement_model_ids`). Applying it accepts each model's EULA
+(https://aws.amazon.com/legal/bedrock/third-party-models/).
 
-The app role's policy (`bedrock.tf`) allows `bedrock-mantle:CreateInference`
-only when the `bedrock-mantle:Model` condition key equals one of those two
-IDs. If the P0 smoke call gets `AccessDenied`, the error message names the
-action and context that were denied — check whether Mantle reports the model
-under a different ID (e.g. a `global.` prefix) and fix the variable, not the
-policy scope.
+- The account needs a valid payment method for Marketplace purchases.
+- The Anthropic first-time-use form is **not** needed: it doesn't apply to
+  models called through the bedrock-mantle endpoint.
+- Agreement IDs are **catalog** IDs (`anthropic.claude-haiku-4-5-20251001-v1:0`),
+  not the Mantle IDs in `chat_model_id` / `extract_model_id`. Check access
+  with `aws bedrock get-foundation-model-availability --model-id <catalog id>`
+  — `agreementAvailability.status` should be `AVAILABLE`.
+
+The app role's policy allows `bedrock-mantle:CreateInference` only when the
+`bedrock-mantle:Model` condition key equals one of the Mantle IDs. If the P0
+smoke call gets `AccessDenied`, the error names the denied action and
+context — check whether Mantle reports the model under a different ID and fix
+the variable, not the policy scope.
 
 ## 3. First apply (local credentials)
 
