@@ -136,7 +136,7 @@ services:
       retries: 10
 
   clickhouse:
-    image: docker.io/clickhouse/clickhouse-server:25.12
+    image: docker.io/clickhouse/clickhouse-server:26.6
     profiles: [langfuse]
     user: "101:101"
     environment:
