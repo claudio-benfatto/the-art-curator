@@ -182,7 +182,7 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 ## 9. Open risks
 
 - **Extraction accuracy** across heterogeneous sites — measured in P2, not discovered in P5.
-- **Opus 5 access on Bedrock** is not open to all accounts — confirm in the console before P0.
+- ~~**Opus 5 access on Bedrock**~~ — confirmed 2026-09-21: authorized in eu-west-1; enabled via Terraform agreement.
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
 - **Langfuse SDK surface unverified** — first P0 task; OTel + Postgres stands alone if it has drifted.
 - **p95 latency** with three round trips — fallbacks: lower `effort`, then merge search + hydrate.

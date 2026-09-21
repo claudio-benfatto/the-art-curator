@@ -108,7 +108,7 @@ Every AWS resource (IAM roles and policies, RDS/Aurora, S3, scheduled jobs, netw
 - If a change is needed, change the `.tf` code and `terraform apply`. Never hand-edit a resource that Terraform manages. If drift is found, fix it by importing or reconciling in code, not by clicking.
 - Remote state in S3 with locking. Never commit `*.tfstate`, `.terraform/` or `*.tfvars` containing secrets.
 - Least-privilege IAM: the app's role gets `bedrock-mantle:CreateInference` / `bedrock:InvokeModel` scoped to the configured model ARNs only.
-- The rare step Terraform cannot express (e.g. accepting Bedrock model-access terms, bootstrapping the state bucket) goes in `infra/README.md` as a numbered manual step. It is never done silently.
+- The rare step Terraform cannot express (e.g. bootstrapping the state bucket) goes in `infra/README.md` as a numbered manual step. It is never done silently.
 
 ### 10. CI is GitHub Actions
 
@@ -183,7 +183,7 @@ Nothing implemented yet. Next step is **P0** (scaffold, schema, config, instrume
 
 First tasks in P0, before writing code against them:
 
-- Confirm Opus 5 model access in the Bedrock console (it is not open to every account), and that top-level automatic caching works on the Mantle endpoint (check `cache_read_input_tokens` on a second call).
+- Confirm that top-level automatic caching works on the Mantle endpoint (check `cache_read_input_tokens` on a second call). Opus 5 access is confirmed for the account (`authorizationStatus: AUTHORIZED` in eu-west-1, 2026-09-21); model enablement is Terraform-managed (`bedrock.tf`).
 - Verify the Langfuse SDK surface against live docs. If it has drifted, the OTel + Postgres layer stands alone and Langfuse can be dropped without data loss.
 
 **P3 is the real checkpoint.** If the curator isn't good over 20 venues of data, scaling to 158 won't fix it. Don't build P4–P6 to avoid finding out.
