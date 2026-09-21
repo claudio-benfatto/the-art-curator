@@ -104,7 +104,7 @@ services:
       start_period: 20s
 
   langfuse-worker:
-    image: docker.langfuse.com/langfuse/langfuse-worker:4.38.0
+    image: docker.langfuse.com/langfuse/langfuse-worker:4.39.0
     profiles: [langfuse]
     depends_on:
       langfuse-postgres:
