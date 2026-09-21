@@ -39,7 +39,7 @@ services:
   #   UI login: dev@art-curator.local / art-curator-local
 
   langfuse:
-    image: docker.langfuse.com/langfuse/langfuse:4.38.0
+    image: docker.langfuse.com/langfuse/langfuse:4.39.0
     profiles: [langfuse]
     depends_on: &langfuse-deps
       langfuse-worker:
