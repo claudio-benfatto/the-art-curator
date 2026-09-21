@@ -10,12 +10,20 @@ variable "github_repo" {
   default     = "claudio-benfatto/the-art-curator"
 }
 
+variable "apply_environment" {
+  description = "GitHub environment whose OIDC subject may assume the apply role. Must match the `environment:` of the apply job in .github/workflows/terraform.yml, and must have a required reviewer (infra/README.md step 4)."
+  type        = string
+  default     = "infra-apply"
+}
+
 variable "tf_state_bucket" {
   description = "Name of the hand-created S3 state bucket (infra/README.md step 1). No default — must match backend.tf's -backend-config bucket exactly, so the CI role's permissions target the right ARN."
   type        = string
 }
 
 # Keep these in sync with config.py's CHAT_MODEL / EXTRACT_MODEL defaults.
+# These are bedrock-mantle model IDs — matched against the bedrock-mantle:Model
+# condition key in bedrock.tf, not used to build ARNs.
 # EMBED_MODEL is chosen by measurement in P3 and added to this list then.
 variable "chat_model_id" {
   description = "Bedrock model ID for chat (Claude only, per CLAUDE.md #4)."

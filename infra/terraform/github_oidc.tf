@@ -1,8 +1,13 @@
-# Lets GitHub Actions assume an AWS role without a stored long-lived key
-# (CLAUDE.md #10). One role, usable from any workflow run in this repo
-# (`repo:<org>/<name>:*`) — `plan` runs on PRs, `apply` runs only from
-# `main` behind a protected environment that needs manual approval, so the
-# environment gate is what limits write access, not a second role.
+# Lets GitHub Actions assume AWS roles without a stored long-lived key
+# (CLAUDE.md #10). Two roles, so write access is bound to the approval gate
+# rather than to whoever can push a branch:
+#
+# - plan:  read-only. Assumable from PRs and pushes to main. A workflow edited
+#          on a PR branch gets this role and nothing more.
+# - apply: read-write. Trust is pinned to the `infra-apply` environment's OIDC
+#          subject, so only a job that has passed that environment's required
+#          reviewer can obtain it — a modified workflow on any branch still
+#          stops at the approval prompt.
 #
 # No thumbprint_list: AWS validates GitHub's OIDC certificate chain against
 # its own trusted CAs for this provider (see aws_iam_openid_connect_provider
@@ -13,7 +18,23 @@ resource "aws_iam_openid_connect_provider" "github_actions" {
   thumbprint_list = []
 }
 
-data "aws_iam_policy_document" "github_actions_assume_role" {
+locals {
+  partition      = data.aws_partition.current.partition
+  account_id     = data.aws_caller_identity.current.account_id
+  state_bucket   = "arn:${local.partition}:s3:::${var.tf_state_bucket}"
+  state_object   = "${local.state_bucket}/art-curator/terraform.tfstate"
+  state_lock     = "${local.state_bucket}/art-curator/terraform.tfstate.tflock"
+  project_roles  = "arn:${local.partition}:iam::${local.account_id}:role/art-curator-*"
+  oidc_provider  = "arn:${local.partition}:iam::${local.account_id}:oidc-provider/token.actions.githubusercontent.com"
+  iam_read_roles = ["iam:GetRole", "iam:GetRolePolicy", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies"]
+}
+
+data "aws_iam_policy_document" "github_assume_role" {
+  for_each = {
+    plan  = ["repo:${var.github_repo}:pull_request", "repo:${var.github_repo}:ref:refs/heads/main"]
+    apply = ["repo:${var.github_repo}:environment:${var.apply_environment}"]
+  }
+
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     effect  = "Allow"
@@ -30,28 +51,26 @@ data "aws_iam_policy_document" "github_actions_assume_role" {
     }
 
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:*"]
+      values   = each.value
     }
   }
 }
 
-resource "aws_iam_role" "github_actions" {
-  name               = "art-curator-github-actions"
-  assume_role_policy = data.aws_iam_policy_document.github_actions_assume_role.json
-  description        = "Assumed by GitHub Actions in ${var.github_repo} via OIDC. No long-lived AWS keys in repo secrets."
+# --- plan: read-only ---------------------------------------------------------
+
+resource "aws_iam_role" "github_plan" {
+  name               = "art-curator-github-plan"
+  assume_role_policy = data.aws_iam_policy_document.github_assume_role["plan"].json
+  description        = "Read-only terraform plan from GitHub Actions (PRs, main) in ${var.github_repo} via OIDC."
 }
 
-# Scoped to managing only this project's own resources (name/ARN prefixed
-# `art-curator-`) plus the state bucket it reads/writes on every plan and
-# apply. Not scoped down further into separate plan/apply tiers — see
-# github_oidc.tf's top comment.
-data "aws_iam_policy_document" "github_actions_terraform" {
+data "aws_iam_policy_document" "github_plan" {
   statement {
     sid       = "StateBucketList"
     actions   = ["s3:ListBucket"]
-    resources = ["arn:${data.aws_partition.current.partition}:s3:::${var.tf_state_bucket}"]
+    resources = [local.state_bucket]
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
@@ -60,39 +79,81 @@ data "aws_iam_policy_document" "github_actions_terraform" {
   }
 
   statement {
-    sid = "StateObjects"
-    actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:DeleteObject",
-    ]
-    resources = [
-      "arn:${data.aws_partition.current.partition}:s3:::${var.tf_state_bucket}/art-curator/terraform.tfstate",
-      "arn:${data.aws_partition.current.partition}:s3:::${var.tf_state_bucket}/art-curator/terraform.tfstate.tflock",
-    ]
+    sid       = "StateRead"
+    actions   = ["s3:GetObject"]
+    resources = [local.state_object, local.state_lock]
+  }
+
+  # plan takes the S3 lockfile too, so it never reads state mid-apply.
+  # Writing the lock is the only write this role has.
+  statement {
+    sid       = "StateLock"
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
+    resources = [local.state_lock]
   }
 
   statement {
-    sid = "ManageProjectIamRolesAndPolicies"
-    actions = [
+    sid       = "ReadProjectIam"
+    actions   = local.iam_read_roles
+    resources = [local.project_roles]
+  }
+
+  statement {
+    sid       = "ReadOidcProvider"
+    actions   = ["iam:GetOpenIDConnectProvider"]
+    resources = [local.oidc_provider]
+  }
+}
+
+resource "aws_iam_role_policy" "github_plan" {
+  name   = "terraform-plan"
+  role   = aws_iam_role.github_plan.id
+  policy = data.aws_iam_policy_document.github_plan.json
+}
+
+# --- apply: read-write, environment-gated ------------------------------------
+
+resource "aws_iam_role" "github_apply" {
+  name               = "art-curator-github-apply"
+  assume_role_policy = data.aws_iam_policy_document.github_assume_role["apply"].json
+  description        = "terraform apply from the ${var.apply_environment} environment in ${var.github_repo} via OIDC."
+}
+
+# Inline policies only — no Attach/DetachRolePolicy, so this role can't hang
+# an AWS-managed policy (e.g. AdministratorAccess) off an art-curator-* role.
+data "aws_iam_policy_document" "github_apply" {
+  statement {
+    sid       = "StateBucketList"
+    actions   = ["s3:ListBucket"]
+    resources = [local.state_bucket]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["art-curator/*"]
+    }
+  }
+
+  statement {
+    sid       = "StateObjects"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+    resources = [local.state_object, local.state_lock]
+  }
+
+  statement {
+    sid = "ManageProjectIamRoles"
+    actions = concat(local.iam_read_roles, [
       "iam:CreateRole",
       "iam:DeleteRole",
-      "iam:GetRole",
       "iam:UpdateRole",
+      "iam:UpdateRoleDescription",
       "iam:UpdateAssumeRolePolicy",
       "iam:TagRole",
       "iam:UntagRole",
       "iam:PutRolePolicy",
-      "iam:GetRolePolicy",
       "iam:DeleteRolePolicy",
-      "iam:ListRolePolicies",
-      "iam:ListAttachedRolePolicies",
-      "iam:AttachRolePolicy",
-      "iam:DetachRolePolicy",
-    ]
-    resources = [
-      "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:role/art-curator-*",
-    ]
+      "iam:ListInstanceProfilesForRole",
+    ])
+    resources = [local.project_roles]
   }
 
   statement {
@@ -107,14 +168,12 @@ data "aws_iam_policy_document" "github_actions_terraform" {
       "iam:TagOpenIDConnectProvider",
       "iam:UntagOpenIDConnectProvider",
     ]
-    resources = [
-      "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com",
-    ]
+    resources = [local.oidc_provider]
   }
 }
 
-resource "aws_iam_role_policy" "github_actions_terraform" {
-  name   = "terraform-plan-apply"
-  role   = aws_iam_role.github_actions.id
-  policy = data.aws_iam_policy_document.github_actions_terraform.json
+resource "aws_iam_role_policy" "github_apply" {
+  name   = "terraform-apply"
+  role   = aws_iam_role.github_apply.id
+  policy = data.aws_iam_policy_document.github_apply.json
 }

@@ -3,30 +3,30 @@
 # attached to compute in P7 (or assumed locally for now) — but the policy
 # scope is fixed here rather than left to whichever principal shows up later.
 #
-# Scoped to only the configured chat/extract model ARNs, not `*`. Update
-# `chat_model_id` / `extract_model_id` (and this list) when EMBED_MODEL is
-# chosen in P3.
-locals {
-  bedrock_model_arns = [
-    for model_id in [var.chat_model_id, var.extract_model_id] :
-    "arn:${data.aws_partition.current.partition}:bedrock:${var.aws_region}::foundation-model/${model_id}"
-  ]
-}
-
+# Claude goes through the bedrock-mantle endpoint (AnthropicBedrockMantle,
+# CLAUDE.md #4). Mantle authorizes CreateInference against a Mantle *project*
+# resource, not a bedrock foundation-model ARN, and narrows to specific
+# models via the `bedrock-mantle:Model` condition key — so the scope lives in
+# the condition, keyed on the same Mantle model IDs config.py uses.
+#
+# No bedrock:InvokeModel yet: nothing calls bedrock-runtime until a
+# non-Claude model is chosen (EMBED_MODEL, P3). When it is, add the global
+# cross-region inference statements from the Bedrock user guide
+# (inference-profile ARN + regional and region-less foundation-model ARNs,
+# conditioned on bedrock:InferenceProfileArn) — runtime model IDs differ from
+# Mantle's (e.g. anthropic.claude-haiku-4-5-20251001-v1:0).
 data "aws_iam_policy_document" "app_bedrock_access" {
   statement {
-    sid = "InvokeConfiguredModels"
-    actions = [
-      "bedrock:InvokeModel",
-      "bedrock:InvokeModelWithResponseStream",
-      # bedrock-mantle:CreateInference per CLAUDE.md #4/#9 (the Claude-native
-      # Messages-API endpoint chat uses). Verify this action name in the
-      # console alongside the open "confirm Opus 5 access" task in P0 —
-      # Mantle's global-endpoint IAM shape wasn't in the provider docs used
-      # to write this file.
-      "bedrock-mantle:CreateInference",
+    sid     = "MantleInvokeConfiguredModels"
+    actions = ["bedrock-mantle:CreateInference"]
+    resources = [
+      "arn:${data.aws_partition.current.partition}:bedrock-mantle:${var.aws_region}:${data.aws_caller_identity.current.account_id}:project/*",
     ]
-    resources = local.bedrock_model_arns
+    condition {
+      test     = "StringEquals"
+      variable = "bedrock-mantle:Model"
+      values   = [var.chat_model_id, var.extract_model_id]
+    }
   }
 }
 

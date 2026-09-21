@@ -41,11 +41,12 @@ access**, request access to the Claude models named in
 also the "confirm Opus 5 access" check from PLAN.md's P0 open risks — Opus 5
 isn't open to every account.
 
-While there, sanity-check the IAM action name in `bedrock.tf`
-(`bedrock-mantle:CreateInference`) against what the console/IAM policy
-visual editor shows for the Mantle endpoint — that part of the policy was
-written from the AWS provider's general Bedrock docs, not Mantle-specific
-ones, and Mantle is new enough that this is worth a second look.
+The app role's policy (`bedrock.tf`) allows `bedrock-mantle:CreateInference`
+only when the `bedrock-mantle:Model` condition key equals one of those two
+IDs. If the P0 smoke call gets `AccessDenied`, the error message names the
+action and context that were denied — check whether Mantle reports the model
+under a different ID (e.g. a `global.` prefix) and fix the variable, not the
+policy scope.
 
 ## 3. First apply (local credentials)
 
@@ -64,19 +65,25 @@ bucket ARN to scope itself to.
 
 ## 4. Wire up CI
 
-Take `github_actions_role_arn` from the apply output and set it as a repo
-(or environment) variable, plus the region and bucket name the workflow
-needs to reconstruct the backend config:
+The apply created two CI roles (`github_oidc.tf`): a read-only **plan** role
+for PRs and `main`, and an **apply** role that trusts only the `infra-apply`
+environment's OIDC subject. Set both ARNs from the apply output, plus the
+region and bucket name the workflow needs to reconstruct the backend config:
 
 ```bash
-gh variable set AWS_ROLE_ARN --body "<github_actions_role_arn output>"
-gh variable set AWS_REGION --body "eu-west-1"
-gh variable set TF_STATE_BUCKET --body "<bucket-name>"
+gh variable set AWS_PLAN_ROLE_ARN  --body "$(terraform output -raw github_plan_role_arn)"
+gh variable set AWS_APPLY_ROLE_ARN --body "$(terraform output -raw github_apply_role_arn)"
+gh variable set AWS_REGION         --body "eu-west-1"
+gh variable set TF_STATE_BUCKET    --body "<bucket-name>"
 ```
 
-Then create the protected `infra-apply` environment (Settings → Environments)
-with yourself as a required reviewer, so `terraform apply` on `main` waits
-for manual approval (CLAUDE.md #10).
+Then create the protected `infra-apply` environment (Settings → Environments):
+
+- **Required reviewers:** yourself. This is the control that grants write
+  access to AWS — anyone who can push a branch can edit a workflow, but only
+  a job that passes this approval can assume the apply role (CLAUDE.md #10).
+- **Deployment branches:** `main` only, so an approval prompt can't be raised
+  from a feature branch in the first place.
 
 ## After that
 
