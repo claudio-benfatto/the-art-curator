@@ -128,15 +128,16 @@ Verified 2026-09-18. WordPress REST, no auth, `robots.txt` permits everything ou
 |---|---|---|
 | `/wp-json/wp/v2/event-venues` | 568 | Venue taxonomy terms. Geo + address. |
 | `/wp-json/wp/v2/users` | 158 | Venue profiles; 146 (92%) have `url` |
-| `/wp-json/wp/v2/events` | 104 | **Live window, not an archive** |
+| `/wp-json/wp/v2/events` | 58–104 | **Live window, not an archive** (104 on 09-18, 58 on 09-22) |
 
 Gotchas:
 
 - **`longtitude` is misspelled in their API.** The field is literally `longtitude`, not `longitude`. Latitude is spelled correctly. Both are strings.
 - The taxonomy's `rest_base` is `event-venues` (plural); the taxonomy *name* is `event-venue` (singular). Event objects carry `event-venues: [<term_id>]`.
-- **`events` returns ~104 records regardless of date filters.** Passing `start=2020-01-01` changes nothing. This is why `graf_event_snapshots` exists and why nightly sync is load-bearing — history is unrecoverable if we miss it.
+- **`events` returns only the live window regardless of date filters.** Passing `start=2020-01-01` changes nothing. This is why `graf_event_snapshots` exists and why nightly sync is load-bearing — history is unrecoverable if we miss it.
 - Event `date` is `null`. Use `start` / `end` (ISO 8601 with offset).
-- `per_page` maxes at 100; paginate and read `x-wp-total` / `x-wp-totalpages`.
+- **An event (post `id`) has one or more occurrences** at `/events/{id}/occurrences`, each with its own `occurrence_id`, `start`, `end`. Hence `graf_event_snapshots` (keyed on `graf_event_id`) + `graf_event_occurrences` (keyed on `graf_occurrence_id`). On 2026-09-22 all 58 live events had exactly one occurrence — a multi-week show is one occurrence spanning its run. The list endpoint's `occurrence_id` is a **string**; `/occurrences` returns an **int**. The single-event endpoint omits it.
+- `per_page` maxes at 100, but **a page can come back short** (100 requested → 36 returned, `x-wp-total: 58`). Paginate by `x-wp-totalpages`, never by "page was not full".
 - Some venue `url` values point at Instagram. Those venues are `crawl_enabled=false` and stay facts-only.
 - Use `curl` over `urllib` when probing — Cloudflare rejects some Python UAs.
 
@@ -179,9 +180,11 @@ docker compose up -d                                # full stack incl. api + bot
 
 ## Current state
 
-Nothing implemented yet. Next step is **P0** (scaffold, schema, config, instrumented client, telemetry) — see PLAN.md § Build order.
+**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied) and GitHub OIDC with a gated apply. Remaining: pricing, `llm/client.py`, telemetry, `cli smoke` — see PLAN.md § P0 breakdown.
 
-First tasks in P0, before writing code against them:
+DB tests create and drop their own throwaway databases on the `DATABASE_URL` server and skip if it's unreachable; CI sets `REQUIRE_DB=1` so they fail instead.
+
+Still open before the client code (PRs 6–7):
 
 - Confirm that top-level automatic caching works on the Mantle endpoint (check `cache_read_input_tokens` on a second call). Opus 5 access is confirmed for the account (`authorizationStatus: AUTHORIZED` in eu-west-1, 2026-09-21); model enablement is Terraform-managed (`bedrock.tf`).
 - Verify the Langfuse SDK surface against live docs. If it has drifted, the OTel + Postgres layer stands alone and Langfuse can be dropped without data loss.

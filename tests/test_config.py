@@ -4,7 +4,7 @@ from typer.testing import CliRunner
 from art_curator.cli import app
 from art_curator.config import Settings, get_settings
 
-ENV_VARS = ("AWS_REGION", "CHAT_MODEL", "EXTRACT_MODEL", "EMBED_MODEL")
+ENV_VARS = ("AWS_REGION", "CHAT_MODEL", "EXTRACT_MODEL", "EMBED_MODEL", "DATABASE_URL")
 
 
 @pytest.fixture(autouse=True)
@@ -22,6 +22,7 @@ def test_defaults():
     assert s.chat_model.startswith("anthropic.")
     assert s.extract_model.startswith("anthropic.")
     assert s.embed_model is None
+    assert s.database_url.startswith("postgresql+asyncpg://")
 
 
 def test_env_overrides(monkeypatch):
@@ -49,3 +50,11 @@ def test_cli_prints_config(monkeypatch):
     assert result.exit_code == 0
     assert "chat_model=anthropic.claude-sonnet-5" in result.stdout
     assert "embed_model=\n" in result.stdout
+
+
+def test_cli_hides_database_password(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://app:s3cret@db.example:5432/app")
+    result = CliRunner().invoke(app, ["config"])
+    assert result.exit_code == 0
+    assert "s3cret" not in result.stdout
+    assert "database_url=postgresql+asyncpg://app:***@db.example:5432/app" in result.stdout
