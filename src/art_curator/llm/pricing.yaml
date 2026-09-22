@@ -1,0 +1,31 @@
+# USD per million tokens, keyed by the Bedrock model ID the client sends.
+#
+# Source: Anthropic list prices (platform.claude.com/docs/en/about-claude/pricing), 2026-09-22.
+# Assumes the Bedrock *global* endpoint bills at list price (PLAN.md § 6) — not yet checked
+# against the AWS Pricing API or a bill. Regional endpoints cost +10% and are not modelled here;
+# switching to one means updating these numbers.
+#
+# Cache columns: 5-minute write = 1.25× input, 1-hour write = 2× input, read = 0.1× input.
+# A model without cache prices (e.g. an embedding model) must never report cache tokens.
+
+models:
+  anthropic.claude-opus-5:
+    input: "5.00"
+    output: "25.00"
+    cache_write_5m: "6.25"
+    cache_write_1h: "10.00"
+    cache_read: "0.50"
+
+  anthropic.claude-sonnet-5:
+    input: "2.00"
+    output: "10.00"
+    cache_write_5m: "2.50"
+    cache_write_1h: "4.00"
+    cache_read: "0.20"
+
+  anthropic.claude-haiku-4-5:
+    input: "1.00"
+    output: "5.00"
+    cache_write_5m: "1.25"
+    cache_write_1h: "2.00"
+    cache_read: "0.10"

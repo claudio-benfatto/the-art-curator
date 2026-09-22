@@ -180,7 +180,9 @@ docker compose up -d                                # full stack incl. api + bot
 
 ## Current state
 
-**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied) and GitHub OIDC with a gated apply. Remaining: pricing, `llm/client.py`, telemetry, `cli smoke` — see PLAN.md § P0 breakdown.
+**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing. Remaining: `llm/client.py`, telemetry, `cli smoke` — see PLAN.md § P0 breakdown.
+
+`pricing.yaml` holds Anthropic list prices on the assumption that the Bedrock global endpoint bills at list. Not yet checked against the AWS Pricing API or a bill — do that before trusting cost totals.
 
 DB tests create and drop their own throwaway databases on the `DATABASE_URL` server and skip if it's unreachable; CI sets `REQUIRE_DB=1` so they fail instead.
 
