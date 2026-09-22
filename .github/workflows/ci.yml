@@ -26,6 +26,26 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # Published by db-image.yml from main. A PR that changes docker/db is verified there; this job
+    # picks up the new image once it merges.
+    services:
+      db:
+        image: ghcr.io/claudio-benfatto/art-curator-db:pg16
+        env:
+          POSTGRES_USER: art_curator
+          POSTGRES_PASSWORD: art_curator
+          POSTGRES_DB: art_curator
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U art_curator -d art_curator"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://art_curator:art_curator@localhost:5432/art_curator
+      # DB tests skip when no database is reachable; in CI that must be a failure instead.
+      REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -36,5 +56,7 @@ jobs:
       # They also run as part of the full suite locally.
       - name: Architecture invariants (CLAUDE.md §2, §3)
         run: uv run pytest tests/test_boundaries.py
+      - name: No third-party prose in the schema (CLAUDE.md §1)
+        run: uv run pytest tests/test_no_verbatim.py
       - name: Tests
-        run: uv run pytest --ignore=tests/test_boundaries.py
+        run: uv run pytest --ignore=tests/test_boundaries.py --ignore=tests/test_no_verbatim.py

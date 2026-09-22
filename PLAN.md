@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** approved, nothing implemented. Next step is P0.
-**Last updated:** 2026-09-19 (rev. 5)
+**Status:** P0 in progress — PRs 1–4, 8, 9 done; 5–7, 10 remaining.
+**Last updated:** 2026-09-22 (rev. 6)
 
 ---
 
@@ -87,11 +87,11 @@ Each table lands in the phase that first writes it — no speculative schema.
 
 | Layer | Tables | Phase |
 |---|---|---|
-| Facts (GRAF) | `venues` (ids, name, address, `geom`, website/instagram URL, crawl flags) · `graf_event_snapshots` (ids, venue, title, start/end, category, free, price range, URLs, first/last seen) — **no description columns** | P0 |
+| Facts (GRAF) | `venues` (ids, name, address, `geom`, website/instagram URL, crawl flags) · `graf_event_snapshots` (one row per event: ids, venue, title, category, free, price range, URLs, first/last seen) · `graf_event_occurrences` (start/end per occurrence, first/last seen) — **no description columns** | P0 |
 | Derived (LLM) | `venue_pages` (url, status, `content_hash`, `raw_text`; **7-day TTL**) | P0 |
 | | `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, `embedding`, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) | P2 (`embedding` P3) |
 | User | `users` · `profile_facts` (append-only, `superseded_by`) · `conversations` · `messages` · `interactions` · `itineraries` | P3 (`itineraries` P4) |
-| Telemetry | `llm_calls` (trace/span, provider, model, purpose `chat/extract/embed/judge`, tokens incl. cache, cost, latency, stop_reason) | P0 |
+| Telemetry | `llm_calls` (trace/span, provider, model, purpose `chat/extract/embed/judge/smoke`, tokens incl. cache, cost, latency, stop_reason) | P0 |
 | | `feedback` | P3 |
 
 ---
@@ -128,7 +128,7 @@ Embeddings are noise. Start chat on Opus 5; measure whether Sonnet 5 holds the b
 
 ## 7. Ingestion
 
-1. **`sync-graf`** — venues (568), users (158), events (104, live window → snapshot nightly). Facts only.
+1. **`sync-graf`** — venues (568), users (158), events (58–104, live window → snapshot nightly). Facts only.
 2. **`crawl`** — robots check, homepage → candidate pages by keyword heuristics, ≤8 pages/venue, `trafilatura` main text, `content_hash`.
 3. **`extract`** — skip unchanged hash; schema-validated `Exhibition[]` with original English summary.
 4. **`embed`** — embed `summary_en` + themes for new/changed exhibitions (P3).
@@ -186,7 +186,7 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
 - **Langfuse SDK surface unverified** — first P0 task; OTel + Postgres stands alone if it has drifted.
 - **p95 latency** with three round trips — fallbacks: lower `effort`, then merge search + hydrate.
-- **GRAF's 104-event window** — long-running shows depend on crawling.
+- **GRAF's live event window** (58–104 events) — long-running shows depend on crawling.
 - **~12 Instagram-only venues** stay facts-only.
 - **EU database right** — reduced, not zero; blocking for any public launch.
 
