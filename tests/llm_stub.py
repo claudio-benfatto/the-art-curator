@@ -5,7 +5,8 @@ The real `LlmClient` runs unchanged; only the wire is fake:
   run as in production. Queue responses with `StubLlm.reply` / `StubLlm.fail`.
 - Converse gets a botocore `Stubber` on a real (credential-less) boto3 client.
 
-Rows go to `StubLlm.calls` instead of the database, unless a recorder is passed.
+Rows go to `StubLlm.calls` instead of the database, unless a recorder is passed. Spans go to an
+in-memory exporter (`StubLlm.spans`) — exactly what Langfuse would receive.
 """
 
 import json
@@ -16,6 +17,9 @@ import boto3
 import httpx2
 from anthropic import AsyncAnthropicBedrockMantle
 from botocore.stub import Stubber
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from art_curator.db.models import LlmCall
 from art_curator.llm.client import LlmClient, Recorder
@@ -43,7 +47,21 @@ class StubLlm:
         )
         self.converse_stub = Stubber(runtime)
         self.converse_stub.activate()
-        self.client = LlmClient(mantle=mantle, runtime=runtime, record=record or self._capture)
+
+        # A private provider, so tests never touch the global one.
+        self.exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(self.exporter))
+        self.client = LlmClient(
+            mantle=mantle,
+            runtime=runtime,
+            record=record or self._capture,
+            tracer=provider.get_tracer("test"),
+        )
+
+    @property
+    def spans(self) -> tuple[ReadableSpan, ...]:
+        return self.exporter.get_finished_spans()
 
     async def _capture(self, row: LlmCall) -> None:
         self.calls.append(row)
