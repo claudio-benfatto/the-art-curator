@@ -23,6 +23,14 @@ models:
     cache_write_1h: "4.00"
     cache_read: "0.20"
 
+  # Same model on bedrock-runtime via the global inference profile (Converse). Same price.
+  global.anthropic.claude-haiku-4-5-20251001-v1:0:
+    input: "1.00"
+    output: "5.00"
+    cache_write_5m: "1.25"
+    cache_write_1h: "2.00"
+    cache_read: "0.10"
+
   anthropic.claude-haiku-4-5:
     input: "1.00"
     output: "5.00"

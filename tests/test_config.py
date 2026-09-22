@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import pytest
 from typer.testing import CliRunner
 
@@ -20,9 +23,23 @@ def test_defaults():
     s = Settings(_env_file=None)
     assert s.aws_region == "eu-west-1"
     assert s.chat_model.startswith("anthropic.")
-    assert s.extract_model.startswith("anthropic.")
+    assert s.extract_model.startswith("global.anthropic.")
     assert s.embed_model is None
     assert s.database_url.startswith("postgresql+asyncpg://")
+
+
+def _tf_default(name: str) -> str:
+    tf = (Path(__file__).resolve().parents[1] / "infra/terraform/variables.tf").read_text()
+    match = re.search(rf'variable "{name}" \{{.*?default\s*=\s*"([^"]+)"', tf, re.DOTALL)
+    assert match, f"no default for {name} in variables.tf"
+    return match.group(1)
+
+
+def test_model_defaults_match_terraform():
+    # A mismatch isn't caught anywhere else: the app role's IAM just denies the call.
+    s = Settings(_env_file=None)
+    assert s.chat_model == _tf_default("chat_model_id")
+    assert s.extract_model == "global." + _tf_default("extract_model_id")
 
 
 def test_env_overrides(monkeypatch):

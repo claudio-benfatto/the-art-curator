@@ -51,10 +51,12 @@ Bedrock model IDs carry an `anthropic.` prefix. Env-driven:
 
 ```
 AWS_REGION=eu-west-1
-CHAT_MODEL=anthropic.claude-opus-5       # access is gated per account — check the console
-EXTRACT_MODEL=anthropic.claude-haiku-4-5
-EMBED_MODEL=                              # chosen by measurement in P3
+CHAT_MODEL=anthropic.claude-opus-5                          # Mantle ID; blocked for now — see Current state
+EXTRACT_MODEL=global.anthropic.claude-haiku-4-5-20251001-v1:0  # runtime global profile, via Converse
+EMBED_MODEL=                                                 # chosen by measurement in P3
 ```
+
+Mantle and runtime IDs differ (`anthropic.claude-haiku-4-5` vs `global.anthropic.claude-haiku-4-5-20251001-v1:0`), and `pricing.yaml` and the Terraform IAM are keyed on the exact ID the client sends. `tests/test_config.py` checks the defaults against `infra/terraform/variables.tf`.
 
 Global endpoint by default. Regional (EU) endpoints cost **+10%** — only switch for a data-residency reason.
 
@@ -188,9 +190,18 @@ Tests use `tests/llm_stub.py`: the real `LlmClient` over a mock HTTP transport (
 
 DB tests create and drop their own throwaway databases on the `DATABASE_URL` server and skip if it's unreachable; CI sets `REQUIRE_DB=1` so they fail instead.
 
-Still open before the client code (PRs 6–7):
+**Bedrock access is partly blocked (2026-09-22), pending AWS.** `get-foundation-model-availability` reports `AUTHORIZED` / `AVAILABLE` — **that does not prove a model can be called.** Observed from the same account, credentials and region:
 
-- Confirm that top-level automatic caching works on the Mantle endpoint (check `cache_read_input_tokens` on a second call). Opus 5 access is confirmed for the account (`authorizationStatus: AUTHORIZED` in eu-west-1, 2026-09-21); model enablement is Terraform-managed (`bedrock.tf`).
+| Call | Result |
+|---|---|
+| Opus 5 — Mantle, and runtime Converse (`global.` and `eu.` profiles) | 403 "not available for this account" |
+| Haiku 4.5, Opus 4.8 — Mantle | 403, same message |
+| Haiku 4.5, Opus 4.6, Nova Micro — runtime Converse | works |
+
+So: Opus 5 is blocked everywhere, and Mantle is blocked for every model. Until AWS resolves it, extraction runs on Haiku via runtime Converse, and the P0 smoke runs there too. The Opus 5 / Mantle auto-caching check moves to a gate before P3 (PLAN.md § 8). If it's still blocked when P3 starts, the choices are chat on Opus 4.6 via the legacy `AnthropicBedrock` path (explicit cache breakpoints only — no automatic caching there) or Claude Platform on AWS; either changes § 4 and § 6 above.
+
+Still open:
+
 - Verify the Langfuse SDK surface against live docs. If it has drifted, the OTel + Postgres layer stands alone and Langfuse can be dropped without data loss.
 
 **P3 is the real checkpoint.** If the curator isn't good over 20 venues of data, scaling to 158 won't fix it. Don't build P4–P6 to avoid finding out.
