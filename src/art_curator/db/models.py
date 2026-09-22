@@ -1,8 +1,12 @@
 """ORM models. Each table lands in the phase that first writes it (PLAN.md § 4).
 
-CLAUDE.md § 1: GRAF-sourced tables hold facts only — no description/summary/body columns.
+CLAUDE.md § 1: source-fact tables hold facts only — no description/summary/body columns.
 Third-party text exists only in `venue_pages.raw_text`, a 7-day processing cache.
 `tests/test_no_verbatim.py` enforces both.
+
+Every fact table carries a `source` column (currently always `"graf"`) so a second event
+source can land without renaming columns or widening uniqueness after the fact — external
+ids are only unique per source, not globally.
 """
 
 from datetime import datetime
@@ -19,6 +23,7 @@ from sqlalchemy import (
     MetaData,
     Numeric,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -44,17 +49,26 @@ def _created_at() -> Mapped[datetime]:
     return mapped_column(server_default=func.now())
 
 
-# --- Facts (GRAF) -------------------------------------------------------------------------------
+def _source() -> Mapped[str]:
+    return mapped_column(server_default=text("'graf'"))
+
+
+# --- Facts (source) ------------------------------------------------------------------------------
 
 
 class Venue(Base):
-    """A GRAF `event-venues` term, joined in P1 to the venue's profile (`users`) for its URL."""
+    """A venue term from an event source, joined in P1 to the venue's profile for its URL.
+
+    `source` identifies which event source `source_venue_id` / `source_profile_id` are scoped to
+    (today, always GRAF's `event-venues` term id / matched `users` profile id).
+    """
 
     __tablename__ = "venues"
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    graf_venue_id: Mapped[int] = mapped_column(unique=True)  # event-venues term id
-    graf_user_id: Mapped[int | None] = mapped_column(unique=True)  # venue profile, if matched
+    source: Mapped[str] = _source()
+    source_venue_id: Mapped[int]  # event-venues term id, scoped to `source`
+    source_profile_id: Mapped[int | None]  # venue profile, if matched; scoped to `source`
     name: Mapped[str]
     slug: Mapped[str]
     address: Mapped[str | None]
@@ -72,61 +86,73 @@ class Venue(Base):
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
-    __table_args__ = (Index("ix_venues_geom", "geom", postgresql_using="gist"),)
+    __table_args__ = (
+        Index("ix_venues_geom", "geom", postgresql_using="gist"),
+        UniqueConstraint("source", "source_venue_id"),
+        UniqueConstraint("source", "source_profile_id"),
+    )
 
 
-class GrafEventSnapshot(Base):
-    """One row per GRAF event (WordPress post) ever seen. `/events` is a live window, not an
-    archive, so this table is the only history we have (CLAUDE.md § The GRAF API).
+class EventSnapshot(Base):
+    """One row per source event (a GRAF WordPress post, today) ever seen. `/events` is a live
+    window, not an archive, so this table is the only history we have (CLAUDE.md § The GRAF API).
 
-    Dates live on `graf_event_occurrences`, not here: an event has one or more occurrences.
+    Dates live on `event_occurrences`, not here: an event has one or more occurrences.
+    `source_event_id` is stable across edits but only unique within `source`.
     """
 
-    __tablename__ = "graf_event_snapshots"
+    __tablename__ = "event_snapshots"
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    graf_event_id: Mapped[int] = mapped_column(unique=True)  # post id; stable across edits
+    source: Mapped[str] = _source()
+    source_event_id: Mapped[int]  # post id; stable across edits, scoped to `source`
     venue_id: Mapped[int | None] = mapped_column(ForeignKey("venues.id"))
     # Titles are persisted as dedup identifiers — decided, not an oversight (CLAUDE.md § 1).
     title: Mapped[str]  # WordPress `title.rendered`
     title_en: Mapped[str | None]
-    graf_category_id: Mapped[int | None]  # acf.event_category (taxonomy term id)
+    source_category_id: Mapped[int | None]  # acf.event_category (taxonomy term id)
     is_free: Mapped[bool | None]
     price_min: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
     price_max: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
     is_online: Mapped[bool | None]
-    graf_url: Mapped[str]
+    source_url: Mapped[str]
     web_url_ca: Mapped[str | None]
     web_url_es: Mapped[str | None]
     web_url_en: Mapped[str | None]
-    graf_modified_at: Mapped[datetime | None]
+    source_modified_at: Mapped[datetime | None]
     first_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    __table_args__ = (Index("ix_graf_event_snapshots_venue_id", "venue_id"),)
+    __table_args__ = (
+        Index("ix_event_snapshots_venue_id", "venue_id"),
+        UniqueConstraint("source", "source_event_id"),
+    )
 
 
-class GrafEventOccurrence(Base):
-    """When a GRAF event happens (`/events/{id}/occurrences`). A multi-week exhibition is one
-    occurrence spanning its run; a recurring event would have several.
+class EventOccurrence(Base):
+    """When a source event happens (GRAF's `/events/{id}/occurrences`, today). A multi-week
+    exhibition is one occurrence spanning its run; a recurring event would have several.
 
-    If GRAF ever regenerates an occurrence (e.g. on a date edit), the old row stays behind with
-    stale dates. `last_seen_at` is how the sync tells a superseded occurrence from a current one.
+    If the source ever regenerates an occurrence (e.g. on a date edit), the old row stays behind
+    with stale dates. `last_seen_at` is how the sync tells a superseded occurrence from a current
+    one. `source_occurrence_id` is only unique within `source`.
     """
 
-    __tablename__ = "graf_event_occurrences"
+    __tablename__ = "event_occurrences"
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    event_id: Mapped[int] = mapped_column(ForeignKey("graf_event_snapshots.id", ondelete="CASCADE"))
-    graf_occurrence_id: Mapped[int] = mapped_column(BigInteger, unique=True)
+    source: Mapped[str] = _source()
+    event_id: Mapped[int] = mapped_column(ForeignKey("event_snapshots.id", ondelete="CASCADE"))
+    source_occurrence_id: Mapped[int] = mapped_column(BigInteger)
     starts_at: Mapped[datetime]
     ends_at: Mapped[datetime | None]
     first_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     __table_args__ = (
-        Index("ix_graf_event_occurrences_event_id", "event_id"),
-        Index("ix_graf_event_occurrences_starts_at", "starts_at"),
+        Index("ix_event_occurrences_event_id", "event_id"),
+        Index("ix_event_occurrences_starts_at", "starts_at"),
+        UniqueConstraint("source", "source_occurrence_id"),
     )
 
 

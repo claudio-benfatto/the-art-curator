@@ -1,6 +1,6 @@
 """CLAUDE.md § 1: facts from GRAF, prose from nobody. Do not skip or weaken these tests.
 
-Schema half (P0): no GRAF-sourced table may carry a prose column, and third-party page text may
+Schema half (P0): no source-fact table may carry a prose column, and third-party page text may
 live only in `venue_pages.raw_text`. Checked against the models *and* the migrated database, so a
 hand-written migration cannot slip a column past the models.
 
@@ -17,7 +17,7 @@ from tests.db import run_sql
 
 # Every table must be classified here. A new table fails `test_every_table_is_classified` until
 # someone decides which rules apply to it — that decision is the point.
-GRAF_TABLES = {"venues", "graf_event_snapshots", "graf_event_occurrences"}  # facts only, ever
+SOURCE_TABLES = {"venues", "event_snapshots", "event_occurrences"}  # facts only, ever
 PROSE_CACHE = {"venue_pages": {"raw_text"}}  # third-party text, 7-day TTL, purged
 OWN_TABLES = {"llm_calls"}  # our data; no third-party text
 
@@ -48,10 +48,10 @@ def _violations(columns: dict[str, set[str]]) -> list[str]:
     found = []
     for table, names in columns.items():
         for name in names:
-            if table in GRAF_TABLES and PROSE.search(name):
-                found.append(f"{table}.{name}: prose-like column on a GRAF-sourced table")
+            if table in SOURCE_TABLES and PROSE.search(name):
+                found.append(f"{table}.{name}: prose-like column on a source-fact table")
             elif (
-                table not in GRAF_TABLES
+                table not in SOURCE_TABLES
                 and THIRD_PARTY_TEXT.search(name)
                 and name not in PROSE_CACHE.get(table, set())
             ):
@@ -60,7 +60,7 @@ def _violations(columns: dict[str, set[str]]) -> list[str]:
 
 
 def test_every_table_is_classified():
-    classified = GRAF_TABLES | set(PROSE_CACHE) | OWN_TABLES
+    classified = SOURCE_TABLES | set(PROSE_CACHE) | OWN_TABLES
     assert set(Base.metadata.tables) == classified
 
 
@@ -78,8 +78,8 @@ def test_database_carries_no_third_party_prose(migrated_db):
     ("table", "column"),
     [
         ("venues", "description"),
-        ("graf_event_snapshots", "desc_en"),
-        ("graf_event_snapshots", "summary"),
+        ("event_snapshots", "desc_en"),
+        ("event_snapshots", "summary"),
         ("venues", "body_html"),
         ("llm_calls", "response_body"),
         ("venue_pages", "raw_html"),

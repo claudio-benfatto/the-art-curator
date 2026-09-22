@@ -1,4 +1,4 @@
-"""P0 schema: extensions, GRAF facts, venue_pages cache, llm_calls.
+"""P0 schema: extensions, source facts, venue_pages cache, llm_calls.
 
 Revision ID: 0001
 Revises:
@@ -63,8 +63,9 @@ def upgrade() -> None:
     op.create_table(
         "venues",
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.Column("graf_venue_id", sa.Integer(), nullable=False),
-        sa.Column("graf_user_id", sa.Integer(), nullable=True),
+        sa.Column("source", sa.Text(), server_default=sa.text("'graf'"), nullable=False),
+        sa.Column("source_venue_id", sa.Integer(), nullable=False),
+        sa.Column("source_profile_id", sa.Integer(), nullable=True),
         sa.Column("name", sa.Text(), nullable=False),
         sa.Column("slug", sa.Text(), nullable=False),
         sa.Column("address", sa.Text(), nullable=True),
@@ -93,8 +94,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_venues")),
-        sa.UniqueConstraint("graf_user_id", name=op.f("uq_venues_graf_user_id")),
-        sa.UniqueConstraint("graf_venue_id", name=op.f("uq_venues_graf_venue_id")),
+        sa.UniqueConstraint(
+            "source", "source_profile_id", name=op.f("uq_venues_source_source_profile_id")
+        ),
+        sa.UniqueConstraint(
+            "source", "source_venue_id", name=op.f("uq_venues_source_source_venue_id")
+        ),
     )
     op.create_index(
         "ix_venues_geom",
@@ -104,22 +109,23 @@ def upgrade() -> None:
         postgresql_using="gist",
     )
     op.create_table(
-        "graf_event_snapshots",
+        "event_snapshots",
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
-        sa.Column("graf_event_id", sa.Integer(), nullable=False),
+        sa.Column("source", sa.Text(), server_default=sa.text("'graf'"), nullable=False),
+        sa.Column("source_event_id", sa.Integer(), nullable=False),
         sa.Column("venue_id", sa.BigInteger(), nullable=True),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("title_en", sa.Text(), nullable=True),
-        sa.Column("graf_category_id", sa.Integer(), nullable=True),
+        sa.Column("source_category_id", sa.Integer(), nullable=True),
         sa.Column("is_free", sa.Boolean(), nullable=True),
         sa.Column("price_min", sa.Numeric(precision=8, scale=2), nullable=True),
         sa.Column("price_max", sa.Numeric(precision=8, scale=2), nullable=True),
         sa.Column("is_online", sa.Boolean(), nullable=True),
-        sa.Column("graf_url", sa.Text(), nullable=False),
+        sa.Column("source_url", sa.Text(), nullable=False),
         sa.Column("web_url_ca", sa.Text(), nullable=True),
         sa.Column("web_url_es", sa.Text(), nullable=True),
         sa.Column("web_url_en", sa.Text(), nullable=True),
-        sa.Column("graf_modified_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("source_modified_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "first_seen_at",
             sa.DateTime(timezone=True),
@@ -133,14 +139,14 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
-            ["venue_id"], ["venues.id"], name=op.f("fk_graf_event_snapshots_venue_id_venues")
+            ["venue_id"], ["venues.id"], name=op.f("fk_event_snapshots_venue_id_venues")
         ),
-        sa.PrimaryKeyConstraint("id", name=op.f("pk_graf_event_snapshots")),
-        sa.UniqueConstraint("graf_event_id", name=op.f("uq_graf_event_snapshots_graf_event_id")),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_event_snapshots")),
+        sa.UniqueConstraint(
+            "source", "source_event_id", name=op.f("uq_event_snapshots_source_source_event_id")
+        ),
     )
-    op.create_index(
-        "ix_graf_event_snapshots_venue_id", "graf_event_snapshots", ["venue_id"], unique=False
-    )
+    op.create_index("ix_event_snapshots_venue_id", "event_snapshots", ["venue_id"], unique=False)
     op.create_table(
         "venue_pages",
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
@@ -171,10 +177,11 @@ def upgrade() -> None:
     )
     op.create_index("ix_venue_pages_venue_id", "venue_pages", ["venue_id"], unique=False)
     op.create_table(
-        "graf_event_occurrences",
+        "event_occurrences",
         sa.Column("id", sa.BigInteger(), sa.Identity(always=False), nullable=False),
+        sa.Column("source", sa.Text(), server_default=sa.text("'graf'"), nullable=False),
         sa.Column("event_id", sa.BigInteger(), nullable=False),
-        sa.Column("graf_occurrence_id", sa.BigInteger(), nullable=False),
+        sa.Column("source_occurrence_id", sa.BigInteger(), nullable=False),
         sa.Column("starts_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("ends_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
@@ -191,27 +198,29 @@ def upgrade() -> None:
         ),
         sa.ForeignKeyConstraint(
             ["event_id"],
-            ["graf_event_snapshots.id"],
-            name=op.f("fk_graf_event_occurrences_event_id_graf_event_snapshots"),
+            ["event_snapshots.id"],
+            name=op.f("fk_event_occurrences_event_id_event_snapshots"),
             ondelete="CASCADE",
         ),
-        sa.PrimaryKeyConstraint("id", name=op.f("pk_graf_event_occurrences")),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_event_occurrences")),
         sa.UniqueConstraint(
-            "graf_occurrence_id", name=op.f("uq_graf_event_occurrences_graf_occurrence_id")
+            "source",
+            "source_occurrence_id",
+            name=op.f("uq_event_occurrences_source_source_occurrence_id"),
         ),
     )
     op.create_index(
-        "ix_graf_event_occurrences_event_id", "graf_event_occurrences", ["event_id"], unique=False
+        "ix_event_occurrences_event_id", "event_occurrences", ["event_id"], unique=False
     )
     op.create_index(
-        "ix_graf_event_occurrences_starts_at", "graf_event_occurrences", ["starts_at"], unique=False
+        "ix_event_occurrences_starts_at", "event_occurrences", ["starts_at"], unique=False
     )
 
 
 def downgrade() -> None:
-    op.drop_index("ix_graf_event_occurrences_starts_at", table_name="graf_event_occurrences")
-    op.drop_index("ix_graf_event_occurrences_event_id", table_name="graf_event_occurrences")
-    op.drop_table("graf_event_occurrences")
+    op.drop_index("ix_event_occurrences_starts_at", table_name="event_occurrences")
+    op.drop_index("ix_event_occurrences_event_id", table_name="event_occurrences")
+    op.drop_table("event_occurrences")
     op.drop_index("ix_venue_pages_venue_id", table_name="venue_pages")
     op.drop_index(
         "ix_venue_pages_purge",
@@ -219,8 +228,8 @@ def downgrade() -> None:
         postgresql_where=sa.text("raw_text IS NOT NULL"),
     )
     op.drop_table("venue_pages")
-    op.drop_index("ix_graf_event_snapshots_venue_id", table_name="graf_event_snapshots")
-    op.drop_table("graf_event_snapshots")
+    op.drop_index("ix_event_snapshots_venue_id", table_name="event_snapshots")
+    op.drop_table("event_snapshots")
     op.drop_index("ix_venues_geom", table_name="venues")
     op.drop_table("venues")
     op.drop_index("ix_llm_calls_trace_id", table_name="llm_calls")

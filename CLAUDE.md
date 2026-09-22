@@ -134,9 +134,9 @@ Gotchas:
 
 - **`longtitude` is misspelled in their API.** The field is literally `longtitude`, not `longitude`. Latitude is spelled correctly. Both are strings.
 - The taxonomy's `rest_base` is `event-venues` (plural); the taxonomy *name* is `event-venue` (singular). Event objects carry `event-venues: [<term_id>]`.
-- **`events` returns only the live window regardless of date filters.** Passing `start=2020-01-01` changes nothing. This is why `graf_event_snapshots` exists and why nightly sync is load-bearing — history is unrecoverable if we miss it.
+- **`events` returns only the live window regardless of date filters.** Passing `start=2020-01-01` changes nothing. This is why `event_snapshots` exists and why nightly sync is load-bearing — history is unrecoverable if we miss it.
 - Event `date` is `null`. Use `start` / `end` (ISO 8601 with offset).
-- **An event (post `id`) has one or more occurrences** at `/events/{id}/occurrences`, each with its own `occurrence_id`, `start`, `end`. Hence `graf_event_snapshots` (keyed on `graf_event_id`) + `graf_event_occurrences` (keyed on `graf_occurrence_id`). On 2026-09-22 all 58 live events had exactly one occurrence — a multi-week show is one occurrence spanning its run. The list endpoint's `occurrence_id` is a **string**; `/occurrences` returns an **int**. The single-event endpoint omits it.
+- **An event (post `id`) has one or more occurrences** at `/events/{id}/occurrences`, each with its own `occurrence_id`, `start`, `end`. Hence `event_snapshots` (keyed on `source, source_event_id`) + `event_occurrences` (keyed on `source, source_occurrence_id`). On 2026-09-22 all 58 live events had exactly one occurrence — a multi-week show is one occurrence spanning its run. The list endpoint's `occurrence_id` is a **string**; `/occurrences` returns an **int**. The single-event endpoint omits it.
 - `per_page` maxes at 100, but **a page can come back short** (100 requested → 36 returned, `x-wp-total: 58`). Paginate by `x-wp-totalpages`, never by "page was not full".
 - Some venue `url` values point at Instagram. Those venues are `crawl_enabled=false` and stay facts-only.
 - Use `curl` over `urllib` when probing — Cloudflare rejects some Python UAs.

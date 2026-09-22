@@ -87,7 +87,7 @@ Each table lands in the phase that first writes it — no speculative schema.
 
 | Layer | Tables | Phase |
 |---|---|---|
-| Facts (GRAF) | `venues` (ids, name, address, `geom`, website/instagram URL, crawl flags) · `graf_event_snapshots` (one row per event: ids, venue, title, category, free, price range, URLs, first/last seen) · `graf_event_occurrences` (start/end per occurrence, first/last seen) — **no description columns** | P0 |
+| Facts (source) | `venues` (`source`, source-scoped ids, name, address, `geom`, website/instagram URL, crawl flags) · `event_snapshots` (one row per event: `source`, source-scoped ids, venue, title, category, free, price range, URLs, first/last seen) · `event_occurrences` (start/end per occurrence, first/last seen) — **no description columns**; `source` is `"graf"` today, other event sources are additive | P0 |
 | Derived (LLM) | `venue_pages` (url, status, `content_hash`, `raw_text`; **7-day TTL**) | P0 |
 | | `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, `embedding`, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) | P2 (`embedding` P3) |
 | User | `users` · `profile_facts` (append-only, `superseded_by`) · `conversations` · `messages` · `interactions` · `itineraries` | P3 (`itineraries` P4) |
@@ -169,7 +169,7 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | 1 | Scaffold: uv, `pyproject.toml`, `src/art_curator/`, `config.py`, typer `cli.py`, ruff/pytest, `.env.example` | `ruff` clean, config test green |
 | 2 | CI baseline: ruff, pytest + Postgres service, model-client grep; SHA-pinned actions | Green; a planted client import fails the grep |
 | 3 | Compose: db image (PostGIS + pgvector, pushed to GHCR for CI) + Langfuse | Healthy; both extensions load |
-| 4 | Schema + Alembic: `llm_calls`, `venues`, `graf_event_snapshots`, `venue_pages`; schema half of `test_no_verbatim.py` | Migrates locally + CI; invariant test green |
+| 4 | Schema + Alembic: `llm_calls`, `venues`, `event_snapshots`, `venue_pages`; schema half of `test_no_verbatim.py` | Migrates locally + CI; invariant test green |
 | 5 | `pricing.yaml` + `llm/pricing.py` (in/out/cache-write/cache-read) | Pure unit tests vs hand-computed costs |
 | 6 | `llm/client.py`: Mantle + Converse, one `llm_calls` row per call, static-prefix breakpoint helper, test stub | Stubbed tests: row per call, correct cost |
 | 7 | `obs/telemetry.py`: OTel spans, trace/span ids on `llm_calls`, Langfuse export behind a flag, **extract-purpose bodies masked** (constraint 1) | Span ids land in row; masking test green |
