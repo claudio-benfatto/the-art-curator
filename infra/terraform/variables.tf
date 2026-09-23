@@ -27,6 +27,12 @@ variable "apply_environment" {
   default     = "infra-apply"
 }
 
+variable "smoke_environment" {
+  description = "GitHub environment whose OIDC subject may assume the smoke role. Must match the `environment:` of .github/workflows/smoke.yml (infra/README.md step 5)."
+  type        = string
+  default     = "smoke"
+}
+
 variable "tf_state_bucket" {
   description = "Name of the hand-created S3 state bucket (infra/README.md step 1). No default — must match backend.tf's -backend-config bucket exactly, so the CI role's permissions target the right ARN."
   type        = string
@@ -35,18 +41,16 @@ variable "tf_state_bucket" {
 # Keep these in sync with config.py's CHAT_MODEL / EXTRACT_MODEL defaults.
 # EMBED_MODEL is chosen by measurement in P3 and added then.
 
-# A bedrock-mantle model ID — matched against the bedrock-mantle:Model
-# condition key in bedrock.tf, not used to build ARNs.
+# Both are bedrock-runtime *catalog* IDs, called through their `global.`
+# inference profiles, so config.py's CHAT_MODEL / EXTRACT_MODEL are these with
+# a `global.` prefix. Mantle is blocked for this account (CLAUDE.md, Current
+# state); chat sits on Opus 4.6, the newest Claude this account can call.
 variable "chat_model_id" {
-  description = "Bedrock model ID for chat (Claude only, per CLAUDE.md #4)."
+  description = "Bedrock catalog model ID for chat (Claude only, per CLAUDE.md #4), invoked via its global. inference profile."
   type        = string
-  default     = "anthropic.claude-opus-5"
+  default     = "anthropic.claude-opus-4-6-v1"
 }
 
-# A bedrock-runtime *catalog* ID. Extraction calls it through the global
-# inference profile, so config.py's EXTRACT_MODEL is this with a `global.`
-# prefix. Mantle refuses every model for this account (CLAUDE.md, Current
-# state), so extraction runs on bedrock-runtime Converse until that's fixed.
 variable "extract_model_id" {
   description = "Bedrock catalog model ID for extraction, invoked via its global. inference profile."
   type        = string
@@ -60,6 +64,10 @@ variable "extract_model_id" {
 variable "bedrock_agreement_model_ids" {
   description = "Bedrock catalog model IDs to enable (Marketplace agreement) — the models behind chat_model_id / extract_model_id, plus candidates we need to test access for."
   type        = list(string)
+  # Opus 4.6 (the chat model) is absent on purpose: the account can already
+  # invoke it, so declaring an agreement here would fight whatever grants that.
+  # Opus 5 and Sonnet 5 stay subscribed so nothing else has to change when
+  # Bedrock's eligibility for the newest models is reassessed.
   default = [
     "anthropic.claude-opus-5",
     "anthropic.claude-sonnet-5",

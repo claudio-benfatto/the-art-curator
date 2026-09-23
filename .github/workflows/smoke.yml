@@ -1,0 +1,68 @@
+name: Smoke
+
+# The only workflow that calls a model (CLAUDE.md #10). Manual, because it costs money
+# (a fraction of a cent per run). Passes when one real call is recorded in llm_calls with
+# tokens, a trace id and the cost pricing.yaml predicts.
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: Model ID (default EXTRACT_MODEL)
+        required: false
+        default: ""
+      mantle:
+        description: Call via Mantle (Messages API) instead of Converse
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    # Needs infra/README.md step 5; skipped rather than red until then.
+    if: vars.AWS_SMOKE_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    # The smoke role trusts only this environment's OIDC subject (github_oidc.tf).
+    environment: smoke
+    permissions:
+      contents: read
+      id-token: write
+    services:
+      db:
+        image: ghcr.io/claudio-benfatto/art-curator-db:pg16
+        env:
+          POSTGRES_USER: art_curator
+          POSTGRES_PASSWORD: art_curator
+          POSTGRES_DB: art_curator
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U art_curator -d art_curator"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://art_curator:art_curator@localhost:5432/art_curator
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_SMOKE_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: uv run alembic upgrade head
+      # Inputs go through env, never interpolated into the script.
+      - name: Smoke call
+        env:
+          MODEL: ${{ inputs.model }}
+          MANTLE: ${{ inputs.mantle }}
+        run: |
+          args=()
+          if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
+          if [ "$MANTLE" = "true" ]; then args+=(--mantle); fi
+          uv run python -m art_curator.cli smoke "${args[@]}"

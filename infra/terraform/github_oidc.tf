@@ -37,6 +37,7 @@ data "aws_iam_policy_document" "github_assume_role" {
   for_each = {
     plan  = ["${var.github_oidc_sub_prefix}:pull_request", "${var.github_oidc_sub_prefix}:ref:refs/heads/main"]
     apply = ["${var.github_oidc_sub_prefix}:environment:${var.apply_environment}"]
+    smoke = ["${var.github_oidc_sub_prefix}:environment:${var.smoke_environment}"]
   }
 
   statement {
@@ -202,4 +203,22 @@ resource "aws_iam_role_policy" "github_apply" {
   name   = "terraform-apply"
   role   = aws_iam_role.github_apply.id
   policy = data.aws_iam_policy_document.github_apply.json
+}
+
+# --- smoke: live model call, environment-gated --------------------------------
+# The one CI job that calls a model (CLAUDE.md #10: run on purpose, it costs
+# money). Same Bedrock policy as the app role, so a passing smoke also proves
+# the app's IAM scope. Its own environment gives it a distinct OIDC subject —
+# a PR or a push to main can't obtain it.
+
+resource "aws_iam_role" "github_smoke" {
+  name               = "art-curator-github-smoke"
+  assume_role_policy = data.aws_iam_policy_document.github_assume_role["smoke"].json
+  description        = "Live Bedrock smoke test from the ${var.smoke_environment} environment in ${var.github_repo} via OIDC."
+}
+
+resource "aws_iam_role_policy" "github_smoke" {
+  name   = "bedrock-access"
+  role   = aws_iam_role.github_smoke.id
+  policy = data.aws_iam_policy_document.app_bedrock_access.json
 }

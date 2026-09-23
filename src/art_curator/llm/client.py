@@ -1,9 +1,14 @@
 """The only place a model is called (CLAUDE.md § 2). Every call — success or failure — writes one
 `llm_calls` row with tokens, cost and latency before control returns to the caller.
 
-Two transports, both Bedrock:
-- Mantle (the Messages-API endpoint) for Claude. Chat is Claude-only, so chat goes here.
-- `bedrock-runtime` Converse for any other Bedrock model (extraction, judge).
+Three transports, all Bedrock. `create_message` picks between the first two by model ID, so
+callers name a model and nothing else changes:
+- **Mantle** (`anthropic.claude-*`) — the Messages-API endpoint. Blocked for this account today
+  (CLAUDE.md, Current state); kept ready for when that lifts.
+- **InvokeModel** (`global.` / `us.` / `eu.` … inference profiles) — the runtime endpoint, same
+  Messages shape. Chat runs here on Opus 4.6. No top-level automatic caching (§ 6).
+- **Converse** (`converse_message`) — the runtime endpoint's model-agnostic shape, for
+  extraction, judge and embeddings.
 
 Streaming is not wrapped yet: `/chat` lands in P3 and will add a recorded stream here.
 """
@@ -17,7 +22,7 @@ from functools import lru_cache
 from typing import Any, Literal, get_args
 
 import boto3
-from anthropic import AsyncAnthropicBedrockMantle
+from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
 from anthropic.types import Message, TextBlockParam
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -32,26 +37,60 @@ Purpose = Literal["chat", "extract", "embed", "judge", "smoke"]
 PURPOSES: tuple[str, ...] = get_args(Purpose)
 
 PROVIDER_MANTLE = "bedrock-mantle"
+PROVIDER_INVOKE = "bedrock-invoke"
 PROVIDER_CONVERSE = "bedrock-converse"
 
-# Top-level automatic caching for the conversation tail (CLAUDE.md § 6).
-AUTO_CACHE = {"type": "ephemeral"}
+# Cross-region inference profile prefixes. A model ID carrying one is served by the runtime
+# endpoint; a bare `anthropic.` ID is a Mantle ID.
+PROFILE_PREFIXES = ("global.", "us.", "eu.", "jp.", "apac.", "au.")
+
+EPHEMERAL = {"type": "ephemeral"}
+# Top-level automatic caching. Mantle only — InvokeModel rejects it (CLAUDE.md § 6).
+AUTO_CACHE = EPHEMERAL
 
 Recorder = Callable[[LlmCall], Awaitable[None]]
 
 
-def static_prefix(*texts: str) -> list[TextBlockParam]:
-    """System prompt blocks carrying the one explicit cache breakpoint, on the last block.
+def is_profile_model(model: str) -> bool:
+    return model.startswith(PROFILE_PREFIXES)
 
-    The API renders tools → system → messages, so this breakpoint caches the tool definitions
-    too. Pass alongside `cache_control=AUTO_CACHE` so the conversation tail is cached as well.
-    Nothing per-request (timestamps, ids) may go in `texts` — it would break the prefix.
+
+def static_prefix(*texts: str) -> list[TextBlockParam]:
+    """System prompt blocks, with a cache breakpoint on the last one.
+
+    The API renders tools → system → messages, so this breakpoint covers the tool definitions
+    too. Nothing per-request (timestamps, ids) may go in `texts` — it would break the prefix.
+
+    On Opus 4.6 the minimum cacheable prefix is 4096 tokens, well above our ~2.5k static prefix,
+    so this breakpoint alone caches nothing there. `cached_tail` is what makes caching work on
+    that model; this one starts paying off if chat moves back to a 512-minimum model.
     """
     if not texts:
         raise ValueError("static_prefix needs at least one block")
     blocks: list[TextBlockParam] = [{"type": "text", "text": t} for t in texts]
-    blocks[-1]["cache_control"] = {"type": "ephemeral"}
+    blocks[-1]["cache_control"] = dict(EPHEMERAL)
     return blocks
+
+
+def cached_tail(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy of `messages` with a cache breakpoint on the final content block.
+
+    Caching is a prefix match, so a breakpoint at the end of the conversation caches everything
+    before it — tools, system prompt and all earlier turns. This is how the InvokeModel path
+    caches without top-level `cache_control`; move it each turn (CLAUDE.md § 6).
+    """
+    if not messages:
+        raise ValueError("cached_tail needs at least one message")
+    out = [dict(m) for m in messages]
+    last = out[-1]
+    content = last["content"]
+    if isinstance(content, str):
+        last["content"] = [{"type": "text", "text": content, "cache_control": dict(EPHEMERAL)}]
+    else:
+        blocks = [dict(b) for b in content]
+        blocks[-1]["cache_control"] = dict(EPHEMERAL)
+        last["content"] = blocks
+    return out
 
 
 def db_recorder(sessionmaker: async_sessionmaker[AsyncSession]) -> Recorder:
@@ -81,30 +120,53 @@ class LlmClient:
         self,
         *,
         mantle: AsyncAnthropicBedrockMantle,
+        invoke: AsyncAnthropicBedrock,
         runtime: Any,  # boto3 bedrock-runtime client (untyped)
         record: Recorder,
         tracer: trace.Tracer | None = None,
     ) -> None:
         self._mantle = mantle
+        self._invoke = invoke
         self._runtime = runtime
         self._record = record
         self._tracer = tracer or telemetry.get_tracer()
 
     async def create_message(self, *, purpose: Purpose, model: str, **params: Any) -> Message:
-        """Messages API on Mantle. `params` are passed through (system, messages, tools,
-        thinking, output_config, cache_control, max_tokens, ...)."""
+        """Messages API. Routed by model ID: an inference-profile ID (`global.` …) goes to the
+        runtime InvokeModel endpoint, a bare `anthropic.` ID to Mantle. `params` are passed
+        through (system, messages, tools, thinking, output_config, max_tokens, ...)."""
         if params.get("stream"):
             raise ValueError("streaming is not recorded yet; call without stream=True")
 
+        on_profile = is_profile_model(model)
+        if on_profile and "cache_control" in params:
+            # Silent non-caching is the failure mode we'd otherwise debug later: the runtime
+            # endpoint rejects top-level cache_control. Use cached_tail() instead (§ 6).
+            raise ValueError(
+                f"{model} is served by InvokeModel, which has no top-level cache_control; "
+                "mark the breakpoint with cached_tail()"
+            )
+        client = self._invoke if on_profile else self._mantle
+        provider = PROVIDER_INVOKE if on_profile else PROVIDER_MANTLE
+
         async def call() -> tuple[Message, _Outcome]:
-            msg = await self._mantle.messages.create(model=model, **params)
+            msg = await client.messages.create(model=model, **params)
             return msg, _outcome_from_message(msg)
 
-        return await self._recorded(PROVIDER_MANTLE, purpose, model, params, call)
+        return await self._recorded(provider, purpose, model, params, call)
 
-    async def converse(self, *, purpose: Purpose, model: str, **params: Any) -> dict[str, Any]:
-        """Bedrock Converse for non-Claude models. `params` use Converse's own field names
-        (messages, system, inferenceConfig, toolConfig, ...)."""
+    @property
+    def tracer(self) -> trace.Tracer:
+        """For callers that open a parent span, so their calls share its trace id."""
+        return self._tracer
+
+    async def converse_message(
+        self, *, purpose: Purpose, model: str, **params: Any
+    ) -> dict[str, Any]:
+        """Bedrock runtime Converse: any Bedrock model, including Claude via an inference
+        profile. `params` use Converse's own field names (messages, system, inferenceConfig,
+        toolConfig, ...). Not named `converse` so the architecture grep can tell it apart from
+        a direct SDK call."""
         if purpose == "chat":
             raise ValueError("chat is Claude-only and goes through create_message (CLAUDE.md § 4)")
 
@@ -242,6 +304,7 @@ def get_llm_client() -> LlmClient:
     telemetry.setup_telemetry()
     return LlmClient(
         mantle=AsyncAnthropicBedrockMantle(aws_region=settings.aws_region),
+        invoke=AsyncAnthropicBedrock(aws_region=settings.aws_region),
         runtime=boto3.client("bedrock-runtime", region_name=settings.aws_region),
         record=db_recorder(get_sessionmaker()),
     )

@@ -11,8 +11,11 @@ class Settings(BaseSettings):
 
     aws_region: str = "eu-west-1"
 
-    # Bedrock model IDs. Chat is Claude-only (Mantle); the others may be any Bedrock model.
-    chat_model: str = "anthropic.claude-opus-5"
+    # Bedrock model IDs. Chat is Claude-only; the others may be any Bedrock model.
+    # Chat runs on Opus 4.6 through a global inference profile: Mantle (and Opus 5 everywhere)
+    # is blocked for this account (CLAUDE.md, Current state). `llm/client.py` routes on the
+    # `global.` prefix, so restoring Opus 5 here is a one-line change.
+    chat_model: str = "global.anthropic.claude-opus-4-6-v1"
     # A global inference profile, called via Bedrock Converse: Mantle refuses every model
     # for this account until AWS resolves it (CLAUDE.md, Current state). Must match Terraform's
     # extract_model_id with a `global.` prefix, or the app role's IAM denies it.

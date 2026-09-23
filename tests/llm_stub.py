@@ -1,8 +1,9 @@
 """A model-free `LlmClient` for tests. CI never calls a model (CLAUDE.md § 10).
 
 The real `LlmClient` runs unchanged; only the wire is fake:
-- Mantle gets an httpx2 `MockTransport`, so the SDK's own request building and response parsing
-  run as in production. Queue responses with `StubLlm.reply` / `StubLlm.fail`.
+- Both Messages transports (Mantle and InvokeModel) share an httpx2 `MockTransport`, so the
+  SDK's own request building and response parsing run as in production. Queue responses with
+  `StubLlm.reply` / `StubLlm.fail`.
 - Converse gets a botocore `Stubber` on a real (credential-less) boto3 client.
 
 Rows go to `StubLlm.calls` instead of the database, unless a recorder is passed. Spans go to an
@@ -15,7 +16,7 @@ from typing import Any
 
 import boto3
 import httpx2
-from anthropic import AsyncAnthropicBedrockMantle
+from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
 from botocore.stub import Stubber
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
@@ -33,11 +34,20 @@ class StubLlm:
         self.requests: list[dict[str, Any]] = []  # Mantle request bodies, as sent
         self._responses: deque[httpx2.Response] = deque()
 
+        transport = httpx2.MockTransport(self._handle)
         mantle = AsyncAnthropicBedrockMantle(
             aws_region=REGION,
             skip_auth=True,
             max_retries=0,
-            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(self._handle)),
+            http_client=httpx2.AsyncClient(transport=transport),
+        )
+        # The InvokeModel path (chat on an inference profile). A bearer token keeps the SDK from
+        # reaching for AWS credentials; the request never leaves the mock transport.
+        invoke = AsyncAnthropicBedrock(
+            aws_region=REGION,
+            api_key="test",
+            max_retries=0,
+            http_client=httpx2.AsyncClient(transport=transport),
         )
         runtime = boto3.client(
             "bedrock-runtime",
@@ -54,6 +64,7 @@ class StubLlm:
         provider.add_span_processor(SimpleSpanProcessor(self.exporter))
         self.client = LlmClient(
             mantle=mantle,
+            invoke=invoke,
             runtime=runtime,
             record=record or self._capture,
             tracer=provider.get_tracer("test"),
