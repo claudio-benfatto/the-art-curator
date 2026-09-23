@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 code-complete — PRs 1–10 done; awaiting the first live smoke call (§ 8).
-**Last updated:** 2026-09-22 (rev. 6)
+**Status:** P0 done, signed off 2026-09-23 — PRs 1–10 merged, Terraform applied, smoke green locally and from CI. Next: P1 (§ 8).
+**Last updated:** 2026-09-23 (rev. 7)
 
 ---
 
