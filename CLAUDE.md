@@ -39,24 +39,26 @@ Similarly, `queries/events.py` is the shared query module — it backs both the 
 
 ### 4. Amazon Bedrock; chat is Claude-only
 
-Bedrock gives multi-vendor models (incl. embeddings, which Anthropic doesn't offer) under one IAM/bill. **Chat stays on Claude** via the Messages-API endpoint; extraction, judge and embeddings may use any Bedrock model.
+Bedrock gives multi-vendor models (incl. embeddings, which Anthropic doesn't offer) under one IAM/bill. **Chat stays on Claude** via the Messages API; extraction, judge and embeddings may use any Bedrock model.
 
-```python
-from anthropic import AnthropicBedrockMantle
-chat = AnthropicBedrockMantle(aws_region=settings.aws_region)  # SigV4 from the AWS credential chain
-# non-Claude models: boto3 bedrock-runtime Converse / InvokeModel
-```
+Three transports, all behind `llm/client.py`. `create_message` routes on the model ID, so callers name a model and nothing else changes:
 
-Bedrock model IDs carry an `anthropic.` prefix. Env-driven:
+| Transport | Model ID | Used by |
+|---|---|---|
+| Mantle (`AnthropicBedrockMantle`) | `anthropic.claude-opus-5` | nothing today — **refuses every model for this account** (Current state) |
+| InvokeModel (`AnthropicBedrock`) | `global.anthropic.claude-opus-4-6-v1` | chat. Same Messages shape, so tools, thinking and `cache_control` all work |
+| Converse (boto3) | any profile ID | extraction, judge, embeddings |
+
+Env-driven:
 
 ```
 AWS_REGION=eu-west-1
-CHAT_MODEL=anthropic.claude-opus-5                          # Mantle ID; blocked for now — see Current state
-EXTRACT_MODEL=global.anthropic.claude-haiku-4-5-20251001-v1:0  # runtime global profile, via Converse
-EMBED_MODEL=                                                 # chosen by measurement in P3
+CHAT_MODEL=global.anthropic.claude-opus-4-6-v1                 # InvokeModel; Opus 5 + Mantle blocked
+EXTRACT_MODEL=global.anthropic.claude-haiku-4-5-20251001-v1:0  # Converse
+EMBED_MODEL=                                                   # chosen by measurement in P3
 ```
 
-Mantle and runtime IDs differ (`anthropic.claude-haiku-4-5` vs `global.anthropic.claude-haiku-4-5-20251001-v1:0`), and `pricing.yaml` and the Terraform IAM are keyed on the exact ID the client sends. `tests/test_config.py` checks the defaults against `infra/terraform/variables.tf`.
+An inference-profile ID (`global.` …) selects the runtime endpoint; a bare `anthropic.` ID selects Mantle. `pricing.yaml` and the Terraform IAM are keyed on the exact ID the client sends, and `tests/test_config.py` checks the defaults against `infra/terraform/variables.tf` — a mismatch surfaces only as an IAM denial at runtime.
 
 Global endpoint by default. Regional (EU) endpoints cost **+10%** — only switch for a data-residency reason.
 
@@ -68,8 +70,9 @@ Global endpoint by default. Regional (EU) endpoints cost **+10%** — only switc
 
 Training priors on these are stale — several changed in 2025–26.
 
-- Opus 5: `thinking: {type: "adaptive"}`. **Never `budget_tokens`** — removed, returns 400.
-- Opus 5: `output_config: {effort: "high"}` for chat. Inside `output_config`, not top-level.
+- **Opus 4.6 (chat today): `thinking: {type: "adaptive"}` must be set explicitly** — omitting it means no thinking, unlike Opus 5 where thinking is on by default. `budget_tokens` still works there but is deprecated; don't use it.
+- **`effort` on Opus 4.6 is `low`/`medium`/`high`/`max`** — no `xhigh` (that arrived with Opus 4.7). Inside `output_config`, not top-level.
+- Opus 5 (if access returns): `thinking: {type: "adaptive"}`, and **never `budget_tokens`** — removed, returns 400.
 - **Haiku 4.5 is different:** no `effort` (errors), no adaptive thinking. Extraction runs Haiku with thinking off.
 - **No assistant prefill** — 400 on Opus 5. Use tool schemas or system-prompt instructions.
 - **No structured outputs / `strict: true` on Bedrock's Messages endpoint.** Validate every tool input and extraction output with pydantic; on failure return a `tool_result` with `is_error: true` (chat) or retry once (extraction).
@@ -77,18 +80,24 @@ Training priors on these are stale — several changed in 2025–26.
 
 ### 6. Cache layout
 
-**One explicit breakpoint on the static system prefix, plus top-level automatic caching for the conversation tail.** Not manually-moved per-turn breakpoints.
+**A breakpoint at the end of the conversation, moved every turn** — `cached_tail(messages)` in `llm/client.py`. Caching is a prefix match, so that one breakpoint covers tools, system prompt and every earlier turn.
 
 ```
-system prompt → tool definitions → [explicit breakpoint] → conversation (auto-cached)
+tool definitions → system prompt → conversation … [breakpoint on the last block]
 ```
+
+This replaces the original design (one breakpoint on the static prefix + top-level automatic caching), which the current transport and model rule out:
+
+- **InvokeModel has no top-level `cache_control`** — it's a Mantle-only feature. `create_message` raises if you pass it with a profile model, because the alternative is a silently uncached conversation.
+- **Opus 4.6's minimum cacheable prefix is 4096 tokens**, and our static prefix is ~2.5k. A breakpoint on the prefix alone would cache **nothing**. `static_prefix()` still marks it, which costs nothing and starts working if chat moves back to a 512-minimum model.
+
+So caching begins only once a conversation passes 4096 tokens. Early turns pay full price — expected, not a bug.
+
+Verified 2026-09-23 on Opus 4.6: a 7k-token prefix wrote 7015 tokens, and the next call read all 7015.
 
 Never put `datetime.now()` or a per-request ID before the breakpoint. Verify with `usage.cache_read_input_tokens`; if it stays zero across turns, something in the prefix is varying.
 
-Minimum cacheable prefix is model-dependent and **not monotonic across generations**:
-
-- **Opus 5: 512 tokens** — our ~2.5k static prefix caches fine.
-- **Haiku 4.5: 4096 tokens** — the extraction prompt is ~800, so it will **silently never cache**. No error, just `cache_creation_input_tokens: 0`. Cost estimates already assume this; don't hunt for a hit that cannot exist.
+Minimum cacheable prefix is model-dependent and **not monotonic across generations**: Opus 5 is 512; **Opus 4.6 and Haiku 4.5 are 4096**. The extraction prompt is ~800 tokens, so it **silently never caches** — no error, just `cache_creation_input_tokens: 0`. Cost estimates already assume this; don't hunt for a hit that cannot exist.
 
 TTL is 5 minutes by default. The 1-hour TTL costs 2× on write and needs three reads to pay off — measure the start-to-start gap before switching.
 
@@ -196,10 +205,14 @@ DB tests create and drop their own throwaway databases on the `DATABASE_URL` ser
 
 | Call | Result |
 |---|---|
-| Opus 5 — Mantle, and runtime Converse (`global.` and `eu.` profiles) | 403 "not available for this account" |
-| Haiku 4.5, Opus 4.8 — Mantle | 403, same message |
-| Haiku 4.5, Opus 4.6, Nova Micro — runtime Converse | works |
+| Opus 5 — Mantle, and runtime (`global.` and `eu.` profiles) | 403 "not available for this account" |
+| Sonnet 5, Opus 4.8, Opus 4.7, Haiku 4.5 — Mantle | 403, same message |
+| Opus 4.6, Haiku 4.5, Nova Micro — runtime | works |
 
-So: Opus 5 is blocked everywhere, and Mantle is blocked for every model. Until AWS resolves it, extraction runs on Haiku via runtime Converse, and the P0 smoke runs there too. The Opus 5 / Mantle auto-caching check moves to a gate before P3 (PLAN.md § 8). If it's still blocked when P3 starts, the choices are chat on Opus 4.6 via the legacy `AnthropicBedrock` path (explicit cache breakpoints only — no automatic caching there) or Claude Platform on AWS; either changes § 4 and § 6 above.
+**Mantle is blocked account-wide, not per model.** Haiku 4.5 is the control: it has a Marketplace agreement and works on the runtime endpoint, yet Mantle still refuses it. Sonnet 5 was refused after its agreement was applied too.
+
+AWS support (2026-09-23): access to the newest models "depends on additional eligibility factors… account usage history and continued engagement", is not permanent, and is reassessed as usage grows. Nothing we can configure — so **don't spend more time on Bedrock access**; the P1/P2 extraction work generates the usage that may lift it.
+
+Consequences: chat runs on **Opus 4.6 via InvokeModel** (§ 4), with the cache layout in § 6. Switching back is `CHAT_MODEL` plus the Terraform `chat_model_id` — the client already routes on the ID. If a newer model is still out of reach when chat quality is judged at P3, the fallback is Claude Platform on AWS (PLAN.md § 10), which rewrites § 4 more deeply.
 
 **P3 is the real checkpoint.** If the curator isn't good over 20 venues of data, scaling to 158 won't fix it. Don't build P4–P6 to avoid finding out.

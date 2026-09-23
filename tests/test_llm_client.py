@@ -11,16 +11,20 @@ from art_curator.db.models import LLM_PURPOSES
 from art_curator.llm.client import (
     AUTO_CACHE,
     PROVIDER_CONVERSE,
+    PROVIDER_INVOKE,
     PROVIDER_MANTLE,
     PURPOSES,
+    cached_tail,
     db_recorder,
+    is_profile_model,
     static_prefix,
 )
 from art_curator.llm.pricing import UnknownModelError
 from tests.db import run_sql
 from tests.llm_stub import StubLlm
 
-OPUS = "anthropic.claude-opus-5"
+OPUS = "anthropic.claude-opus-5"  # Mantle ID
+CHAT = "global.anthropic.claude-opus-4-6-v1"  # inference profile → InvokeModel
 HAIKU = "anthropic.claude-haiku-4-5"
 MESSAGES = [{"role": "user", "content": "hi"}]
 
@@ -131,6 +135,89 @@ def test_cache_layout_reaches_the_wire():
 def test_static_prefix_needs_a_block():
     with pytest.raises(ValueError):
         static_prefix()
+
+
+# --- Transport routing (CLAUDE.md § 4) -----------------------------------------------------------
+
+
+def test_profile_ids_route_to_invoke_and_bare_ids_to_mantle():
+    assert is_profile_model(CHAT) and is_profile_model("eu.anthropic.claude-opus-4-6-v1")
+    assert not is_profile_model(OPUS) and not is_profile_model("anthropic.claude-haiku-4-5")
+
+
+def test_chat_model_goes_through_invoke():
+    stub = StubLlm()
+    stub.reply(input_tokens=10, output_tokens=5, model=CHAT)
+    asyncio.run(
+        stub.client.create_message(purpose="chat", model=CHAT, max_tokens=64, messages=MESSAGES)
+    )
+
+    [row] = stub.calls
+    assert row.provider == PROVIDER_INVOKE
+    assert row.cost_usd == Decimal("0.000175")  # Opus pricing: 10 × 5 + 5 × 25
+
+
+def test_invoke_rejects_top_level_cache_control():
+    # It would be accepted-and-ignored or rejected upstream; either way, silently uncached.
+    stub = StubLlm()
+    with pytest.raises(ValueError, match="cached_tail"):
+        asyncio.run(
+            stub.client.create_message(
+                purpose="chat",
+                model=CHAT,
+                max_tokens=64,
+                messages=MESSAGES,
+                cache_control=AUTO_CACHE,
+            )
+        )
+    assert stub.requests == [] and stub.calls == []
+
+
+# --- Cache breakpoints (CLAUDE.md § 6) -----------------------------------------------------------
+
+
+def test_cached_tail_marks_the_last_block_only():
+    messages = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": [{"type": "text", "text": "reply"}]},
+        {"role": "user", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]},
+    ]
+    out = cached_tail(messages)
+
+    assert out[-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in out[-1]["content"][0]
+    assert out[0] == {"role": "user", "content": "first"}  # input untouched
+    assert messages[-1]["content"][-1] == {"type": "text", "text": "b"}
+
+
+def test_cached_tail_wraps_a_string_message():
+    out = cached_tail([{"role": "user", "content": "hi"}])
+    assert out[0]["content"] == [
+        {"type": "text", "text": "hi", "cache_control": {"type": "ephemeral"}}
+    ]
+
+
+def test_cached_tail_needs_a_message():
+    with pytest.raises(ValueError):
+        cached_tail([])
+
+
+def test_cached_tail_reaches_the_wire():
+    stub = StubLlm()
+    stub.reply(model=CHAT)
+    asyncio.run(
+        stub.client.create_message(
+            purpose="chat",
+            model=CHAT,
+            max_tokens=64,
+            system=static_prefix("persona"),
+            messages=cached_tail(MESSAGES),
+        )
+    )
+
+    [body] = stub.requests
+    assert "cache_control" not in body
+    assert body["messages"][-1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
 
 
 def test_converse_writes_one_row():
