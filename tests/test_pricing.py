@@ -70,7 +70,7 @@ def test_configured_default_models_are_priced():
 def test_claude_cache_prices_follow_the_multipliers():
     # 5m write 1.25×, 1h write 2×, read 0.1× input — catches a typo in pricing.yaml.
     for name, price in load_prices().models.items():
-        if not name.startswith("anthropic.claude-"):
+        if "anthropic.claude-" not in name:
             continue
         assert price.cache_write_5m == price.input * Decimal("1.25"), name
         assert price.cache_write_1h == price.input * 2, name

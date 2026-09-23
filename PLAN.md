@@ -2,7 +2,7 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 in progress — PRs 1–5, 8, 9 done; 6, 7, 10 remaining.
+**Status:** P0 in progress — PRs 1–9 done; 10 remaining.
 **Last updated:** 2026-09-22 (rev. 6)
 
 ---
@@ -142,10 +142,10 @@ Embeddings are noise. Start chat on Opus 5; measure whether Sonnet 5 holds the b
 
 | Phase | Deliverable | Done when |
 |---|---|---|
-| **P0** | Compose (Postgres+PostGIS+pgvector, Langfuse), schema (facts, `venue_pages`, `llm_calls`), config, Terraform (state backend + least-privilege Bedrock IAM + GitHub OIDC role), GitHub Actions CI, instrumented Bedrock client, OTel + `llm_calls` | Smoke call to Opus 5 on Bedrock traced with correct cost; cache read verified on 2nd call |
+| **P0** | Compose (Postgres+PostGIS+pgvector, Langfuse), schema (facts, `venue_pages`, `llm_calls`), config, Terraform (state backend + least-privilege Bedrock IAM + GitHub OIDC role), GitHub Actions CI, instrumented Bedrock client, OTel + `llm_calls` | Smoke call to Haiku 4.5 (runtime Converse) traced with correct cost — Opus 5 / Mantle blocked pending AWS, see § 9 |
 | **P1** | `sync-graf` | 568 venues with geometry, 146 URLs joined, idempotent snapshots |
 | **P2** | `crawl` + `extract` + gold-set eval + dev MCP server | Extraction scored against ~30 hand-checked pages, re-runnable |
-| **P3** | Agent loop, `/chat`, `cli chat`, feedback, **pgvector ranking** | Sensible curated answers; cache hit >80%; cost within 2× estimate; `iteration_count` recorded; semantic ranking A/B'd against filters-only |
+| **P3** | **Gate:** chat model callable, cache read verified on 2nd call. Then agent loop, `/chat`, `cli chat`, feedback, **pgvector ranking** | Sensible curated answers; cache hit >80%; cost within 2× estimate; `iteration_count` recorded; semantic ranking A/B'd against filters-only |
 | **P4** | `build_itinerary` | Ordered itinerary + working maps link |
 | **P5** | Telegram bot | Streamed replies, location, 👍/👎, `/forget` |
 | **P6** | Nightly scheduler + `venue_pages` purge | Unattended refresh; cache ≤7 days |
@@ -155,7 +155,7 @@ Embeddings are noise. Start chat on Opus 5; measure whether Sonnet 5 holds the b
 
 ### P0 breakdown
 
-**Pre-work (manual, nothing committed):** Opus 5 + Haiku 4.5 access in console · throwaway two-call script confirms Mantle auto-caching (scratchpad only — constraint 2) · Langfuse SDK/OTLP vs live docs · Bedrock list prices.
+**Pre-work (manual, nothing committed):** Opus 5 + Haiku 4.5 access — ✗ Opus 5 and Mantle blocked (§ 9) · Mantle auto-caching two-call script (scratchpad only — constraint 2) — moved to the P3 gate · Langfuse SDK/OTLP vs live docs · Bedrock list prices — list assumed, unverified.
 
 ```
 Python:     1 scaffold ─┬─ 2 CI baseline
@@ -175,16 +175,16 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | 7 | `obs/telemetry.py`: OTel spans, trace/span ids on `llm_calls`, Langfuse export behind a flag, **extract-purpose bodies masked** (constraint 1) | Span ids land in row; masking test green |
 | 8 | Terraform: README manual steps, S3 backend + lock, Bedrock policy scoped to model ARNs, app role | fmt/validate/plan clean; applied once |
 | 9 | GitHub OIDC: plan-only role, apply role, `plan` on `infra/` PRs, gated `apply` on `main` | PR posts plan; apply needs approval |
-| 10 | `cli smoke` + `workflow_dispatch` smoke job | P0 done-when met |
+| 10 | `cli smoke` (Haiku, runtime Converse) + `workflow_dispatch` smoke job | P0 done-when met |
 
 ---
 
 ## 9. Open risks
 
 - **Extraction accuracy** across heterogeneous sites — measured in P2, not discovered in P5.
-- ~~**Opus 5 access on Bedrock**~~ — confirmed 2026-09-21: authorized in eu-west-1; enabled via Terraform agreement.
+- **Opus 5 / Mantle access on Bedrock** — reopened 2026-09-22. Availability API says `AUTHORIZED`, but Opus 5 is refused on every path and Mantle refuses every model; runtime Converse works for Haiku 4.5 / Opus 4.6. Raised with AWS (Basic support: via Sales / bedrock-ant-eap@amazon.com). Blocks P3 chat only. Fallbacks if unresolved by P3: Opus 4.6 via legacy `AnthropicBedrock`, or Claude Platform on AWS.
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
-- **Langfuse SDK surface unverified** — first P0 task; OTel + Postgres stands alone if it has drifted.
+- ~~**Langfuse SDK surface unverified**~~ — sidestepped 2026-09-22: no Langfuse SDK; plain OTel exports to its OTLP endpoint (`/api/public/otel/v1/traces`, verified against current docs). Not yet exercised against the running Compose instance.
 - **p95 latency** with three round trips — fallbacks: lower `effort`, then merge search + hydrate.
 - **GRAF's live event window** (58–104 events) — long-running shows depend on crawling.
 - **~12 Instagram-only venues** stay facts-only.

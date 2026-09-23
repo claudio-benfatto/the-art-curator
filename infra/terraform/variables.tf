@@ -33,19 +33,24 @@ variable "tf_state_bucket" {
 }
 
 # Keep these in sync with config.py's CHAT_MODEL / EXTRACT_MODEL defaults.
-# These are bedrock-mantle model IDs — matched against the bedrock-mantle:Model
+# EMBED_MODEL is chosen by measurement in P3 and added then.
+
+# A bedrock-mantle model ID — matched against the bedrock-mantle:Model
 # condition key in bedrock.tf, not used to build ARNs.
-# EMBED_MODEL is chosen by measurement in P3 and added to this list then.
 variable "chat_model_id" {
   description = "Bedrock model ID for chat (Claude only, per CLAUDE.md #4)."
   type        = string
   default     = "anthropic.claude-opus-5"
 }
 
+# A bedrock-runtime *catalog* ID. Extraction calls it through the global
+# inference profile, so config.py's EXTRACT_MODEL is this with a `global.`
+# prefix. Mantle refuses every model for this account (CLAUDE.md, Current
+# state), so extraction runs on bedrock-runtime Converse until that's fixed.
 variable "extract_model_id" {
-  description = "Bedrock model ID for extraction."
+  description = "Bedrock catalog model ID for extraction, invoked via its global. inference profile."
   type        = string
-  default     = "anthropic.claude-haiku-4-5"
+  default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
 # Catalog IDs, not Mantle IDs: model agreements are keyed on the Bedrock
@@ -53,10 +58,11 @@ variable "extract_model_id" {
 # Mantle ID drops (anthropic.claude-haiku-4-5 on Mantle). List them with
 #   aws bedrock list-foundation-models --by-provider anthropic --query 'modelSummaries[].modelId'
 variable "bedrock_agreement_model_ids" {
-  description = "Bedrock catalog model IDs to enable (Marketplace agreement) — one per model behind chat_model_id / extract_model_id."
+  description = "Bedrock catalog model IDs to enable (Marketplace agreement) — the models behind chat_model_id / extract_model_id, plus candidates we need to test access for."
   type        = list(string)
   default = [
     "anthropic.claude-opus-5",
+    "anthropic.claude-sonnet-5",
     "anthropic.claude-haiku-4-5-20251001-v1:0",
   ]
 }

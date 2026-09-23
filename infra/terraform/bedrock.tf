@@ -9,23 +9,72 @@
 # models via the `bedrock-mantle:Model` condition key — so the scope lives in
 # the condition, keyed on the same Mantle model IDs config.py uses.
 #
-# No bedrock:InvokeModel yet: nothing calls bedrock-runtime until a
-# non-Claude model is chosen (EMBED_MODEL, P3). When it is, add the global
-# cross-region inference statements from the Bedrock user guide
-# (inference-profile ARN + regional and region-less foundation-model ARNs,
-# conditioned on bedrock:InferenceProfileArn) — runtime model IDs differ from
-# Mantle's (e.g. anthropic.claude-haiku-4-5-20251001-v1:0).
+# Extraction goes through bedrock-runtime Converse on a global cross-region
+# inference profile. That takes the three-part grant from the Bedrock user
+# guide (global-cross-region-inference.html): the profile in the requesting
+# region, the model in that region, and the region-less model ARN that global
+# routing evaluates with aws:RequestedRegion = "unspecified". Both model grants
+# are pinned to the profile via bedrock:InferenceProfileArn, so the role can't
+# call the model directly or through some other profile. Converse is
+# authorized as bedrock:InvokeModel.
+locals {
+  extract_profile_arn = "arn:${local.partition}:bedrock:${var.aws_region}:${local.account_id}:inference-profile/global.${var.extract_model_id}"
+}
+
 data "aws_iam_policy_document" "app_bedrock_access" {
   statement {
     sid     = "MantleInvokeConfiguredModels"
     actions = ["bedrock-mantle:CreateInference"]
     resources = [
-      "arn:${data.aws_partition.current.partition}:bedrock-mantle:${var.aws_region}:${data.aws_caller_identity.current.account_id}:project/*",
+      "arn:${local.partition}:bedrock-mantle:${var.aws_region}:${local.account_id}:project/*",
     ]
     condition {
       test     = "StringEquals"
       variable = "bedrock-mantle:Model"
-      values   = [var.chat_model_id, var.extract_model_id]
+      values   = [var.chat_model_id]
+    }
+  }
+
+  statement {
+    sid       = "RuntimeExtractProfile"
+    actions   = ["bedrock:InvokeModel"]
+    resources = [local.extract_profile_arn]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+  }
+
+  statement {
+    sid       = "RuntimeExtractRegionalModel"
+    actions   = ["bedrock:InvokeModel"]
+    resources = ["arn:${local.partition}:bedrock:${var.aws_region}::foundation-model/${var.extract_model_id}"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = [var.aws_region]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "bedrock:InferenceProfileArn"
+      values   = [local.extract_profile_arn]
+    }
+  }
+
+  statement {
+    sid       = "RuntimeExtractGlobalModel"
+    actions   = ["bedrock:InvokeModel"]
+    resources = ["arn:${local.partition}:bedrock:::foundation-model/${var.extract_model_id}"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestedRegion"
+      values   = ["unspecified"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "bedrock:InferenceProfileArn"
+      values   = [local.extract_profile_arn]
     }
   }
 }
