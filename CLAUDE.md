@@ -191,7 +191,17 @@ docker compose up -d                                # full stack incl. api + bot
 
 ## Current state
 
-**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing, `llm/client.py`, telemetry, `cli smoke`. **P0 is code-complete but not signed off: the live smoke call hasn't run yet** (needs the Terraform apply, then `uv run python -m art_curator.cli smoke`).
+**P0 is done, signed off 2026-09-23.** Scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing, `llm/client.py`, telemetry, `cli smoke`. All of `infra/README.md` is done, including steps 4 and 5. **Next up is P1 (`sync-graf`).**
+
+The done-when was met twice, which matters because the two runs prove different things:
+
+- **Locally** (`cli smoke`): Haiku 4.5 over runtime Converse, 14 in / 4 out, $0.000034 matching `pricing.yaml`, traced, one `llm_calls` row. Runs on developer credentials, which are broader than the app role — a local pass says nothing about IAM scope.
+- **From CI** (Smoke workflow, run `35839097437`): same call, same cost, through the `smoke` environment's OIDC role, which carries the app's Bedrock policy. **This is the run that proves the least-privilege scope in `bedrock.tf` is actually sufficient.** Re-run it after any change to the model IDs or that policy.
+
+Two things to know about the applied state:
+
+- The 2026-09-23 apply was run **manually from a laptop**, and the two gated CI apply runs queued for the same commits were cancelled as redundant. So the last apply *through CI* is still 2026-09-21. The next infra PR is the first to exercise the gated CI path against the current state — expect its plan to be the real test of that path, and read it carefully rather than assuming it is a no-op.
+- `pricing.yaml` agreement is still self-consistency, not ground truth: `cli smoke` checks the recorded cost against the table, not against a bill. The 2026-09-23 calls are the first real datapoints to reconcile against AWS billing.
 
 Telemetry (`obs/telemetry.py`) is plain OpenTelemetry — no Langfuse SDK. Every model call gets a span whose ids land on its `llm_calls` row. `LANGFUSE_ENABLED=true` exports spans to Langfuse over OTLP; the key defaults match the Compose `langfuse` service. Prompt/completion bodies go on spans only for `BODY_PURPOSES` (`chat`, `smoke`); extract and judge prompts carry venue-page text, so their bodies never leave the process (§ 1).
 
