@@ -2,7 +2,7 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 in progress — PRs 1–5, 8, 9 done; 6, 7, 10 remaining.
+**Status:** P0 in progress — PRs 1–6, 8, 9 done; 7, 10 remaining.
 **Last updated:** 2026-09-22 (rev. 6)
 
 ---

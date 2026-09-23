@@ -180,7 +180,9 @@ docker compose up -d                                # full stack incl. api + bot
 
 ## Current state
 
-**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing. Remaining: `llm/client.py`, telemetry, `cli smoke` — see PLAN.md § P0 breakdown.
+**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing, `llm/client.py`. Remaining: telemetry, `cli smoke` — see PLAN.md § P0 breakdown.
+
+Tests use `tests/llm_stub.py`: the real `LlmClient` over a mock HTTP transport (Mantle) and a botocore `Stubber` (Converse). Streaming isn't wrapped yet — `create_message` rejects `stream=True` until P3 adds a recorded stream.
 
 `pricing.yaml` holds Anthropic list prices on the assumption that the Bedrock global endpoint bills at list. Not yet checked against the AWS Pricing API or a bill — do that before trusting cost totals.
 
