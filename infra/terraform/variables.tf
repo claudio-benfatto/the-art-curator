@@ -64,10 +64,11 @@ variable "extract_model_id" {
 # Mantle ID drops (anthropic.claude-haiku-4-5 on Mantle). List them with
 #   aws bedrock list-foundation-models --by-provider anthropic --query 'modelSummaries[].modelId'
 variable "bedrock_agreement_model_ids" {
-  description = "Bedrock catalog model IDs to enable (Marketplace agreement) — one per model behind chat_model_id / extract_model_id."
+  description = "Bedrock catalog model IDs to enable (Marketplace agreement) — the models behind chat_model_id / extract_model_id, plus candidates we need to test access for."
   type        = list(string)
   default = [
     "anthropic.claude-opus-5",
+    "anthropic.claude-sonnet-5",
     "anthropic.claude-haiku-4-5-20251001-v1:0",
   ]
 }
