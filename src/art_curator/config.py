@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     # Async driver for the app; Alembic uses the same URL. Default is the Compose `db` service.
     database_url: str = "postgresql+asyncpg://art_curator:art_curator@localhost:5432/art_curator"
 
+    # Ingestion HTTP. `HTTP_*` rather than `GRAF_*` because the P2 venue crawler shares them.
+    # The User-Agent is descriptive on purpose: Cloudflare rejects some default Python agents,
+    # and a contactable agent is the minimum courtesy for crawling someone else's site.
+    graf_base_url: str = "https://graf.cat/wp-json/wp/v2"
+    http_user_agent: str = "art-curator/0.1 (+https://github.com/claudio-benfatto/the_art_curator)"
+    http_delay_s: float = 0.5
+    http_timeout_s: float = 30.0
+    http_max_attempts: int = 3
+
     # Optional span export to Langfuse over OTLP. OTel + llm_calls work without it.
     # The key defaults match the Compose `langfuse` service's seeded project.
     langfuse_enabled: bool = False
