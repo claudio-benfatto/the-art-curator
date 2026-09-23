@@ -6,7 +6,7 @@ the thing Terraform itself depends on, and one-time account settings with no
 Terraform resource.
 
 Do these once, in order, with your own AWS credentials (`aws configure` or
-`aws sso login`). After step 4, everything else runs through CI.
+`aws sso login`). After step 5, everything else runs through CI.
 
 ## 1. Create the state bucket
 
@@ -50,11 +50,17 @@ AWS Marketplace agreement, which Terraform declares
   with `aws bedrock get-foundation-model-availability --model-id <catalog id>`
   — `agreementAvailability.status` should be `AVAILABLE`.
 
-The app role's policy allows `bedrock-mantle:CreateInference` only when the
-`bedrock-mantle:Model` condition key equals one of the Mantle IDs. If the P0
-smoke call gets `AccessDenied`, the error names the denied action and
-context — check whether Mantle reports the model under a different ID and fix
-the variable, not the policy scope.
+The app role's policy allows `bedrock-mantle:CreateInference` only for the
+chat model's Mantle ID (`bedrock-mantle:Model` condition), and
+`bedrock:InvokeModel` only for the extraction model through its `global.`
+inference profile. An IAM denial names the denied action and context — fix the
+variable, not the policy scope.
+
+**Availability is not access.** `get-foundation-model-availability` can report
+`AUTHORIZED` / `AVAILABLE` while calls are still refused with "not available
+for this account" — a 403 with no IAM action in the message is account-level,
+not IAM. As of 2026-09-22 that is the case for Opus 5 (every path) and for
+every model on Mantle; see CLAUDE.md § Current state.
 
 ## 3. First apply (local credentials)
 
@@ -101,6 +107,22 @@ Then create the protected `infra-apply` environment (Settings → Environments):
   a job that passes this approval can assume the apply role (CLAUDE.md #10).
 - **Deployment branches:** `main` only, so an approval prompt can't be raised
   from a feature branch in the first place.
+
+## 5. Wire up the smoke job
+
+The apply also created a **smoke** role (`github_oidc.tf`) with the app's
+Bedrock policy, trusting only the `smoke` environment's OIDC subject. It backs
+`.github/workflows/smoke.yml`, the one workflow that calls a model.
+
+```bash
+gh variable set AWS_SMOKE_ROLE_ARN --body "$(terraform output -raw github_smoke_role_arn)"
+```
+
+Create the `smoke` environment (Settings → Environments) with **Deployment
+branches:** `main` only. No required reviewer: the workflow is manual
+(`workflow_dispatch`), which is the deliberate step, and a run costs a
+fraction of a cent. Run it from Actions → Smoke → Run workflow, or
+`gh workflow run smoke.yml`.
 
 ## After that
 

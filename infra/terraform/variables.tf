@@ -27,6 +27,12 @@ variable "apply_environment" {
   default     = "infra-apply"
 }
 
+variable "smoke_environment" {
+  description = "GitHub environment whose OIDC subject may assume the smoke role. Must match the `environment:` of .github/workflows/smoke.yml (infra/README.md step 5)."
+  type        = string
+  default     = "smoke"
+}
+
 variable "tf_state_bucket" {
   description = "Name of the hand-created S3 state bucket (infra/README.md step 1). No default — must match backend.tf's -backend-config bucket exactly, so the CI role's permissions target the right ARN."
   type        = string

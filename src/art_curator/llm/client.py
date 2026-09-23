@@ -3,7 +3,8 @@
 
 Two transports, both Bedrock:
 - Mantle (the Messages-API endpoint) for Claude. Chat is Claude-only, so chat goes here.
-- `bedrock-runtime` Converse for any other Bedrock model (extraction, judge).
+- Converse (the runtime endpoint) for any Bedrock model — extraction, judge, and for now
+  Claude too, while Mantle is blocked for this account (CLAUDE.md, Current state).
 
 Streaming is not wrapped yet: `/chat` lands in P3 and will add a recorded stream here.
 """
@@ -102,9 +103,18 @@ class LlmClient:
 
         return await self._recorded(PROVIDER_MANTLE, purpose, model, params, call)
 
-    async def converse(self, *, purpose: Purpose, model: str, **params: Any) -> dict[str, Any]:
-        """Bedrock Converse for non-Claude models. `params` use Converse's own field names
-        (messages, system, inferenceConfig, toolConfig, ...)."""
+    @property
+    def tracer(self) -> trace.Tracer:
+        """For callers that open a parent span, so their calls share its trace id."""
+        return self._tracer
+
+    async def converse_message(
+        self, *, purpose: Purpose, model: str, **params: Any
+    ) -> dict[str, Any]:
+        """Bedrock runtime Converse: any Bedrock model, including Claude via an inference
+        profile. `params` use Converse's own field names (messages, system, inferenceConfig,
+        toolConfig, ...). Not named `converse` so the architecture grep can tell it apart from
+        a direct SDK call."""
         if purpose == "chat":
             raise ValueError("chat is Claude-only and goes through create_message (CLAUDE.md § 4)")
 

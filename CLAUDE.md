@@ -182,7 +182,7 @@ docker compose up -d                                # full stack incl. api + bot
 
 ## Current state
 
-**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing, `llm/client.py`, telemetry. Remaining: `cli smoke` — see PLAN.md § P0 breakdown.
+**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing, `llm/client.py`, telemetry, `cli smoke`. **P0 is code-complete but not signed off: the live smoke call hasn't run yet** (needs the Terraform apply, then `uv run python -m art_curator.cli smoke`).
 
 Telemetry (`obs/telemetry.py`) is plain OpenTelemetry — no Langfuse SDK. Every model call gets a span whose ids land on its `llm_calls` row. `LANGFUSE_ENABLED=true` exports spans to Langfuse over OTLP; the key defaults match the Compose `langfuse` service. Prompt/completion bodies go on spans only for `BODY_PURPOSES` (`chat`, `smoke`); extract and judge prompts carry venue-page text, so their bodies never leave the process (§ 1).
 
@@ -201,6 +201,5 @@ DB tests create and drop their own throwaway databases on the `DATABASE_URL` ser
 | Haiku 4.5, Opus 4.6, Nova Micro — runtime Converse | works |
 
 So: Opus 5 is blocked everywhere, and Mantle is blocked for every model. Until AWS resolves it, extraction runs on Haiku via runtime Converse, and the P0 smoke runs there too. The Opus 5 / Mantle auto-caching check moves to a gate before P3 (PLAN.md § 8). If it's still blocked when P3 starts, the choices are chat on Opus 4.6 via the legacy `AnthropicBedrock` path (explicit cache breakpoints only — no automatic caching there) or Claude Platform on AWS; either changes § 4 and § 6 above.
-
 
 **P3 is the real checkpoint.** If the curator isn't good over 20 venues of data, scaling to 158 won't fix it. Don't build P4–P6 to avoid finding out.

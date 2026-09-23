@@ -39,7 +39,7 @@ def _converse(stub: StubLlm, purpose: str, text: str) -> None:
         },
     )
     asyncio.run(
-        stub.client.converse(
+        stub.client.converse_message(
             purpose=purpose, model=HAIKU, messages=[{"role": "user", "content": [{"text": text}]}]
         )
     )

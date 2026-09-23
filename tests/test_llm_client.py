@@ -152,7 +152,7 @@ def test_converse_writes_one_row():
         },
     )
     resp = asyncio.run(
-        stub.client.converse(
+        stub.client.converse_message(
             purpose="judge",
             model=HAIKU,
             messages=[{"role": "user", "content": [{"text": "hi"}]}],
@@ -169,7 +169,7 @@ def test_converse_writes_one_row():
 def test_converse_refuses_chat():
     stub = StubLlm()
     with pytest.raises(ValueError, match="Claude-only"):
-        asyncio.run(stub.client.converse(purpose="chat", model=HAIKU, messages=[]))
+        asyncio.run(stub.client.converse_message(purpose="chat", model=HAIKU, messages=[]))
     assert stub.calls == []
 
 
