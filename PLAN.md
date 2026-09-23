@@ -2,7 +2,7 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 in progress — PRs 1–6, 8, 9 done; 7, 10 remaining.
+**Status:** P0 in progress — PRs 1–9 done; 10 remaining.
 **Last updated:** 2026-09-22 (rev. 6)
 
 ---
@@ -184,7 +184,7 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 - **Extraction accuracy** across heterogeneous sites — measured in P2, not discovered in P5.
 - **Opus 5 / Mantle access on Bedrock** — reopened 2026-09-22. Availability API says `AUTHORIZED`, but Opus 5 is refused on every path and Mantle refuses every model; runtime Converse works for Haiku 4.5 / Opus 4.6. Raised with AWS (Basic support: via Sales / bedrock-ant-eap@amazon.com). Blocks P3 chat only. Fallbacks if unresolved by P3: Opus 4.6 via legacy `AnthropicBedrock`, or Claude Platform on AWS.
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
-- **Langfuse SDK surface unverified** — first P0 task; OTel + Postgres stands alone if it has drifted.
+- ~~**Langfuse SDK surface unverified**~~ — sidestepped 2026-09-22: no Langfuse SDK; plain OTel exports to its OTLP endpoint (`/api/public/otel/v1/traces`, verified against current docs). Not yet exercised against the running Compose instance.
 - **p95 latency** with three round trips — fallbacks: lower `effort`, then merge search + hydrate.
 - **GRAF's live event window** (58–104 events) — long-running shows depend on crawling.
 - **~12 Instagram-only venues** stay facts-only.

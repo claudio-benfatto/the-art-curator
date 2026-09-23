@@ -19,12 +19,14 @@ from typing import Any, Literal, get_args
 import boto3
 from anthropic import AsyncAnthropicBedrockMantle
 from anthropic.types import Message, TextBlockParam
+from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from art_curator.config import get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_sessionmaker
 from art_curator.llm.pricing import Usage, cost_usd, price_for
+from art_curator.obs import telemetry
 
 Purpose = Literal["chat", "extract", "embed", "judge", "smoke"]
 PURPOSES: tuple[str, ...] = get_args(Purpose)
@@ -67,11 +69,13 @@ class _Outcome:
     usage: Usage
     request_id: str | None
     stop_reason: str | None
+    output: Any  # completion body, for the span (masked per purpose)
 
 
 class LlmClient:
-    """Wraps the model transports. Recording failures propagate: a call that can't be recorded
-    is an error, not a warning."""
+    """Wraps the model transports. Each call runs in its own OTel span, whose ids land on the
+    `llm_calls` row. Recording failures propagate: a call that can't be recorded is an error,
+    not a warning."""
 
     def __init__(
         self,
@@ -79,10 +83,12 @@ class LlmClient:
         mantle: AsyncAnthropicBedrockMantle,
         runtime: Any,  # boto3 bedrock-runtime client (untyped)
         record: Recorder,
+        tracer: trace.Tracer | None = None,
     ) -> None:
         self._mantle = mantle
         self._runtime = runtime
         self._record = record
+        self._tracer = tracer or telemetry.get_tracer()
 
     async def create_message(self, *, purpose: Purpose, model: str, **params: Any) -> Message:
         """Messages API on Mantle. `params` are passed through (system, messages, tools,
@@ -94,7 +100,7 @@ class LlmClient:
             msg = await self._mantle.messages.create(model=model, **params)
             return msg, _outcome_from_message(msg)
 
-        return await self._recorded(PROVIDER_MANTLE, purpose, model, call)
+        return await self._recorded(PROVIDER_MANTLE, purpose, model, params, call)
 
     async def converse(self, *, purpose: Purpose, model: str, **params: Any) -> dict[str, Any]:
         """Bedrock Converse for non-Claude models. `params` use Converse's own field names
@@ -106,58 +112,76 @@ class LlmClient:
             resp = await asyncio.to_thread(self._runtime.converse, modelId=model, **params)
             return resp, _outcome_from_converse(resp)
 
-        return await self._recorded(PROVIDER_CONVERSE, purpose, model, call)
+        return await self._recorded(PROVIDER_CONVERSE, purpose, model, params, call)
 
     async def _recorded[T](
         self,
         provider: str,
         purpose: Purpose,
         model: str,
+        request: dict[str, Any],
         call: Callable[[], Awaitable[tuple[T, _Outcome]]],
     ) -> T:
         if purpose not in PURPOSES:
             raise ValueError(f"unknown purpose {purpose!r}")
         price_for(model)  # unpriced model: fail before spending anything
 
-        start = time.perf_counter()
-        try:
-            result, outcome = await call()
-        except Exception as exc:
-            await self._record(
-                LlmCall(
-                    provider=provider,
-                    model=model,
-                    purpose=purpose,
-                    request_id=_request_id_from_error(exc),
-                    input_tokens=0,
-                    output_tokens=0,
-                    cache_creation_input_tokens=0,
-                    cache_read_input_tokens=0,
-                    cost_usd=Decimal(0),
-                    latency_ms=_elapsed_ms(start),
-                    error_type=type(exc).__name__,
-                )
+        # The span records and re-raises exceptions itself (status ERROR).
+        with self._tracer.start_as_current_span(
+            f"llm.{purpose}", kind=trace.SpanKind.CLIENT
+        ) as span:
+            span.set_attributes(
+                telemetry.request_attributes(provider=provider, model=model, purpose=purpose)
             )
-            raise
-        latency_ms = _elapsed_ms(start)
-
-        usage = outcome.usage
-        await self._record(
-            LlmCall(
+            trace_id, span_id = telemetry.span_ids(span)
+            row = LlmCall(
+                trace_id=trace_id,
+                span_id=span_id,
                 provider=provider,
                 model=model,
                 purpose=purpose,
-                request_id=outcome.request_id,
-                input_tokens=usage.input_tokens,
-                output_tokens=usage.output_tokens,
-                cache_creation_input_tokens=usage.cache_write_tokens,
-                cache_read_input_tokens=usage.cache_read_tokens,
-                cost_usd=cost_usd(model, usage),
-                latency_ms=latency_ms,
-                stop_reason=outcome.stop_reason,
+                input_tokens=0,
+                output_tokens=0,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+                cost_usd=Decimal(0),
             )
-        )
-        return result
+
+            start = time.perf_counter()
+            try:
+                result, outcome = await call()
+            except Exception as exc:
+                row.request_id = _request_id_from_error(exc)
+                row.latency_ms = _elapsed_ms(start)
+                row.error_type = type(exc).__name__
+                await self._record(row)
+                raise
+            row.latency_ms = _elapsed_ms(start)
+
+            usage = outcome.usage
+            row.request_id = outcome.request_id
+            row.input_tokens = usage.input_tokens
+            row.output_tokens = usage.output_tokens
+            row.cache_creation_input_tokens = usage.cache_write_tokens
+            row.cache_read_input_tokens = usage.cache_read_tokens
+            row.cost_usd = cost_usd(model, usage)
+            row.stop_reason = outcome.stop_reason
+
+            span.set_attributes(
+                telemetry.usage_attributes(
+                    input_tokens=row.input_tokens,
+                    output_tokens=row.output_tokens,
+                    cache_creation_input_tokens=row.cache_creation_input_tokens,
+                    cache_read_input_tokens=row.cache_read_input_tokens,
+                    cost_usd=row.cost_usd,
+                    stop_reason=row.stop_reason,
+                )
+            )
+            span.set_attributes(
+                telemetry.body_attributes(purpose, input=request, output=outcome.output)
+            )
+            await self._record(row)
+            return result
 
 
 def _elapsed_ms(start: float) -> int:
@@ -182,6 +206,7 @@ def _outcome_from_message(msg: Message) -> _Outcome:
         ),
         request_id=msg._request_id,
         stop_reason=msg.stop_reason,
+        output=msg.content,
     )
 
 
@@ -197,6 +222,7 @@ def _outcome_from_converse(resp: dict[str, Any]) -> _Outcome:
         ),
         request_id=resp.get("ResponseMetadata", {}).get("RequestId"),
         stop_reason=resp.get("stopReason"),
+        output=resp.get("output"),
     )
 
 
@@ -213,6 +239,7 @@ def _request_id_from_error(exc: Exception) -> str | None:
 @lru_cache
 def get_llm_client() -> LlmClient:
     settings = get_settings()
+    telemetry.setup_telemetry()
     return LlmClient(
         mantle=AsyncAnthropicBedrockMantle(aws_region=settings.aws_region),
         runtime=boto3.client("bedrock-runtime", region_name=settings.aws_region),

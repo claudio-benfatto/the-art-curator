@@ -182,7 +182,9 @@ docker compose up -d                                # full stack incl. api + bot
 
 ## Current state
 
-**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing, `llm/client.py`. Remaining: telemetry, `cli smoke` — see PLAN.md § P0 breakdown.
+**P0 in progress.** Done: scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing, `llm/client.py`, telemetry. Remaining: `cli smoke` — see PLAN.md § P0 breakdown.
+
+Telemetry (`obs/telemetry.py`) is plain OpenTelemetry — no Langfuse SDK. Every model call gets a span whose ids land on its `llm_calls` row. `LANGFUSE_ENABLED=true` exports spans to Langfuse over OTLP; the key defaults match the Compose `langfuse` service. Prompt/completion bodies go on spans only for `BODY_PURPOSES` (`chat`, `smoke`); extract and judge prompts carry venue-page text, so their bodies never leave the process (§ 1).
 
 Tests use `tests/llm_stub.py`: the real `LlmClient` over a mock HTTP transport (Mantle) and a botocore `Stubber` (Converse). Streaming isn't wrapped yet — `create_message` rejects `stream=True` until P3 adds a recorded stream.
 
@@ -200,8 +202,5 @@ DB tests create and drop their own throwaway databases on the `DATABASE_URL` ser
 
 So: Opus 5 is blocked everywhere, and Mantle is blocked for every model. Until AWS resolves it, extraction runs on Haiku via runtime Converse, and the P0 smoke runs there too. The Opus 5 / Mantle auto-caching check moves to a gate before P3 (PLAN.md § 8). If it's still blocked when P3 starts, the choices are chat on Opus 4.6 via the legacy `AnthropicBedrock` path (explicit cache breakpoints only — no automatic caching there) or Claude Platform on AWS; either changes § 4 and § 6 above.
 
-Still open:
-
-- Verify the Langfuse SDK surface against live docs. If it has drifted, the OTel + Postgres layer stands alone and Langfuse can be dropped without data loss.
 
 **P3 is the real checkpoint.** If the curator isn't good over 20 venues of data, scaling to 158 won't fix it. Don't build P4–P6 to avoid finding out.
