@@ -22,7 +22,7 @@ def clean_env(monkeypatch):
 def test_defaults():
     s = Settings(_env_file=None)
     assert s.aws_region == "eu-west-1"
-    assert s.chat_model.startswith("anthropic.")
+    assert s.chat_model.startswith("global.anthropic.")
     assert s.extract_model.startswith("global.anthropic.")
     assert s.embed_model is None
     assert s.database_url.startswith("postgresql+asyncpg://")
@@ -38,7 +38,7 @@ def _tf_default(name: str) -> str:
 def test_model_defaults_match_terraform():
     # A mismatch isn't caught anywhere else: the app role's IAM just denies the call.
     s = Settings(_env_file=None)
-    assert s.chat_model == _tf_default("chat_model_id")
+    assert s.chat_model == "global." + _tf_default("chat_model_id")
     assert s.extract_model == "global." + _tf_default("extract_model_id")
 
 

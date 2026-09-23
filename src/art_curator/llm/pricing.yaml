@@ -16,6 +16,14 @@ models:
     cache_write_1h: "10.00"
     cache_read: "0.50"
 
+  # Chat today, via the runtime endpoint. Same price as Opus 5; 4096-token cache minimum.
+  global.anthropic.claude-opus-4-6-v1:
+    input: "5.00"
+    output: "25.00"
+    cache_write_5m: "6.25"
+    cache_write_1h: "10.00"
+    cache_read: "0.50"
+
   anthropic.claude-sonnet-5:
     input: "2.00"
     output: "10.00"

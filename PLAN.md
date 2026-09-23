@@ -27,7 +27,7 @@ Answer *"I have Saturday afternoon in Barcelona, I like video art and installati
 | Semantic ranking | pgvector over our own summaries, optional `query` on `search_events` — **P3** | Taste and "more like X" queries; one SQL query with PostGIS | Bedrock Knowledge Bases for events (no geo radius; would persist third-party prose) |
 | Agent | Manual loop, hard cap 4 tool iterations, `iteration_count` traced | Refinement is the core interaction; cap bounds cost | Fixed workflow; multi-agent |
 | LLM provider | **Amazon Bedrock** | Multi-vendor models (incl. embeddings) under one IAM/bill; managed AWS services later | First-party API (Claude-only, no embeddings); Claude Max (cannot back an app) |
-| Chat model | Claude Opus 5 via `AnthropicBedrockMantle` — **Claude-only** | Quality-critical path keeps Claude's native API shape | Model-agnostic chat via Converse |
+| Chat model | Claude Opus 4.6 via `AnthropicBedrock` (InvokeModel) — **Claude-only** | Newest Claude this account can call (§ 9); keeps Claude's native API shape | Opus 5 / Mantle (refused); model-agnostic chat via Converse |
 | Other models | Extraction, judge, embeddings: any Bedrock model, env-selected | Bulk work; swap by measurement | — |
 | Extraction mode | On-demand, not batch | Bedrock batch drops tool use/structured output, min ~100 records/job | Bedrock batch inference |
 | Observability | OTel + `llm_calls` in Postgres + Langfuse, from P0 | Cost attribution can't be retrofitted | Adding later |
@@ -119,10 +119,10 @@ Assumptions: ~3.3k in / 0.6k out per extracted page; Bedrock global endpoint at 
 | Extraction, pilot initial (160 pages, Haiku 4.5 on-demand) | ~$1 |
 | Extraction, pilot nightly (~10% changed) | ~$3/mo |
 | Extraction, all 158 venues | ~$8 initial, ~$24/mo |
-| Chat, Opus 5, compact + hydrate + caching | ~$0.05/exchange |
+| Chat, Opus 4.6, compact + hydrate + caching | ~$0.05/exchange (same per-token price as Opus 5; caching starts only past 4096 tokens) |
 | **PoC total** (300 exchanges + pilot extraction) | **~$18/mo** |
 
-Embeddings are noise. Start chat on Opus 5; measure whether Sonnet 5 holds the bar at P3.
+Embeddings are noise. Chat starts on Opus 4.6; measure a cheaper or newer model at P3, whichever the account can call by then.
 
 ---
 
@@ -145,7 +145,7 @@ Embeddings are noise. Start chat on Opus 5; measure whether Sonnet 5 holds the b
 | **P0** | Compose (Postgres+PostGIS+pgvector, Langfuse), schema (facts, `venue_pages`, `llm_calls`), config, Terraform (state backend + least-privilege Bedrock IAM + GitHub OIDC role), GitHub Actions CI, instrumented Bedrock client, OTel + `llm_calls` | Smoke call to Haiku 4.5 (runtime Converse) traced with correct cost — Opus 5 / Mantle blocked pending AWS, see § 9 |
 | **P1** | `sync-graf` | 568 venues with geometry, 146 URLs joined, idempotent snapshots |
 | **P2** | `crawl` + `extract` + gold-set eval + dev MCP server | Extraction scored against ~30 hand-checked pages, re-runnable |
-| **P3** | **Gate:** chat model callable, cache read verified on 2nd call. Then agent loop, `/chat`, `cli chat`, feedback, **pgvector ranking** | Sensible curated answers; cache hit >80%; cost within 2× estimate; `iteration_count` recorded; semantic ranking A/B'd against filters-only |
+| **P3** | Agent loop, `/chat`, `cli chat`, feedback, **pgvector ranking** | Sensible curated answers; cache hit >80% on exchanges past Opus 4.6's 4096-token minimum; cost within 2× estimate; `iteration_count` recorded; semantic ranking A/B'd against filters-only |
 | **P4** | `build_itinerary` | Ordered itinerary + working maps link |
 | **P5** | Telegram bot | Streamed replies, location, 👍/👎, `/forget` |
 | **P6** | Nightly scheduler + `venue_pages` purge | Unattended refresh; cache ≤7 days |
@@ -155,7 +155,7 @@ Embeddings are noise. Start chat on Opus 5; measure whether Sonnet 5 holds the b
 
 ### P0 breakdown
 
-**Pre-work (manual, nothing committed):** Opus 5 + Haiku 4.5 access — ✗ Opus 5 and Mantle blocked (§ 9) · Mantle auto-caching two-call script (scratchpad only — constraint 2) — moved to the P3 gate · Langfuse SDK/OTLP vs live docs · Bedrock list prices — list assumed, unverified.
+**Pre-work (manual, nothing committed):** model access — ✗ Opus 5 and Mantle blocked, worked around (§ 9) · caching two-call script (scratchpad only — constraint 2) — ✓ verified on Opus 4.6 · Langfuse SDK/OTLP vs live docs — ✓ OTLP direct · Bedrock list prices — list assumed, unverified.
 
 ```
 Python:     1 scaffold ─┬─ 2 CI baseline
@@ -182,7 +182,7 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 ## 9. Open risks
 
 - **Extraction accuracy** across heterogeneous sites — measured in P2, not discovered in P5.
-- **Opus 5 / Mantle access on Bedrock** — reopened 2026-09-22. Availability API says `AUTHORIZED`, but Opus 5 is refused on every path and Mantle refuses every model; runtime Converse works for Haiku 4.5 / Opus 4.6. Raised with AWS (Basic support: via Sales / bedrock-ant-eap@amazon.com). Blocks P3 chat only. Fallbacks if unresolved by P3: Opus 4.6 via legacy `AnthropicBedrock`, or Claude Platform on AWS.
+- **Newest-model access on Bedrock** — AWS (2026-09-23): eligibility depends on account usage history, is reassessed as usage grows, and isn't configurable. Opus 5 refused everywhere; Mantle refused for every model, including Haiku 4.5 (which works on the runtime endpoint) and Sonnet 5 (agreement applied). **Worked around, not blocking:** chat on Opus 4.6, extraction on Haiku 4.5, both via runtime inference profiles. Revisit at P3; Claude Platform on AWS if quality demands a newer model.
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
 - ~~**Langfuse SDK surface unverified**~~ — sidestepped 2026-09-22: no Langfuse SDK; plain OTel exports to its OTLP endpoint (`/api/public/otel/v1/traces`, verified against current docs). Not yet exercised against the running Compose instance.
 - **p95 latency** with three round trips — fallbacks: lower `effort`, then merge search + hydrate.
