@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # The User-Agent is descriptive on purpose: Cloudflare rejects some default Python agents,
     # and a contactable agent is the minimum courtesy for crawling someone else's site.
     graf_base_url: str = "https://graf.cat/wp-json/wp/v2"
-    http_user_agent: str = "art-curator/0.1 (+https://github.com/claudio-benfatto/the_art_curator)"
+    http_user_agent: str = "art-curator/0.1"
     http_delay_s: float = 0.5
     http_timeout_s: float = 30.0
     http_max_attempts: int = 3
