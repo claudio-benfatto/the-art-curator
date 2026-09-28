@@ -1,0 +1,3804 @@
+{
+  "terms": [
+    {
+      "id": 868,
+      "name": "#plantauno",
+      "slug": "plantauno"
+    },
+    {
+      "id": 713,
+      "name": "'Baladre' residència d'artistes",
+      "slug": "baladre-residencia-dartistes"
+    },
+    {
+      "id": 589,
+      "name": "3 Punts Galeria",
+      "slug": "3-punts-galeria"
+    },
+    {
+      "id": 621,
+      "name": "a cobert",
+      "slug": "a-cobert"
+    },
+    {
+      "id": 750,
+      "name": "ACVIC",
+      "slug": "acvic"
+    },
+    {
+      "id": 694,
+      "name": "ACVIC. Centre d'Arts Contemporànies",
+      "slug": "acvic-centre-darts-contemporanies"
+    },
+    {
+      "id": 29,
+      "name": "ADN Galeria",
+      "slug": "adn-galeria"
+    },
+    {
+      "id": 885,
+      "name": "ADN Locker Room",
+      "slug": "adn-locker-room"
+    },
+    {
+      "id": 634,
+      "name": "ADN Platform",
+      "slug": "adn-platform"
+    },
+    {
+      "id": 30,
+      "name": "adnplatform",
+      "slug": "adnplatform"
+    },
+    {
+      "id": 879,
+      "name": "Adoberies",
+      "slug": "adoberies"
+    },
+    {
+      "id": 904,
+      "name": "Afterschool Department",
+      "slug": "afterschool-department"
+    },
+    {
+      "id": 31,
+      "name": "Ágora Juan Andrés Benítez",
+      "slug": "agora-juan-andres-benitez"
+    },
+    {
+      "id": 695,
+      "name": "AGUAS",
+      "slug": "aguas"
+    },
+    {
+      "id": 445,
+      "name": "Ajuntament del Bruc",
+      "slug": "ajuntament-del-bruc"
+    },
+    {
+      "id": 889,
+      "name": "Al-Tiba9",
+      "slug": "al-tiba9"
+    },
+    {
+      "id": 590,
+      "name": "Alalimón Galeria",
+      "slug": "alalimon-galeria"
+    },
+    {
+      "id": 919,
+      "name": "Alzueta Gallery Barcelona Sèneca",
+      "slug": "alzueta-gallery-seneca"
+    },
+    {
+      "id": 920,
+      "name": "Alzueta Gallery Barcelona Turó",
+      "slug": "alzueta-gallery-turo"
+    },
+    {
+      "id": 913,
+      "name": "Alzueta Gallery Barcelona Turó",
+      "slug": "alzueta-gallery-barcelona-turo"
+    },
+    {
+      "id": 461,
+      "name": "Amics de les Arts",
+      "slug": "amics-de-les-arts"
+    },
+    {
+      "id": 847,
+      "name": "Amposta i Delta de l'Ebre",
+      "slug": "amposta-i-delta-de-lebre"
+    },
+    {
+      "id": 490,
+      "name": "Ana Mas Projects",
+      "slug": "ana-mas-projects"
+    },
+    {
+      "id": 33,
+      "name": "àngels barcelona",
+      "slug": "angels-barcelona"
+    },
+    {
+      "id": 285,
+      "name": "ángels barcelona – espai 2 -",
+      "slug": "angels-barcelona-espai-2"
+    },
+    {
+      "id": 902,
+      "name": "Antic Banc d'Espanya",
+      "slug": "antic-banc-despanya"
+    },
+    {
+      "id": 36,
+      "name": "Antic Teatre",
+      "slug": "antic-teatre"
+    },
+    {
+      "id": 640,
+      "name": "Antiga seu editorial Gustavo Gili",
+      "slug": "antiga-seu-editorial-gustavo-gili"
+    },
+    {
+      "id": 908,
+      "name": "Anywhere",
+      "slug": "anywhere"
+    },
+    {
+      "id": 850,
+      "name": "Anywhere (NOMEVOY)",
+      "slug": "anywhere-nomevoy"
+    },
+    {
+      "id": 689,
+      "name": "Aparador 22",
+      "slug": "aparador-22"
+    },
+    {
+      "id": 779,
+      "name": "Aparador22",
+      "slug": "aparador22"
+    },
+    {
+      "id": 431,
+      "name": "Après Ski",
+      "slug": "apres-ski"
+    },
+    {
+      "id": 516,
+      "name": "ARBAR",
+      "slug": "arbar-associacio-per-la-recerca-biocultural-i-artistica-de-rodes"
+    },
+    {
+      "id": 534,
+      "name": "Arc de Triomf",
+      "slug": "arc-de-triomf"
+    },
+    {
+      "id": 724,
+      "name": "art.santcugat",
+      "slug": "art-santcugat"
+    },
+    {
+      "id": 43,
+      "name": "Arts Santa Mònica",
+      "slug": "arts-santa-monica-3"
+    },
+    {
+      "id": 671,
+      "name": "Artur Ramon Art",
+      "slug": "artur-ramon-art"
+    },
+    {
+      "id": 940,
+      "name": "Arxiu Municipal",
+      "slug": "arxiu-municipal"
+    },
+    {
+      "id": 813,
+      "name": "Associació Cultural La Volta",
+      "slug": "associacio-cultural-la-volta"
+    },
+    {
+      "id": 804,
+      "name": "Associació Malpaís",
+      "slug": "associacio-malpais"
+    },
+    {
+      "id": 831,
+      "name": "Associació Societat Coral La Unió Santcugatenca",
+      "slug": "associacio-societat-coral-la-unio-santcugatenca"
+    },
+    {
+      "id": 922,
+      "name": "Ateneu de Fabricació Gràcias",
+      "slug": "ateneu-de-fabricacio-gracias"
+    },
+    {
+      "id": 845,
+      "name": "Ateneu Popular de Salt",
+      "slug": "ateneu-popular-de-salt"
+    },
+    {
+      "id": 631,
+      "name": "Auditori de la Mercè",
+      "slug": "auditori-de-la-merce"
+    },
+    {
+      "id": 45,
+      "name": "Auditori del Cèntric Espai Cultural",
+      "slug": "auditori-del-centric-espai-cultural"
+    },
+    {
+      "id": 46,
+      "name": "Auditori Institut del Teatre",
+      "slug": "auditori-institut-del-teatre"
+    },
+    {
+      "id": 756,
+      "name": "Auditori Palau de Congressos de Girona",
+      "slug": "auditori-palau-de-congressos-de-girona"
+    },
+    {
+      "id": 805,
+      "name": "Banc d'Espanya",
+      "slug": "banc-despanya"
+    },
+    {
+      "id": 48,
+      "name": "Bar Olimpic",
+      "slug": "bar-olimpic"
+    },
+    {
+      "id": 248,
+      "name": "Barcelona",
+      "slug": "barcelona"
+    },
+    {
+      "id": 794,
+      "name": "Barri vell, Girona",
+      "slug": "barri-vell-girona"
+    },
+    {
+      "id": 851,
+      "name": "barsa",
+      "slug": "barsa"
+    },
+    {
+      "id": 653,
+      "name": "Base Nàutica",
+      "slug": "base-nautica"
+    },
+    {
+      "id": 852,
+      "name": "BETA Contemporary",
+      "slug": "beta-contemporary"
+    },
+    {
+      "id": 939,
+      "name": "Biblioteca Carles Rahola",
+      "slug": "biblioteca-carles-rahola"
+    },
+    {
+      "id": 747,
+      "name": "Biblioteca Collserola",
+      "slug": "biblioteca-collserola"
+    },
+    {
+      "id": 660,
+      "name": "Biblioteca Gabriel García Márquez",
+      "slug": "biblioteca-gabriel-garcia-marquez"
+    },
+    {
+      "id": 547,
+      "name": "Biblioteca Jaume Fuster",
+      "slug": "biblioteca-jaume-fuster"
+    },
+    {
+      "id": 690,
+      "name": "Biblioteca Joan Miró",
+      "slug": "biblioteca-joan-miro"
+    },
+    {
+      "id": 836,
+      "name": "Biblioteca La Font de la Mina",
+      "slug": "biblioteca-la-font-de-la-mina"
+    },
+    {
+      "id": 584,
+      "name": "Biblioteca Lola Anglada",
+      "slug": "biblioteca-lola-anglada"
+    },
+    {
+      "id": 896,
+      "name": "Biblioteca Montserrat Abelló",
+      "slug": "biblioteca-montserrat-abello"
+    },
+    {
+      "id": 522,
+      "name": "Biblioteca Pública Arús",
+      "slug": "biblioteca-publica-arus"
+    },
+    {
+      "id": 895,
+      "name": "Biblioteca Sofia Barat",
+      "slug": "biblioteca-sofia-barat"
+    },
+    {
+      "id": 722,
+      "name": "Biblioteca Trinitat Nova",
+      "slug": "biblioteca-trinitat-nova"
+    },
+    {
+      "id": 52,
+      "name": "Blueproject Foundation",
+      "slug": "blueproject-foundation"
+    },
+    {
+      "id": 693,
+      "name": "Bòlit",
+      "slug": "bolit"
+    },
+    {
+      "id": 873,
+      "name": "Bòlit La Rambla",
+      "slug": "bolit-la-rambla"
+    },
+    {
+      "id": 874,
+      "name": "Bòlit Sant Nicolau",
+      "slug": "bolit-sant-nicolau"
+    },
+    {
+      "id": 503,
+      "name": "Bòlit_LaRambla",
+      "slug": "bolit_larambla"
+    },
+    {
+      "id": 792,
+      "name": "Bòlit_LaRambla, Sala Fidel Aguilar",
+      "slug": "bolit_larambla-sala-fidel-aguilar"
+    },
+    {
+      "id": 502,
+      "name": "Bòlit_PouRodó",
+      "slug": "bolit_pourodo"
+    },
+    {
+      "id": 504,
+      "name": "Bòlit_StNicolau",
+      "slug": "bolit_stnicolau"
+    },
+    {
+      "id": 53,
+      "name": "Bombon projects",
+      "slug": "bombon-projects"
+    },
+    {
+      "id": 934,
+      "name": "Botiga Tien 21",
+      "slug": "botiga-tien-21"
+    },
+    {
+      "id": 54,
+      "name": "Boyberry",
+      "slug": "boyberry"
+    },
+    {
+      "id": 865,
+      "name": "Brava! Performing Arts",
+      "slug": "brava-performing-arts"
+    },
+    {
+      "id": 433,
+      "name": "c/ del Comte d’Urgell, 98",
+      "slug": "c-del-comte-durgell-98"
+    },
+    {
+      "id": 678,
+      "name": "Ca la Dona. Un espai d’acció feminista",
+      "slug": "ca-la-dona-un-espai-daccio-feminista"
+    },
+    {
+      "id": 797,
+      "name": "Ca la Rosa",
+      "slug": "ca-la-rosa"
+    },
+    {
+      "id": 816,
+      "name": "CACiS Centre d’Art Contemporani i Sostenibilitat El Forn de la Calç",
+      "slug": "cacis-centre-dart-contemporani-i-sostenibilitat-el-forn-de-la-calc"
+    },
+    {
+      "id": 918,
+      "name": "CACiS El Forn de la Calç",
+      "slug": "cacis-el-forn-de-la-calc"
+    },
+    {
+      "id": 774,
+      "name": "Cafè Nou",
+      "slug": "cafe-nou"
+    },
+    {
+      "id": 56,
+      "name": "CaixaForum Barcelona",
+      "slug": "caixaforum-barcelona"
+    },
+    {
+      "id": 838,
+      "name": "Cal Misangò Casa d’Arts",
+      "slug": "cal-misango-casa-darts"
+    },
+    {
+      "id": 57,
+      "name": "Campanar de Sant Fèlix",
+      "slug": "campanar-de-sant-felix"
+    },
+    {
+      "id": 447,
+      "name": "Can Cases",
+      "slug": "can-cases"
+    },
+    {
+      "id": 815,
+      "name": "Can Grau Cardant Cultura",
+      "slug": "can-grau-cardant-cultura"
+    },
+    {
+      "id": 58,
+      "name": "Can Serrat - Art Residency",
+      "slug": "can-serrat-art-residency"
+    },
+    {
+      "id": 561,
+      "name": "Canal youtube A*DESK",
+      "slug": "canal-youtube-adesk"
+    },
+    {
+      "id": 933,
+      "name": "Canònica de Vilabertran",
+      "slug": "canonica-de-vilabertran"
+    },
+    {
+      "id": 893,
+      "name": "Capella MACBA",
+      "slug": "capella-macba"
+    },
+    {
+      "id": 59,
+      "name": "Carrer del Pou de la Figuera",
+      "slug": "carrer-del-pou-de-la-figuera"
+    },
+    {
+      "id": 410,
+      "name": "Casa Aymat",
+      "slug": "casa-aymat"
+    },
+    {
+      "id": 842,
+      "name": "Casa Bigodé",
+      "slug": "casa-bigode"
+    },
+    {
+      "id": 862,
+      "name": "Casa Bonay - Libertine",
+      "slug": "casa-bonay-libertine"
+    },
+    {
+      "id": 517,
+      "name": "Casa de Cultura",
+      "slug": "casa-de-cultura"
+    },
+    {
+      "id": 932,
+      "name": "Casa de l'Aigua",
+      "slug": "casa-de-laigua"
+    },
+    {
+      "id": 801,
+      "name": "Casa de l'Artista en Terres de Cruïlla",
+      "slug": "casa-de-lartista-en-terres-de-cruilla"
+    },
+    {
+      "id": 830,
+      "name": "Casa del Teatre Nu",
+      "slug": "casa-del-teatre-nu"
+    },
+    {
+      "id": 268,
+      "name": "Casa Elizalde",
+      "slug": "casa-elizalde"
+    },
+    {
+      "id": 876,
+      "name": "Casa Espacio",
+      "slug": "casa-espacio"
+    },
+    {
+      "id": 672,
+      "name": "Casa Golferichs",
+      "slug": "casa-golferichs"
+    },
+    {
+      "id": 543,
+      "name": "Casa Orlandai",
+      "slug": "casa-orlandai"
+    },
+    {
+      "id": 921,
+      "name": "Casa R.A.R.O",
+      "slug": "casa-r-a-r-o-2"
+    },
+    {
+      "id": 748,
+      "name": "Casa R.A.R.O.",
+      "slug": "casa-r-a-r-o"
+    },
+    {
+      "id": 618,
+      "name": "Casa Rius Barcelona",
+      "slug": "casa-rius-barcelona"
+    },
+    {
+      "id": 654,
+      "name": "Casal de Barri Congrés-Indians",
+      "slug": "casal-de-barri-congres-indians"
+    },
+    {
+      "id": 656,
+      "name": "Casal de Barri Trinitat Nova-SomLaPera",
+      "slug": "casal-de-barri-trinitat-nova-somlapera"
+    },
+    {
+      "id": 718,
+      "name": "Casal de Cultura",
+      "slug": "casal-de-cultura"
+    },
+    {
+      "id": 557,
+      "name": "Casal del Raval",
+      "slug": "casal-del-raval"
+    },
+    {
+      "id": 662,
+      "name": "Casal Mas Guinardó",
+      "slug": "casal-mas-guinardo"
+    },
+    {
+      "id": 61,
+      "name": "Casal Pere Quart",
+      "slug": "casal-pere-quart"
+    },
+    {
+      "id": 818,
+      "name": "Casal Popular La Tafanera",
+      "slug": "casal-popular-la-tafanera"
+    },
+    {
+      "id": 835,
+      "name": "Casal Som la Pera",
+      "slug": "casal-som-la-pera"
+    },
+    {
+      "id": 738,
+      "name": "Casal Torreblanca",
+      "slug": "casal-torreblanca"
+    },
+    {
+      "id": 906,
+      "name": "CasCaDas ArtSpace",
+      "slug": "cascadas-artspace"
+    },
+    {
+      "id": 250,
+      "name": "Castell de Montjuic",
+      "slug": "castell-de-montjuic"
+    },
+    {
+      "id": 692,
+      "name": "Castell de Montjuïc",
+      "slug": "castell-de-montjuic-2"
+    },
+    {
+      "id": 629,
+      "name": "Catedral de Girona",
+      "slug": "catedral-de-girona"
+    },
+    {
+      "id": 577,
+      "name": "CC Baró de Viver",
+      "slug": "cc-baro-de-viver"
+    },
+    {
+      "id": 575,
+      "name": "CC Can Basté",
+      "slug": "cc-can-baste"
+    },
+    {
+      "id": 579,
+      "name": "CC Casinet d'Hostafrancs",
+      "slug": "cc-casinet-dhostafrancs"
+    },
+    {
+      "id": 580,
+      "name": "CC Convent de Sant Agustí",
+      "slug": "cc-convent-de-sant-agusti"
+    },
+    {
+      "id": 569,
+      "name": "CC Cotxeres de Sants",
+      "slug": "cc-cotxeres-de-sants"
+    },
+    {
+      "id": 576,
+      "name": "CC Guinardó",
+      "slug": "cc-guinardo"
+    },
+    {
+      "id": 573,
+      "name": "CC Joan Oliver \"Pere Quart\"",
+      "slug": "cc-joan-oliver-pere-quart"
+    },
+    {
+      "id": 578,
+      "name": "CC La Farinera del Clot",
+      "slug": "cc-la-farinera-del-clot"
+    },
+    {
+      "id": 570,
+      "name": "CC Navas",
+      "slug": "cc-navas"
+    },
+    {
+      "id": 574,
+      "name": "CC Pati Llimona",
+      "slug": "cc-pati-llimona"
+    },
+    {
+      "id": 572,
+      "name": "CC Pere Pruna",
+      "slug": "cc-pere-pruna"
+    },
+    {
+      "id": 791,
+      "name": "CC Sagrada Família",
+      "slug": "cc-sagrada-familia"
+    },
+    {
+      "id": 571,
+      "name": "CC Sant Andreu",
+      "slug": "cc-sant-andreu"
+    },
+    {
+      "id": 62,
+      "name": "CCCan Felipa",
+      "slug": "cccan-felipa"
+    },
+    {
+      "id": 63,
+      "name": "CCCB",
+      "slug": "cccb"
+    },
+    {
+      "id": 64,
+      "name": "Centre Cívic Barceloneta",
+      "slug": "centre-civic-barceloneta"
+    },
+    {
+      "id": 65,
+      "name": "Centre Cívic Can Felipa",
+      "slug": "centre-civic-can-felipa"
+    },
+    {
+      "id": 721,
+      "name": "Centre Cívic Casa del Rellotge",
+      "slug": "centre-civic-casa-del-rellotge"
+    },
+    {
+      "id": 869,
+      "name": "Centre Cívic Cotxeres Borrell",
+      "slug": "centre-civic-cotxeres-borrell"
+    },
+    {
+      "id": 622,
+      "name": "Centre Cívic El Sortidor",
+      "slug": "centre-civic-el-sortidor"
+    },
+    {
+      "id": 882,
+      "name": "Centre Cívic Guianrdó",
+      "slug": "centre-civic-guianrdo"
+    },
+    {
+      "id": 705,
+      "name": "Centre Cívic Joan Oliver \"Pere Quart\"",
+      "slug": "centre-civic-joan-oliver-pere-quart"
+    },
+    {
+      "id": 716,
+      "name": "Centre Cívic Sant Martí",
+      "slug": "centre-civic-sant-marti"
+    },
+    {
+      "id": 941,
+      "name": "Centre Cívic Sant Narcís",
+      "slug": "centre-civic-sant-narcis"
+    },
+    {
+      "id": 834,
+      "name": "Centre Cultural El Carme",
+      "slug": "centre-cultural-el-carme"
+    },
+    {
+      "id": 397,
+      "name": "Centre Cultural La Casa Elizalde",
+      "slug": "centre-cultural-la-casa-elizalde"
+    },
+    {
+      "id": 641,
+      "name": "Centre Cultural La Mercè",
+      "slug": "centre-cultural-la-merce"
+    },
+    {
+      "id": 929,
+      "name": "Centre Cultural les Planes",
+      "slug": "centre-cultural-les-planes"
+    },
+    {
+      "id": 872,
+      "name": "centre d'art contemporani La Panera roser",
+      "slug": "centre-dart-contemporani-la-panera-roser"
+    },
+    {
+      "id": 67,
+      "name": "Centre d'art la Panera",
+      "slug": "centre-dart-la-panera"
+    },
+    {
+      "id": 68,
+      "name": "Centre d'Art Maristany",
+      "slug": "centre-dart-maristany"
+    },
+    {
+      "id": 485,
+      "name": "Centre d'Art Tecla Sala",
+      "slug": "centre-dart-tecla-sala"
+    },
+    {
+      "id": 510,
+      "name": "Centre d'Art Tecla Sala",
+      "slug": "tecla-sala"
+    },
+    {
+      "id": 69,
+      "name": "Centre d'Art Torre Muntadas",
+      "slug": "centre-dart-torre-muntadas"
+    },
+    {
+      "id": 70,
+      "name": "Centre d'Arts de Santa Mònica",
+      "slug": "centre-darts-de-santa-monica"
+    },
+    {
+      "id": 828,
+      "name": "Centre de Creació Can Bonamic",
+      "slug": "centre-de-creacio-can-bonamic"
+    },
+    {
+      "id": 558,
+      "name": "Centre de Cultura Popular La Violeta de Gràcia",
+      "slug": "centre-de-cultura-popular-la-violeta-de-gracia"
+    },
+    {
+      "id": 567,
+      "name": "Centre de les Arts Lliures - Fundació Joan Brossa",
+      "slug": "centre-de-les-arts-lliures-fundacio-joan-brossa"
+    },
+    {
+      "id": 735,
+      "name": "Centre Grau-Garriga d'Art Tèxtil Contemporani",
+      "slug": "centre-grau-garriga-dart-textil-contemporani"
+    },
+    {
+      "id": 472,
+      "name": "Chiquita Room",
+      "slug": "chiquita-room-2"
+    },
+    {
+      "id": 763,
+      "name": "Cinc Sénies",
+      "slug": "cinc-senies"
+    },
+    {
+      "id": 632,
+      "name": "Cinema Truffaut",
+      "slug": "cinema-truffaut"
+    },
+    {
+      "id": 500,
+      "name": "Cinemes Girona",
+      "slug": "cinemes-girona"
+    },
+    {
+      "id": 658,
+      "name": "Colette Mariana",
+      "slug": "colette-mariana"
+    },
+    {
+      "id": 793,
+      "name": "Col·legi d'Arquitectes de Catalunya - Girona",
+      "slug": "collegi-darquitectes-de-catalunya-girona"
+    },
+    {
+      "id": 74,
+      "name": "Col·legi d'Arquitectes de Catalunya Coac",
+      "slug": "col%c2%b7legi-darquitectes-de-catalunya-coac"
+    },
+    {
+      "id": 867,
+      "name": "Col·legi de les Teresianes",
+      "slug": "collegi-de-les-teresianes"
+    },
+    {
+      "id": 75,
+      "name": "Col·legi Francesc Macià",
+      "slug": "col%c2%b7legi-francesc-macia"
+    },
+    {
+      "id": 841,
+      "name": "Convent de les Arts",
+      "slug": "convent-de-les-arts"
+    },
+    {
+      "id": 783,
+      "name": "Convent de Pontós",
+      "slug": "convent-de-pontos"
+    },
+    {
+      "id": 492,
+      "name": "Convent dels Àngels - MACBA",
+      "slug": "convent-dels-angels-macba"
+    },
+    {
+      "id": 366,
+      "name": "Cordova",
+      "slug": "cordova"
+    },
+    {
+      "id": 798,
+      "name": "Crisi",
+      "slug": "crisi"
+    },
+    {
+      "id": 633,
+      "name": "Cultural Rizoma",
+      "slug": "cultural-rizoma"
+    },
+    {
+      "id": 638,
+      "name": "Cúpula del Cementiri dels Caputxins",
+      "slug": "cupula-del-cementiri-dels-caputxins"
+    },
+    {
+      "id": 80,
+      "name": "DAFO",
+      "slug": "dafo"
+    },
+    {
+      "id": 776,
+      "name": "DHub",
+      "slug": "dhub"
+    },
+    {
+      "id": 240,
+      "name": "DIBINa",
+      "slug": "dibina-digital-buro-of-international-art"
+    },
+    {
+      "id": 451,
+      "name": "Dilalica",
+      "slug": "dilalica"
+    },
+    {
+      "id": 267,
+      "name": "Dipòsit del Rei Martí",
+      "slug": "diposit-del-rei-marti"
+    },
+    {
+      "id": 523,
+      "name": "Diversos Espais",
+      "slug": "diversos-espais"
+    },
+    {
+      "id": 855,
+      "name": "DOM ART RESIDENCE",
+      "slug": "dom-art-residence"
+    },
+    {
+      "id": 83,
+      "name": "DomesticoShop",
+      "slug": "domesticoshop"
+    },
+    {
+      "id": 482,
+      "name": "Dràcul.la",
+      "slug": "dracul-la"
+    },
+    {
+      "id": 106,
+      "name": "E:\\\\ART",
+      "slug": "eart"
+    },
+    {
+      "id": 85,
+      "name": "EAM Leandre Cristòfol",
+      "slug": "eam-leandre-cristofol"
+    },
+    {
+      "id": 854,
+      "name": "El Born - Museu d'Història de Barcelona",
+      "slug": "el-born-museu-dhistoria-de-barcelona"
+    },
+    {
+      "id": 499,
+      "name": "El Born Centre de Cultura y Memòria",
+      "slug": "el-born-centre-de-cultura-y-memoria"
+    },
+    {
+      "id": 844,
+      "name": "El Canal - Centre d'Arts escèniques dede Salt",
+      "slug": "el-canal-centre-darts-esceniques-dede-salt"
+    },
+    {
+      "id": 665,
+      "name": "El Canòdrom",
+      "slug": "el-canodrom"
+    },
+    {
+      "id": 86,
+      "name": "El Centro de Enmedio",
+      "slug": "el-centro-de-enmedio"
+    },
+    {
+      "id": 564,
+      "name": "El Corralito",
+      "slug": "el-corralito"
+    },
+    {
+      "id": 630,
+      "name": "El Modern",
+      "slug": "el-modern"
+    },
+    {
+      "id": 894,
+      "name": "EL MORERA",
+      "slug": "el-morera"
+    },
+    {
+      "id": 731,
+      "name": "El Niu",
+      "slug": "el-niu"
+    },
+    {
+      "id": 87,
+      "name": "El Palomar",
+      "slug": "el-palomar"
+    },
+    {
+      "id": 88,
+      "name": "el Passadís",
+      "slug": "el-passadis"
+    },
+    {
+      "id": 905,
+      "name": "El Piset",
+      "slug": "el-piset"
+    },
+    {
+      "id": 648,
+      "name": "El Sielo",
+      "slug": "el-sielo"
+    },
+    {
+      "id": 89,
+      "name": "El Siglo Mercantic",
+      "slug": "el-siglo-mercantic"
+    },
+    {
+      "id": 728,
+      "name": "El Solar de la Puri",
+      "slug": "el-solar-de-la-puri"
+    },
+    {
+      "id": 892,
+      "name": "Entorns del Casal de Mira-sol",
+      "slug": "entorns-del-casal-de-mira-sol"
+    },
+    {
+      "id": 858,
+      "name": "Entrada Museu de les Ciències Naturals",
+      "slug": "entrada-museu-de-les-ciencies-naturals"
+    },
+    {
+      "id": 91,
+      "name": "Ermita de Sant Nicolau",
+      "slug": "ermita-de-sant-nicolau"
+    },
+    {
+      "id": 887,
+      "name": "Escat Gallery Sarrià",
+      "slug": "escat-gallery-sarria"
+    },
+    {
+      "id": 739,
+      "name": "Escat Gallery Trafalgar",
+      "slug": "escat-gallery"
+    },
+    {
+      "id": 937,
+      "name": "Escat Projects",
+      "slug": "escat-projects"
+    },
+    {
+      "id": 846,
+      "name": "Escola d'Art i Cultura de Tortosa",
+      "slug": "escola-dart-i-cultura-de-tortosa"
+    },
+    {
+      "id": 864,
+      "name": "Escola d'Art Ondara",
+      "slug": "escola-dart-ondara"
+    },
+    {
+      "id": 554,
+      "name": "Escola Massana",
+      "slug": "escola-massana"
+    },
+    {
+      "id": 93,
+      "name": "Escola Massana, Sala d'actes",
+      "slug": "escola-massana-sala-dactes"
+    },
+    {
+      "id": 94,
+      "name": "Espacio Práctico",
+      "slug": "espacio-practico"
+    },
+    {
+      "id": 95,
+      "name": "Espai 13 - Fundació Joan Miró",
+      "slug": "espai-13-fundacio-miro"
+    },
+    {
+      "id": 649,
+      "name": "Espai 19",
+      "slug": "espai-19"
+    },
+    {
+      "id": 676,
+      "name": "Espai Agrari de Mataró",
+      "slug": "espai-agrari-de-mataro"
+    },
+    {
+      "id": 664,
+      "name": "Espai Català-Roca",
+      "slug": "espai-catala-roca"
+    },
+    {
+      "id": 97,
+      "name": "Espai Colona",
+      "slug": "espai-colona"
+    },
+    {
+      "id": 457,
+      "name": "Espai Contrabandos",
+      "slug": "espai-contrabandos"
+    },
+    {
+      "id": 698,
+      "name": "Espai Cràter",
+      "slug": "espai-crater"
+    },
+    {
+      "id": 824,
+      "name": "Espai Cultural Kursaal",
+      "slug": "espai-cultural-kursaal"
+    },
+    {
+      "id": 639,
+      "name": "Espai d'Arts de Roca Umbert Fàbrica de les Arts",
+      "slug": "espai-darts-de-roca-umbert-fabrica-de-les-arts"
+    },
+    {
+      "id": 303,
+      "name": "ESPAI EDUCART- MNAC",
+      "slug": "espai-educart-mnac"
+    },
+    {
+      "id": 435,
+      "name": "Espai Funatic",
+      "slug": "espai-funatic"
+    },
+    {
+      "id": 605,
+      "name": "Espai Jove Casa Sagnier",
+      "slug": "espai-jove-casa-sagnier"
+    },
+    {
+      "id": 616,
+      "name": "Espai Nur",
+      "slug": "espai-nur"
+    },
+    {
+      "id": 581,
+      "name": "Espai Nyamnyam",
+      "slug": "espai-nyamnyam-2"
+    },
+    {
+      "id": 491,
+      "name": "Espai Perequartu",
+      "slug": "espai-perequartu"
+    },
+    {
+      "id": 509,
+      "name": "Espai Souvenir",
+      "slug": "espai-souvenir"
+    },
+    {
+      "id": 99,
+      "name": "Espai Taller",
+      "slug": "espai-taller"
+    },
+    {
+      "id": 917,
+      "name": "Espai Texas",
+      "slug": "espai-texas"
+    },
+    {
+      "id": 566,
+      "name": "Espais Naturals del Delta del Llobregat",
+      "slug": "espais-naturals-del-delta-del-llobregat"
+    },
+    {
+      "id": 821,
+      "name": "Espais Volart",
+      "slug": "espais-volart"
+    },
+    {
+      "id": 100,
+      "name": "Espronceda",
+      "slug": "espronceda"
+    },
+    {
+      "id": 526,
+      "name": "Estació de metro de Can Cuiàs",
+      "slug": "estacio-de-metro-de-can-cuias"
+    },
+    {
+      "id": 122,
+      "name": "Estrany-De la mota Advisors",
+      "slug": "estrany-de-la-mota-advisors"
+    },
+    {
+      "id": 668,
+      "name": "ESTRUCTURAS 3000",
+      "slug": "estructuras-3000"
+    },
+    {
+      "id": 101,
+      "name": "estudi de l’artista",
+      "slug": "estudi-de-lartista"
+    },
+    {
+      "id": 615,
+      "name": "Estudi Obert",
+      "slug": "estudi-obert"
+    },
+    {
+      "id": 102,
+      "name": "ethall",
+      "slug": "ethall-2"
+    },
+    {
+      "id": 837,
+      "name": "EX",
+      "slug": "ex"
+    },
+    {
+      "id": 856,
+      "name": "EXS PROJECT",
+      "slug": "exs-project"
+    },
+    {
+      "id": 720,
+      "name": "Fabra i Coats: Fàbrica de Creació",
+      "slug": "fabra-i-coats-fabrica-de-creacio"
+    },
+    {
+      "id": 916,
+      "name": "Facultat de Belles Arts (UB)",
+      "slug": "facultat-de-belles-arts-ub"
+    },
+    {
+      "id": 647,
+      "name": "Facultat de Lletres UdG",
+      "slug": "facultat-de-lletres-udg"
+    },
+    {
+      "id": 455,
+      "name": "FASE",
+      "slug": "fase"
+    },
+    {
+      "id": 707,
+      "name": "Fatbottom",
+      "slug": "fatbottom"
+    },
+    {
+      "id": 437,
+      "name": "Filmoteca de Catalunya",
+      "slug": "filmoteca-de-catalunya"
+    },
+    {
+      "id": 112,
+      "name": "Finca San Salvador",
+      "slug": "finca-san-salvador"
+    },
+    {
+      "id": 552,
+      "name": "Fira de Barcelona",
+      "slug": "fira-de-barcelona"
+    },
+    {
+      "id": 113,
+      "name": "Fireplace",
+      "slug": "fireplace"
+    },
+    {
+      "id": 545,
+      "name": "Flowers by Bornay",
+      "slug": "flowers-by-bornay"
+    },
+    {
+      "id": 733,
+      "name": "FOC",
+      "slug": "foc"
+    },
+    {
+      "id": 429,
+      "name": "Font Màgica de Montjuïc",
+      "slug": "font-magica-de-montjuic"
+    },
+    {
+      "id": 539,
+      "name": "Fonteta",
+      "slug": "fonteta"
+    },
+    {
+      "id": 935,
+      "name": "FoodCultura",
+      "slug": "foodcultura"
+    },
+    {
+      "id": 114,
+      "name": "FoodCultura Satellite Boqueria",
+      "slug": "foodcultura-satellite-boqueria"
+    },
+    {
+      "id": 115,
+      "name": "Forat de la vergonya",
+      "slug": "forat-de-la-vergonya"
+    },
+    {
+      "id": 839,
+      "name": "Fortí de Sant Jordi",
+      "slug": "forti-de-sant-jordi"
+    },
+    {
+      "id": 464,
+      "name": "Foto Colectania",
+      "slug": "foto-colectania"
+    },
+    {
+      "id": 875,
+      "name": "Freginals",
+      "slug": "freginals"
+    },
+    {
+      "id": 684,
+      "name": "FUGA Gallery",
+      "slug": "fuga-gallery"
+    },
+    {
+      "id": 582,
+      "name": "Fundació Arranz Bravo",
+      "slug": "fundacio-arranz-bravo"
+    },
+    {
+      "id": 289,
+      "name": "Fundació Comtal",
+      "slug": "fundacio-comtal"
+    },
+    {
+      "id": 541,
+      "name": "Fundació Joan Brossa",
+      "slug": "fundacio-joan-brossa"
+    },
+    {
+      "id": 117,
+      "name": "Fundació Joan Miró",
+      "slug": "fundacio-joan-miro"
+    },
+    {
+      "id": 452,
+      "name": "Fundació Mies van der Rohe",
+      "slug": "fundacio-mies-van-der-rohe"
+    },
+    {
+      "id": 817,
+      "name": "Fundació Sorigué",
+      "slug": "fundacio-sorigue"
+    },
+    {
+      "id": 118,
+      "name": "Fundació Suñol",
+      "slug": "fundacio-sunol"
+    },
+    {
+      "id": 857,
+      "name": "Fundació Úniques",
+      "slug": "fundacio-uniques"
+    },
+    {
+      "id": 907,
+      "name": "g • gallery",
+      "slug": "g-gallery"
+    },
+    {
+      "id": 505,
+      "name": "Galería Alegría",
+      "slug": "galeria-alegria"
+    },
+    {
+      "id": 592,
+      "name": "Galeria Contrast",
+      "slug": "galeria-contrast"
+    },
+    {
+      "id": 670,
+      "name": "Galeria Esther Montoriol",
+      "slug": "galeria-esther-montoriol"
+    },
+    {
+      "id": 593,
+      "name": "Galeria Eude",
+      "slug": "galeria-eude"
+    },
+    {
+      "id": 611,
+      "name": "Galeria H2O",
+      "slug": "galeria-h2o"
+    },
+    {
+      "id": 594,
+      "name": "Galeria Joan Gaspar",
+      "slug": "galeria-joan-gaspar"
+    },
+    {
+      "id": 123,
+      "name": "Galeria LA PLACE",
+      "slug": "galeria-la-place"
+    },
+    {
+      "id": 595,
+      "name": "Galeria Marc Domènech",
+      "slug": "galeria-marc-domenech"
+    },
+    {
+      "id": 596,
+      "name": "Galeria Marlborough",
+      "slug": "galeria-marlborough"
+    },
+    {
+      "id": 597,
+      "name": "Galeria Mayoral",
+      "slug": "galeria-mayoral"
+    },
+    {
+      "id": 465,
+      "name": "Galería Miguel Marcos",
+      "slug": "galeria-miguel-marcos"
+    },
+    {
+      "id": 666,
+      "name": "Galeria OLA",
+      "slug": "galeria-ola"
+    },
+    {
+      "id": 725,
+      "name": "Galería Pelaires",
+      "slug": "galeria-pelaires"
+    },
+    {
+      "id": 598,
+      "name": "Galeria Toni Tàpies",
+      "slug": "galeria-toni-tapies"
+    },
+    {
+      "id": 585,
+      "name": "Galeria Zielinsky",
+      "slug": "galeria-zielinsky"
+    },
+    {
+      "id": 600,
+      "name": "Galerie K",
+      "slug": "galerie-k"
+    },
+    {
+      "id": 777,
+      "name": "GRAF",
+      "slug": "graf"
+    },
+    {
+      "id": 125,
+      "name": "Graner, Centre de creació del cos i el moviment",
+      "slug": "graner"
+    },
+    {
+      "id": 494,
+      "name": "Haimney Gallery",
+      "slug": "haimney"
+    },
+    {
+      "id": 126,
+      "name": "Halfhouse",
+      "slug": "halfhouse"
+    },
+    {
+      "id": 241,
+      "name": "Hamaca",
+      "slug": "hamaca"
+    },
+    {
+      "id": 127,
+      "name": "Hangar",
+      "slug": "hangar"
+    },
+    {
+      "id": 49,
+      "name": "HAUS (BAR Project)",
+      "slug": "bar-project-apartment"
+    },
+    {
+      "id": 910,
+      "name": "HAUS - Espai d'art i pràctiques contemporànies de BAU",
+      "slug": "haus-espai-dart-i-practiques-contemporanies-de-bau"
+    },
+    {
+      "id": 795,
+      "name": "HAUS, Espacio de arte y prácticas contemporáneas de BAU",
+      "slug": "haus-espacio-de-arte-y-practicas-contemporaneas-de-bau"
+    },
+    {
+      "id": 912,
+      "name": "Herrera Gallery",
+      "slug": "herrera-gallery"
+    },
+    {
+      "id": 246,
+      "name": "Hi-Jauh USB?",
+      "slug": "hi-jauh-usb"
+    },
+    {
+      "id": 833,
+      "name": "Hivernacle del Parc de la Ciutadella",
+      "slug": "hivernacle-del-parc-de-la-ciutadella"
+    },
+    {
+      "id": 131,
+      "name": "Homesession",
+      "slug": "homesession"
+    },
+    {
+      "id": 132,
+      "name": "Hort La Vanguardia",
+      "slug": "hort-la-vanguardia"
+    },
+    {
+      "id": 710,
+      "name": "Hotel Alma",
+      "slug": "hotel-alma"
+    },
+    {
+      "id": 511,
+      "name": "House of Chappaz",
+      "slug": "house-of-chappaz"
+    },
+    {
+      "id": 914,
+      "name": "IASlabs La Salle",
+      "slug": "iaslabs-la-salle"
+    },
+    {
+      "id": 877,
+      "name": "IDRA",
+      "slug": "idra"
+    },
+    {
+      "id": 915,
+      "name": "Ikonik Anglí",
+      "slug": "ikonik-angli"
+    },
+    {
+      "id": 803,
+      "name": "inLoft: Centre de cultura i recerca",
+      "slug": "inloft-centre-de-cultura-i-recerca"
+    },
+    {
+      "id": 533,
+      "name": "Institut Barri Besòs",
+      "slug": "institut-barri-besos"
+    },
+    {
+      "id": 529,
+      "name": "Institut Bernat Metge",
+      "slug": "institut-bernat-metge"
+    },
+    {
+      "id": 624,
+      "name": "Institut Botànic de Barcelona",
+      "slug": "institut-botanic-de-barcelona"
+    },
+    {
+      "id": 719,
+      "name": "Institut Doctor Puigvert",
+      "slug": "institut-doctor-puigvert"
+    },
+    {
+      "id": 530,
+      "name": "Institut Domènech i Montaner",
+      "slug": "institut-domenech-i-montaner"
+    },
+    {
+      "id": 607,
+      "name": "Institut Escola Rec Comtal",
+      "slug": "institut-escola-rec-comtal"
+    },
+    {
+      "id": 135,
+      "name": "Institut Français",
+      "slug": "institut-francais"
+    },
+    {
+      "id": 659,
+      "name": "Institut Joan Salvat-Papasseit",
+      "slug": "institut-joan-salvat-papasseit"
+    },
+    {
+      "id": 723,
+      "name": "Institut La Ribera",
+      "slug": "institut-la-ribera"
+    },
+    {
+      "id": 661,
+      "name": "Institut Milà i Fontanals",
+      "slug": "institut-mila-i-fontanals"
+    },
+    {
+      "id": 536,
+      "name": "Institut Moisès Broggi",
+      "slug": "institut-moises-broggi"
+    },
+    {
+      "id": 608,
+      "name": "Institut Narcís Monturiol",
+      "slug": "institut-narcis-monturiol"
+    },
+    {
+      "id": 256,
+      "name": "Institut Salvat Papasseit",
+      "slug": "institut-salvat-papasseit"
+    },
+    {
+      "id": 606,
+      "name": "Institut Teresa Pàmies",
+      "slug": "institut-teresa-pamies"
+    },
+    {
+      "id": 531,
+      "name": "Institut Verdaguer",
+      "slug": "institut-verdaguer"
+    },
+    {
+      "id": 909,
+      "name": "ip7studios",
+      "slug": "ip7studios"
+    },
+    {
+      "id": 652,
+      "name": "Isaac Peral, 7",
+      "slug": "isaac-peral-7"
+    },
+    {
+      "id": 137,
+      "name": "Jardí d’exòtiques/invasores",
+      "slug": "jardi-dexotiquesinvasores"
+    },
+    {
+      "id": 822,
+      "name": "Jardins de Escola Municipal de Música Can Roig i Torres",
+      "slug": "jardins-de-escola-municipal-de-musica-can-roig-i-torres"
+    },
+    {
+      "id": 778,
+      "name": "Jardins de Joan Brossa",
+      "slug": "jardins-de-joan-brossa"
+    },
+    {
+      "id": 673,
+      "name": "Jardins de la Maternitat",
+      "slug": "jardins-de-la-maternitat"
+    },
+    {
+      "id": 655,
+      "name": "Jardins de les Tres Xemeneies",
+      "slug": "jardins-de-les-tres-xemeneies"
+    },
+    {
+      "id": 546,
+      "name": "Jardins de Rubió i Lluch",
+      "slug": "jardins-de-rubio-i-lluch"
+    },
+    {
+      "id": 924,
+      "name": "Jardins de Sant Francesc",
+      "slug": "jardins-de-sant-francesc"
+    },
+    {
+      "id": 796,
+      "name": "Jiser",
+      "slug": "jiser"
+    },
+    {
+      "id": 448,
+      "name": "jiwar",
+      "slug": "jiwar"
+    },
+    {
+      "id": 478,
+      "name": "Katia Muñoz Art Studio",
+      "slug": "katia-munoz-art-studio"
+    },
+    {
+      "id": 650,
+      "name": "Konvent Zero",
+      "slug": "konvent-zero"
+    },
+    {
+      "id": 601,
+      "name": "L&amp;B Gallery",
+      "slug": "lb-gallery"
+    },
+    {
+      "id": 814,
+      "name": "L'animal a l'esquena",
+      "slug": "lanimal-a-lesquena"
+    },
+    {
+      "id": 663,
+      "name": "L'Antiga Farinera",
+      "slug": "lantiga-farinera"
+    },
+    {
+      "id": 142,
+      "name": "L'Automàtica",
+      "slug": "lautomatica"
+    },
+    {
+      "id": 143,
+      "name": "L'Estruch",
+      "slug": "lestruch"
+    },
+    {
+      "id": 537,
+      "name": "l'Institut Escola Trinitat Nova",
+      "slug": "linstitut-escola-trinitat-nova"
+    },
+    {
+      "id": 612,
+      "name": "L21 Barcelona",
+      "slug": "l21-factory"
+    },
+    {
+      "id": 758,
+      "name": "La (2) de la Sala Apolo",
+      "slug": "la-2-de-la-sala-apolo"
+    },
+    {
+      "id": 144,
+      "name": "La Base",
+      "slug": "la-base"
+    },
+    {
+      "id": 444,
+      "name": "La Caldera",
+      "slug": "la-caldera"
+    },
+    {
+      "id": 145,
+      "name": "La Caníbal",
+      "slug": "la-canibal"
+    },
+    {
+      "id": 146,
+      "name": "La Capella",
+      "slug": "la-capella"
+    },
+    {
+      "id": 525,
+      "name": "La Central del Circ",
+      "slug": "la-central-del-circ"
+    },
+    {
+      "id": 147,
+      "name": "La Cinètika",
+      "slug": "la-cinetika"
+    },
+    {
+      "id": 827,
+      "name": "La Cremallera",
+      "slug": "la-cremallera"
+    },
+    {
+      "id": 657,
+      "name": "La Destil·leria",
+      "slug": "la-destilleria"
+    },
+    {
+      "id": 304,
+      "name": "La Escocesa",
+      "slug": "la-escocesa"
+    },
+    {
+      "id": 679,
+      "name": "La Fabra Centre d'Art Contemporani",
+      "slug": "fabra-i-coats"
+    },
+    {
+      "id": 757,
+      "name": "La Font del Gat",
+      "slug": "la-font-del-gat"
+    },
+    {
+      "id": 468,
+      "name": "LA INFINITA",
+      "slug": "la-infinita"
+    },
+    {
+      "id": 474,
+      "name": "La Maldita Estampa",
+      "slug": "la-maldita-estampa"
+    },
+    {
+      "id": 812,
+      "name": "La Marfà. Centre de Creació Musical",
+      "slug": "la-marfa-centre-de-creacio-musical"
+    },
+    {
+      "id": 562,
+      "name": "La Modelo",
+      "slug": "la-modelo"
+    },
+    {
+      "id": 888,
+      "name": "La Panera Centre d´Art",
+      "slug": "la-panera-centre-dart"
+    },
+    {
+      "id": 848,
+      "name": "La Panera Lleida",
+      "slug": "la-panera-lleida"
+    },
+    {
+      "id": 625,
+      "name": "La Pedrera",
+      "slug": "la-pedrera"
+    },
+    {
+      "id": 149,
+      "name": "LA PLACE",
+      "slug": "la-place"
+    },
+    {
+      "id": 703,
+      "name": "La Plataforma",
+      "slug": "la-plataforma"
+    },
+    {
+      "id": 150,
+      "name": "La Poderosa",
+      "slug": "la-poderosa"
+    },
+    {
+      "id": 151,
+      "name": "La Puntual",
+      "slug": "la-puntual"
+    },
+    {
+      "id": 825,
+      "name": "La Tabacalera",
+      "slug": "la-tabacalera"
+    },
+    {
+      "id": 152,
+      "name": "La Virreina Centre de la Imatge",
+      "slug": "la-virreina-centre-de-la-imatge"
+    },
+    {
+      "id": 480,
+      "name": "La Visiva",
+      "slug": "la-visiva"
+    },
+    {
+      "id": 613,
+      "name": "LAB36",
+      "slug": "lab36"
+    },
+    {
+      "id": 449,
+      "name": "Larre Larre Larre",
+      "slug": "larre-larre-larre"
+    },
+    {
+      "id": 775,
+      "name": "Les Cabasses",
+      "slug": "les-cabasses"
+    },
+    {
+      "id": 565,
+      "name": "Les Cabasses, La Fundició",
+      "slug": "les-cabasses-la-fundicio"
+    },
+    {
+      "id": 699,
+      "name": "Llibreria 22",
+      "slug": "llibreria-22"
+    },
+    {
+      "id": 156,
+      "name": "Llibreria Calders",
+      "slug": "llibreria-calders"
+    },
+    {
+      "id": 820,
+      "name": "Llibreria Finestres",
+      "slug": "llibreria-finestres"
+    },
+    {
+      "id": 702,
+      "name": "Llibreria Terranova",
+      "slug": "llibreria-terranova"
+    },
+    {
+      "id": 157,
+      "name": "Llotja Escola Superior de Disseny i Art",
+      "slug": "llotja-escola-superior-de-disseny-i-art"
+    },
+    {
+      "id": 158,
+      "name": "Lo pati",
+      "slug": "lo-pati"
+    },
+    {
+      "id": 696,
+      "name": "Lo Pati Centre d'Art",
+      "slug": "lo-pati-centre-dart"
+    },
+    {
+      "id": 711,
+      "name": "Local de la Puri",
+      "slug": "local-de-la-puri"
+    },
+    {
+      "id": 159,
+      "name": "MACBA",
+      "slug": "macba"
+    },
+    {
+      "id": 487,
+      "name": "MACBA, Museu d'Art Contemporani de Barcelona",
+      "slug": "macba-museu-dart-contemporani-de-barcelona"
+    },
+    {
+      "id": 251,
+      "name": "madrid",
+      "slug": "madrid"
+    },
+    {
+      "id": 160,
+      "name": "MAIO",
+      "slug": "maio"
+    },
+    {
+      "id": 884,
+      "name": "Malpaís",
+      "slug": "malpais"
+    },
+    {
+      "id": 691,
+      "name": "Manifesta 15 Barcelona",
+      "slug": "manifesta-15-barcelona"
+    },
+    {
+      "id": 486,
+      "name": "Mar mediterrani",
+      "slug": "mar-mediterrani"
+    },
+    {
+      "id": 714,
+      "name": "Mas de la Franqueta",
+      "slug": "mas-de-la-franqueta"
+    },
+    {
+      "id": 98,
+      "name": "Mas nyamnyam",
+      "slug": "espai-nyamnyam"
+    },
+    {
+      "id": 428,
+      "name": "Masia de la Guineueta, plaça de ca N’Ensenya, La Guineueta",
+      "slug": "masia-de-la-guineueta-placa-de-ca-nensenya-la-guineueta"
+    },
+    {
+      "id": 165,
+      "name": "Materfad",
+      "slug": "materfad"
+    },
+    {
+      "id": 849,
+      "name": "MATERIC.ORG",
+      "slug": "materic-org"
+    },
+    {
+      "id": 166,
+      "name": "me &amp; the curiosity",
+      "slug": "me-the-curiosity"
+    },
+    {
+      "id": 167,
+      "name": "me and the curiosity",
+      "slug": "me-and-the-curiosity"
+    },
+    {
+      "id": 715,
+      "name": "Mèdol. Centre d'Arts Contemporànies de Tarragona",
+      "slug": "medol"
+    },
+    {
+      "id": 168,
+      "name": "Meeatings23",
+      "slug": "meeatings23"
+    },
+    {
+      "id": 169,
+      "name": "Mercat de les Flors",
+      "slug": "mercat-de-les-flors"
+    },
+    {
+      "id": 583,
+      "name": "Mercat de Pagès de la Nova Esquerra de l'Eixample",
+      "slug": "mercat-de-pages-de-la-nova-esquerra-de-leixample"
+    },
+    {
+      "id": 542,
+      "name": "Mercat de Sant Antoni",
+      "slug": "mercat-de-sant-antoni"
+    },
+    {
+      "id": 544,
+      "name": "Mercat de Sant Antoni. Espai Fossat",
+      "slug": "mercat-de-sant-antoni-espai-fossat"
+    },
+    {
+      "id": 538,
+      "name": "Metàfora",
+      "slug": "metafora"
+    },
+    {
+      "id": 619,
+      "name": "Metro FOC (Zona Franca)",
+      "slug": "metro-foc-zona-franca"
+    },
+    {
+      "id": 936,
+      "name": "Metrònom",
+      "slug": "metronom"
+    },
+    {
+      "id": 826,
+      "name": "MIT, Museu Internacional dels Titelles de Catalunya",
+      "slug": "mit-museu-internacional-dels-titelles-de-catalunya"
+    },
+    {
+      "id": 171,
+      "name": "MNAC",
+      "slug": "mnac"
+    },
+    {
+      "id": 729,
+      "name": "Moià",
+      "slug": "moia"
+    },
+    {
+      "id": 172,
+      "name": "Moog",
+      "slug": "moog"
+    },
+    {
+      "id": 532,
+      "name": "MUHBA Oliva Artés",
+      "slug": "muhba-oliva-artes"
+    },
+    {
+      "id": 626,
+      "name": "MUHBA Vil·la Joana",
+      "slug": "muhba-villa-joana"
+    },
+    {
+      "id": 175,
+      "name": "múltiplos",
+      "slug": "multiplos"
+    },
+    {
+      "id": 730,
+      "name": "Museo MARCO",
+      "slug": "museo-marco"
+    },
+    {
+      "id": 524,
+      "name": "Museu Can Framis",
+      "slug": "museu-can-framis"
+    },
+    {
+      "id": 899,
+      "name": "Museu Can Mario",
+      "slug": "museu-can-mario"
+    },
+    {
+      "id": 176,
+      "name": "Museu D'Art De Sabadell",
+      "slug": "museu-dart-de-sabadell"
+    },
+    {
+      "id": 886,
+      "name": "Museu d'Art Modern de Tarragona (MAMT)",
+      "slug": "museu-dart-modern-de-tarragona-mamt"
+    },
+    {
+      "id": 753,
+      "name": "Museu d'Història de Girona (Cisterna)",
+      "slug": "museu-dhistoria-de-girona-cisterna"
+    },
+    {
+      "id": 752,
+      "name": "Museu d'Història de Girona (Sala d'Exposicions)",
+      "slug": "museu-dhistoria-de-girona-sala-dexposicions"
+    },
+    {
+      "id": 521,
+      "name": "Museu de Granollers",
+      "slug": "museu-de-granollers"
+    },
+    {
+      "id": 764,
+      "name": "Museu de L'Art Prohibit",
+      "slug": "museu-de-lart-prohibit"
+    },
+    {
+      "id": 700,
+      "name": "Museu de la Garrotxa",
+      "slug": "museu-de-la-garrotxa"
+    },
+    {
+      "id": 843,
+      "name": "Museu de Lleida",
+      "slug": "museu-de-lleida"
+    },
+    {
+      "id": 859,
+      "name": "Museu de Sant Cugat - Claustre del Monestir",
+      "slug": "museu-de-sant-cugat-claustre-del-monestir"
+    },
+    {
+      "id": 177,
+      "name": "Museu del Cinema",
+      "slug": "museu-del-cinema"
+    },
+    {
+      "id": 178,
+      "name": "Museu del disseny de Barcelona (DHUB)",
+      "slug": "museu-del-disseny-de-barcelona-dhub"
+    },
+    {
+      "id": 832,
+      "name": "Museu d’Història de la Immigració de Catalunya",
+      "slug": "museu-dhistoria-de-la-immigracio-de-catalunya"
+    },
+    {
+      "id": 701,
+      "name": "Museu Etnològic i de Cultures del Món",
+      "slug": "museu-etnologic-i-de-cultures-del-mon"
+    },
+    {
+      "id": 179,
+      "name": "Museu Frederic Marès",
+      "slug": "museu-frederic-mares"
+    },
+    {
+      "id": 180,
+      "name": "Museu Nacional d'Art de Catalunya",
+      "slug": "museu-nacional-dart-de-catalunya"
+    },
+    {
+      "id": 898,
+      "name": "Museu Palau Solterra",
+      "slug": "museu-palau-solterra"
+    },
+    {
+      "id": 717,
+      "name": "Museu Picasso",
+      "slug": "museu-picasso"
+    },
+    {
+      "id": 734,
+      "name": "Museu Tàpies",
+      "slug": "museu-tapies"
+    },
+    {
+      "id": 555,
+      "name": "M|A|C Oficines",
+      "slug": "mac-mataro"
+    },
+    {
+      "id": 635,
+      "name": "M|A|C Presó",
+      "slug": "mac-preso"
+    },
+    {
+      "id": 602,
+      "name": "N2 Galeria",
+      "slug": "n2-galeria"
+    },
+    {
+      "id": 610,
+      "name": "Nau Bostik",
+      "slug": "nau-bostik"
+    },
+    {
+      "id": 709,
+      "name": "NAU3 - Centre Cultural l'Escorxador",
+      "slug": "nau3-centre-cultural-lescorxador"
+    },
+    {
+      "id": 870,
+      "name": "New Art Centre",
+      "slug": "new-art-centre"
+    },
+    {
+      "id": 182,
+      "name": "Nivell Zero - Fundació Suñol",
+      "slug": "nivell-zero"
+    },
+    {
+      "id": 484,
+      "name": "Nogueras Blanchard",
+      "slug": "nogueras-blanchard"
+    },
+    {
+      "id": 183,
+      "name": "Nogueras Blanchard - Barcelona",
+      "slug": "nogueras-blanchard-openings"
+    },
+    {
+      "id": 242,
+      "name": "Nogueras Blanchard - Hospitalet",
+      "slug": "nogueras-blanchard-hospitalet"
+    },
+    {
+      "id": 883,
+      "name": "Nom del Lloc",
+      "slug": "nom-del-lloc"
+    },
+    {
+      "id": 667,
+      "name": "NOMEVOY",
+      "slug": "nomevoy"
+    },
+    {
+      "id": 185,
+      "name": "Nook Nook",
+      "slug": "nook-nook"
+    },
+    {
+      "id": 927,
+      "name": "OAC. Ajuntament de Sant Cugat",
+      "slug": "oac-ajuntament-de-sant-cugat"
+    },
+    {
+      "id": 436,
+      "name": "Ocaña",
+      "slug": "ocana"
+    },
+    {
+      "id": 863,
+      "name": "Pabellón textil de la Fira de Montjuic",
+      "slug": "pabellon-textil-de-la-fira-de-montjuic"
+    },
+    {
+      "id": 708,
+      "name": "Palau Victòria Eugènia",
+      "slug": "palau-victoria-eugenia"
+    },
+    {
+      "id": 603,
+      "name": "Palmadotze",
+      "slug": "palmadotze"
+    },
+    {
+      "id": 861,
+      "name": "Palmadotze pop-up Barcelona",
+      "slug": "palmadotze-pop-up-barcelona"
+    },
+    {
+      "id": 688,
+      "name": "Paral·lel 62",
+      "slug": "parallel-62"
+    },
+    {
+      "id": 890,
+      "name": "Parc de Cervantes",
+      "slug": "parc-de-cervantes"
+    },
+    {
+      "id": 513,
+      "name": "Parc de la ciutadella",
+      "slug": "parc-de-la-ciutadella"
+    },
+    {
+      "id": 563,
+      "name": "Parc del Fòrum",
+      "slug": "parc-del-forum"
+    },
+    {
+      "id": 669,
+      "name": "Parc del Poblenou",
+      "slug": "parc-del-poblenou"
+    },
+    {
+      "id": 928,
+      "name": "Parc del Turó de Can Mates",
+      "slug": "parc-del-turo-de-can-mates"
+    },
+    {
+      "id": 193,
+      "name": "Passatge Studio",
+      "slug": "passatge-studio"
+    },
+    {
+      "id": 194,
+      "name": "Passeig Santa Madrona",
+      "slug": "passeig-santa-madrona"
+    },
+    {
+      "id": 466,
+      "name": "Pavelló Italià",
+      "slug": "pavello-italia"
+    },
+    {
+      "id": 385,
+      "name": "Pavelló Italià – Fira Barcelona Montjuïc",
+      "slug": "pavello-italia-fira-barcelona-montjuic"
+    },
+    {
+      "id": 559,
+      "name": "Pavelló Mies van der Rohe",
+      "slug": "pavello-mies-van-der-rohe"
+    },
+    {
+      "id": 675,
+      "name": "Pavelló Tèxtil de la Fira de Montjuïc",
+      "slug": "pavello-textil-de-la-fira-de-montjuic"
+    },
+    {
+      "id": 727,
+      "name": "Periferia Cimarronas",
+      "slug": "periferia-cimarronas"
+    },
+    {
+      "id": 614,
+      "name": "Pigment Gallery",
+      "slug": "pigment-gallery"
+    },
+    {
+      "id": 556,
+      "name": "Pintor Fortuny, 27",
+      "slug": "pintor-fortuny-27"
+    },
+    {
+      "id": 754,
+      "name": "Pintura mural d'El Foll",
+      "slug": "pintura-mural-del-foll"
+    },
+    {
+      "id": 489,
+      "name": "PiRA",
+      "slug": "pira"
+    },
+    {
+      "id": 253,
+      "name": "PIRAMIDÓN",
+      "slug": "piramidon-2"
+    },
+    {
+      "id": 252,
+      "name": "piramidón",
+      "slug": "piramidon"
+    },
+    {
+      "id": 479,
+      "name": "Piscines Picornell",
+      "slug": "piscines-picornell"
+    },
+    {
+      "id": 736,
+      "name": "Plaça Barcelona",
+      "slug": "placa-barcelona"
+    },
+    {
+      "id": 806,
+      "name": "Plaça d'Empúries",
+      "slug": "placa-dempuries"
+    },
+    {
+      "id": 891,
+      "name": "Plaça d'Octavià",
+      "slug": "placa-doctavia"
+    },
+    {
+      "id": 460,
+      "name": "Plaça de l'Argub del Parc Catalunya",
+      "slug": "placa-de-largub-del-parc-catalunya"
+    },
+    {
+      "id": 755,
+      "name": "Plaça de l'Església",
+      "slug": "placa-de-lesglesia"
+    },
+    {
+      "id": 674,
+      "name": "Plaça de la Concòrdia",
+      "slug": "placa-de-la-concordia"
+    },
+    {
+      "id": 200,
+      "name": "Plaça de la RENFE del Prat de Llobregat",
+      "slug": "placa-de-la-renfe-del-prat-de-llobregat"
+    },
+    {
+      "id": 201,
+      "name": "Plaça de la Trinitat",
+      "slug": "placa-de-la-trinitat"
+    },
+    {
+      "id": 432,
+      "name": "Plaça de la Vila de Madrid",
+      "slug": "placa-de-la-vila-de-madrid"
+    },
+    {
+      "id": 926,
+      "name": "Plaça de Lluís Millet",
+      "slug": "placa-de-lluis-millet"
+    },
+    {
+      "id": 249,
+      "name": "Plaça de Margarida Xirgu",
+      "slug": "placa-de-margarida-xirgu"
+    },
+    {
+      "id": 809,
+      "name": "Plaça de Santa Eugènia",
+      "slug": "placa-de-santa-eugenia"
+    },
+    {
+      "id": 925,
+      "name": "Plaça del Coll",
+      "slug": "placa-del-coll"
+    },
+    {
+      "id": 427,
+      "name": "Plaça del Nord",
+      "slug": "placa-del-nord"
+    },
+    {
+      "id": 871,
+      "name": "Plaça dels Sedassos",
+      "slug": "placa-dels-sedassos"
+    },
+    {
+      "id": 808,
+      "name": "Plaça Llibertat",
+      "slug": "placa-llibertat"
+    },
+    {
+      "id": 897,
+      "name": "Plaça Pere Calders",
+      "slug": "placa-pere-calders"
+    },
+    {
+      "id": 923,
+      "name": "Plaça Rabassaires",
+      "slug": "placa-rabassaires"
+    },
+    {
+      "id": 680,
+      "name": "Plaça Sant Jordi",
+      "slug": "placa-sant-jordi"
+    },
+    {
+      "id": 247,
+      "name": "Placeta de Sant Francesc",
+      "slug": "placeta-de-sant-francesc"
+    },
+    {
+      "id": 623,
+      "name": "Plaça del Rei",
+      "slug": "plac%cc%a7a-del-rei"
+    },
+    {
+      "id": 548,
+      "name": "Platja de Gavà",
+      "slug": "platja-de-gava"
+    },
+    {
+      "id": 202,
+      "name": "Platja de la Barceloneta",
+      "slug": "platja-de-la-barceloneta"
+    },
+    {
+      "id": 931,
+      "name": "Platja del Bogatell",
+      "slug": "platja-del-bogatell"
+    },
+    {
+      "id": 807,
+      "name": "Plaza Empúries",
+      "slug": "plaza-empuries"
+    },
+    {
+      "id": 686,
+      "name": "Pol &amp; Grace Hotel",
+      "slug": "pol-grace-hotel"
+    },
+    {
+      "id": 604,
+      "name": "Polígrafa Obra Gràfica",
+      "slug": "poligrafa-obra-grafica"
+    },
+    {
+      "id": 627,
+      "name": "Port de Barcelona",
+      "slug": "port-de-barcelona"
+    },
+    {
+      "id": 203,
+      "name": "Port de Drassanes, Golondrinas",
+      "slug": "port-de-drassanes-golondrinas"
+    },
+    {
+      "id": 704,
+      "name": "Prats Nogueras Blanchard",
+      "slug": "prats-nogueras-blanchard"
+    },
+    {
+      "id": 706,
+      "name": "Prats Nogueras Blanchard - Poblenou",
+      "slug": "prats-nogueras-blanchard-poblenou"
+    },
+    {
+      "id": 206,
+      "name": "Project VIA",
+      "slug": "project-via"
+    },
+    {
+      "id": 207,
+      "name": "ProjecteSD",
+      "slug": "projectesd"
+    },
+    {
+      "id": 799,
+      "name": "Proyecto REME",
+      "slug": "proyecto-reme"
+    },
+    {
+      "id": 488,
+      "name": "Punto de encuentro: Can Ricart, Emilia Coranty 5-9: 41°24'29.6\"N 2°11'58.5\"E",
+      "slug": "punto-de-encuentro-can-ricart-emilia-coranty-5-9-412429-6n-21158-5e"
+    },
+    {
+      "id": 483,
+      "name": "Quiosc Pont de la Torrassa",
+      "slug": "quiosc-pont-de-la-torrassa"
+    },
+    {
+      "id": 628,
+      "name": "Raccoon projects",
+      "slug": "raccoon-projects"
+    },
+    {
+      "id": 726,
+      "name": "RARO On-Site Projects",
+      "slug": "raro-on-site-projects"
+    },
+    {
+      "id": 620,
+      "name": "Reial Club Nàutic de Barcelona",
+      "slug": "reial-club-nautic-de-barcelona"
+    },
+    {
+      "id": 636,
+      "name": "Roca Umbert",
+      "slug": "roca-umbert"
+    },
+    {
+      "id": 518,
+      "name": "RocioSantaCruz",
+      "slug": "rociosantacruz"
+    },
+    {
+      "id": 266,
+      "name": "Sala Beckett – Obrador Internacional de Dramatúrgia",
+      "slug": "sala-beckett-obrador-internacional-de-dramaturgia"
+    },
+    {
+      "id": 213,
+      "name": "Sala d'Art Josep Bages (Centre d'Art Torre Muntadas)",
+      "slug": "sala-dart-josep-bages-centre-dart-torre-muntadas-2"
+    },
+    {
+      "id": 215,
+      "name": "Sala d'Art Jove",
+      "slug": "sala-dart-jove"
+    },
+    {
+      "id": 866,
+      "name": "Sala d'Exposicions de l'Estruch",
+      "slug": "sala-dexposicions-de-lestruch"
+    },
+    {
+      "id": 811,
+      "name": "Sala d'Exposicions El Casal",
+      "slug": "sala-dexposicions-el-casal"
+    },
+    {
+      "id": 810,
+      "name": "Sala de Ball - Lira Ampostina",
+      "slug": "sala-de-ball-lira-ampostina"
+    },
+    {
+      "id": 535,
+      "name": "Sala Fènix",
+      "slug": "sala-fenix"
+    },
+    {
+      "id": 216,
+      "name": "Sala Hiroshima",
+      "slug": "sala-hiroshima"
+    },
+    {
+      "id": 588,
+      "name": "Sala Parés",
+      "slug": "sala-pares"
+    },
+    {
+      "id": 677,
+      "name": "Sala Phenomena",
+      "slug": "sala-phenomena"
+    },
+    {
+      "id": 540,
+      "name": "Sala Salamandra",
+      "slug": "sala-salamandra"
+    },
+    {
+      "id": 568,
+      "name": "Sala VOL",
+      "slug": "sala-vol"
+    },
+    {
+      "id": 217,
+      "name": "Salamina",
+      "slug": "salaminasalaminasalamina"
+    },
+    {
+      "id": 453,
+      "name": "Saliva",
+      "slug": "saliva"
+    },
+    {
+      "id": 218,
+      "name": "Sant Andreu Contemporani",
+      "slug": "sant-andreu-contemporani"
+    },
+    {
+      "id": 514,
+      "name": "Sant Lluc",
+      "slug": "sant-lluc"
+    },
+    {
+      "id": 560,
+      "name": "Santa Mònica",
+      "slug": "santa-monica"
+    },
+    {
+      "id": 878,
+      "name": "Seltz",
+      "slug": "seltz"
+    },
+    {
+      "id": 819,
+      "name": "SELTZ by Ritter Ferrer",
+      "slug": "seltz-by-ritter-ferrer"
+    },
+    {
+      "id": 462,
+      "name": "Senda",
+      "slug": "senda"
+    },
+    {
+      "id": 519,
+      "name": "sis galeria",
+      "slug": "sis-galeria"
+    },
+    {
+      "id": 515,
+      "name": "Sismògraf",
+      "slug": "sismograf"
+    },
+    {
+      "id": 222,
+      "name": "Solar de la Puri",
+      "slug": "solar-de-la-puri"
+    },
+    {
+      "id": 853,
+      "name": "Sorondo Projects",
+      "slug": "sorondo-projects"
+    },
+    {
+      "id": 637,
+      "name": "Spiritvessel",
+      "slug": "spiritvessel"
+    },
+    {
+      "id": 911,
+      "name": "ssuave",
+      "slug": "ssuave"
+    },
+    {
+      "id": 508,
+      "name": "Subscriptor activitats Nau i Media",
+      "slug": "subscriptor-activitats-nau-i-media"
+    },
+    {
+      "id": 587,
+      "name": "Suburbia Contemporary",
+      "slug": "suburbia-contemporary"
+    },
+    {
+      "id": 751,
+      "name": "SWAB ART FAIR",
+      "slug": "swab-art-fair"
+    },
+    {
+      "id": 732,
+      "name": "Taché Art Gallery",
+      "slug": "tache-art-gallery"
+    },
+    {
+      "id": 829,
+      "name": "tallerBDN",
+      "slug": "tallerbdn"
+    },
+    {
+      "id": 467,
+      "name": "Tangent Projects",
+      "slug": "tangent-projects"
+    },
+    {
+      "id": 903,
+      "name": "TAT ARA",
+      "slug": "tat-ara"
+    },
+    {
+      "id": 800,
+      "name": "Taula de Cultura",
+      "slug": "taula-de-cultura"
+    },
+    {
+      "id": 224,
+      "name": "Teatre El Centre de Gràcia",
+      "slug": "teatre-el-centre-de-gracia"
+    },
+    {
+      "id": 823,
+      "name": "Teatre Lliure de Gràcia",
+      "slug": "teatre-lliure-de-gracia"
+    },
+    {
+      "id": 475,
+      "name": "Teatre Lliure de Montjuic",
+      "slug": "teatre-lliure-de-montjuic"
+    },
+    {
+      "id": 784,
+      "name": "Teatre Municipal de Giroma",
+      "slug": "teatre-municipal-de-giroma"
+    },
+    {
+      "id": 780,
+      "name": "Teatre Municipal de Girona",
+      "slug": "teatre-municipal-de-girona"
+    },
+    {
+      "id": 781,
+      "name": "Teatre Municipal El Jardí",
+      "slug": "teatre-municipal-el-jardi"
+    },
+    {
+      "id": 782,
+      "name": "Teatre Principal d’Olot",
+      "slug": "teatre-principal-dolot"
+    },
+    {
+      "id": 609,
+      "name": "The Curators Room",
+      "slug": "the-curators-room"
+    },
+    {
+      "id": 507,
+      "name": "The Green Parrot",
+      "slug": "the-green-parrot"
+    },
+    {
+      "id": 685,
+      "name": "The Over",
+      "slug": "the-over"
+    },
+    {
+      "id": 737,
+      "name": "Tibidabo",
+      "slug": "tibidabo"
+    },
+    {
+      "id": 270,
+      "name": "tiendaderecha",
+      "slug": "tiendaderecha"
+    },
+    {
+      "id": 860,
+      "name": "Torre Negra",
+      "slug": "torre-negra"
+    },
+    {
+      "id": 840,
+      "name": "TPK Art i Pensament Contemporani",
+      "slug": "tpk-art-i-pensament-contemporani"
+    },
+    {
+      "id": 456,
+      "name": "Trama 34",
+      "slug": "trama-34"
+    },
+    {
+      "id": 697,
+      "name": "UdG Campus Barri Vell",
+      "slug": "udg-campus-barri-vell"
+    },
+    {
+      "id": 434,
+      "name": "universitat de barcelona",
+      "slug": "universitat-de-barcelona"
+    },
+    {
+      "id": 450,
+      "name": "UXVAL GOCHEZ",
+      "slug": "arte-aurora-galeria"
+    },
+    {
+      "id": 599,
+      "name": "Valid Foto",
+      "slug": "valid-foto"
+    },
+    {
+      "id": 553,
+      "name": "Vapor Vell",
+      "slug": "vapor-vell"
+    },
+    {
+      "id": 586,
+      "name": "Victor Lope Arte Contemporáneo",
+      "slug": "victor-lope-arte-contemporaneo"
+    },
+    {
+      "id": 617,
+      "name": "Xarxaprod",
+      "slug": "xarxaprod"
+    },
+    {
+      "id": 477,
+      "name": "Zumzeig",
+      "slug": "zumzeig"
+    },
+    {
+      "id": 651,
+      "name": "Zumzeig Cinecooperativa",
+      "slug": "zumzeig-cinecooperativa"
+    },
+    {
+      "id": 257,
+      "name": "ZZZINC",
+      "slug": "zzzinc"
+    }
+  ],
+  "profiles": [
+    {
+      "id": 126,
+      "name": "3 Punts Galería",
+      "slug": "3-punts-galeria",
+      "url": "https://www.3punts.com"
+    },
+    {
+      "id": 154,
+      "name": "a cobert",
+      "slug": "a-cobert",
+      "url": "http://www.acobert.cat"
+    },
+    {
+      "id": 104,
+      "name": "A*DESK",
+      "slug": "a-desk",
+      "url": "https://a-desk.org/"
+    },
+    {
+      "id": 194,
+      "name": "A-FAD",
+      "slug": "a-fad",
+      "url": "https://www.fad.cat/a-fad/ca"
+    },
+    {
+      "id": 172,
+      "name": "ACVIC. Centre d'Arts Contemporànies",
+      "slug": "acvic",
+      "url": "https://www.acvic.org"
+    },
+    {
+      "id": 14,
+      "name": "ADN Galeria",
+      "slug": "adn",
+      "url": "http://adngaleria.com"
+    },
+    {
+      "id": 173,
+      "name": "AGUAS",
+      "slug": "aguas",
+      "url": "https://www.instagram.com/aguasssssss"
+    },
+    {
+      "id": 202,
+      "name": "Al-Tiba9",
+      "slug": "al-tiba9",
+      "url": "https://www.altiba9.gallery"
+    },
+    {
+      "id": 127,
+      "name": "Alalimón Galería",
+      "slug": "alalimon-galeria",
+      "url": "https://www.alalimon.org/"
+    },
+    {
+      "id": 208,
+      "name": "Alzueta Gallery",
+      "slug": "alzueta-gallery",
+      "url": "https://www.alzuetagallery.com/"
+    },
+    {
+      "id": 98,
+      "name": "Ana Mas Projects",
+      "slug": "anamasprojects",
+      "url": "http://anamasprojects.com/"
+    },
+    {
+      "id": 94,
+      "name": "àngels barcelona",
+      "slug": "angelsbarcelona",
+      "url": "http://angelsbarcelona.com/"
+    },
+    {
+      "id": 96,
+      "name": "Anna",
+      "slug": "anna",
+      "url": ""
+    },
+    {
+      "id": 87,
+      "name": "Anòmia",
+      "slug": "anomia",
+      "url": "http://www.anomia.info/"
+    },
+    {
+      "id": 86,
+      "name": "Antic Teatre",
+      "slug": "antic-teatre",
+      "url": "http://www.anticteatre.com"
+    },
+    {
+      "id": 171,
+      "name": "Aparador 22",
+      "slug": "aparador22",
+      "url": "http://aparador22.org/"
+    },
+    {
+      "id": 109,
+      "name": "ARBAR",
+      "slug": "arbar",
+      "url": "http://arbar.cat"
+    },
+    {
+      "id": 116,
+      "name": "Art Nou",
+      "slug": "art-nou",
+      "url": "http://artbarcelona.es/artnou/"
+    },
+    {
+      "id": 181,
+      "name": "art.santcugat",
+      "slug": "art-santcugat",
+      "url": "https://centresculturals.santcugat.cat/28682/centre/"
+    },
+    {
+      "id": 175,
+      "name": "ArtBarcelona. Galeries",
+      "slug": "art-barcelona",
+      "url": "http://www.artbarcelona.es/"
+    },
+    {
+      "id": 124,
+      "name": "ARTeFACte",
+      "slug": "artefacte",
+      "url": "https://artefacte.info"
+    },
+    {
+      "id": 60,
+      "name": "ArtsLibris",
+      "slug": "artslibris",
+      "url": "http://artslibris.cat"
+    },
+    {
+      "id": 22,
+      "name": "BAR project",
+      "slug": "barproject",
+      "url": "http://barproject.net"
+    },
+    {
+      "id": 112,
+      "name": "Barcelona Gallery Weekend",
+      "slug": "bgw",
+      "url": "https://www.barcelonagalleryweekend.com/"
+    },
+    {
+      "id": 197,
+      "name": "BETA Contemporary",
+      "slug": "beta-contemporary",
+      "url": "https://www.betacontemporary.com/"
+    },
+    {
+      "id": 39,
+      "name": "Blueproject Foundation",
+      "slug": "blueprojectfoundation",
+      "url": "http://blueprojectfoundation.org/"
+    },
+    {
+      "id": 102,
+      "name": "Bòlit, Centre d'Art Contemporani. Girona",
+      "slug": "bolit",
+      "url": "http://www.bolit.cat/"
+    },
+    {
+      "id": 52,
+      "name": "Bombon Projects",
+      "slug": "bombon-projects",
+      "url": "http://www.bombonprojects.com/"
+    },
+    {
+      "id": 190,
+      "name": "Ca la Rosa. Centre d'Art i Recerca",
+      "slug": "ca-la-rosa",
+      "url": "https://calarosa.org"
+    },
+    {
+      "id": 207,
+      "name": "CACiS El Forn de la Calç",
+      "slug": "cacis",
+      "url": "https://www.elforndelacalc.cat/"
+    },
+    {
+      "id": 26,
+      "name": "CaixaForum Barcelona",
+      "slug": "caixaforumbcn",
+      "url": "https://caixaforum.es/barcelona/home"
+    },
+    {
+      "id": 6,
+      "name": "Can Felipa",
+      "slug": "can-felipa",
+      "url": "http://cccanfelipa.cat"
+    },
+    {
+      "id": 67,
+      "name": "Casa Elizalde",
+      "slug": "casa-elizalde",
+      "url": "http://www.casaelizalde.com"
+    },
+    {
+      "id": 188,
+      "name": "Centre Cívic Guinardó",
+      "slug": "centre-civic-guinardo",
+      "url": "http://ajuntament.barcelona.cat/ccivics/guinardo/"
+    },
+    {
+      "id": 5,
+      "name": "Centre d'Art la Panera",
+      "slug": "la-panera",
+      "url": "http://www.lapanera.cat"
+    },
+    {
+      "id": 55,
+      "name": "Centre d'Art Maristany",
+      "slug": "maristany",
+      "url": ""
+    },
+    {
+      "id": 105,
+      "name": "Centre d'Art Tecla Sala",
+      "slug": "tecla-sala",
+      "url": "http://www.teclasala.net/"
+    },
+    {
+      "id": 83,
+      "name": "Chiquita Room",
+      "slug": "chiquitaroom",
+      "url": "http://chiquitaroom.com"
+    },
+    {
+      "id": 167,
+      "name": "Colette Mariana",
+      "slug": "colette-mariana",
+      "url": "http://colettemariana.com"
+    },
+    {
+      "id": 66,
+      "name": "Cordova",
+      "slug": "cordova",
+      "url": "http://cordova.world/"
+    },
+    {
+      "id": 157,
+      "name": "Cultural Rizoma",
+      "slug": "cultural-rizoma",
+      "url": "http://culturalrizoma.com"
+    },
+    {
+      "id": 120,
+      "name": "DART Festival",
+      "slug": "dart-festival",
+      "url": "https://dart-festival.com/ca/"
+    },
+    {
+      "id": 183,
+      "name": "dev",
+      "slug": "dev",
+      "url": ""
+    },
+    {
+      "id": 164,
+      "name": "Developer",
+      "slug": "developer",
+      "url": ""
+    },
+    {
+      "id": 74,
+      "name": "Dilalica",
+      "slug": "dilalica",
+      "url": "http://www.dilalica.com"
+    },
+    {
+      "id": 119,
+      "name": "EART",
+      "slug": "eart",
+      "url": "https://experimentem.org"
+    },
+    {
+      "id": 122,
+      "name": "El Corralito",
+      "slug": "el-corralito",
+      "url": "https://elcorralitocca.com/"
+    },
+    {
+      "id": 162,
+      "name": "El Sielo",
+      "slug": "elsielo",
+      "url": "https://elsielo.international/"
+    },
+    {
+      "id": 54,
+      "name": "EN RESiDÈNCiA",
+      "slug": "en-residencia",
+      "url": "http://enresidencia.org"
+    },
+    {
+      "id": 185,
+      "name": "Escat Gallery Trafalgar",
+      "slug": "escat-gallery",
+      "url": "http://www.escatgallery.com"
+    },
+    {
+      "id": 206,
+      "name": "Escat Projects",
+      "slug": "escat-gallery-sarria",
+      "url": "http://www.escatgallery.com"
+    },
+    {
+      "id": 165,
+      "name": "Espai 19",
+      "slug": "espai19",
+      "url": ""
+    },
+    {
+      "id": 186,
+      "name": "Espai Souvenir",
+      "slug": "espai-souvenir",
+      "url": "http://espaisouvenir.com/"
+    },
+    {
+      "id": 117,
+      "name": "ESPRONCEDA",
+      "slug": "espronceda",
+      "url": "https://www.espronceda.net/"
+    },
+    {
+      "id": 152,
+      "name": "Estudi Obert",
+      "slug": "estudi-obert",
+      "url": "http://sergiaguilar.ws/e-o"
+    },
+    {
+      "id": 21,
+      "name": "ethall",
+      "slug": "ethall",
+      "url": "http://ethall.net"
+    },
+    {
+      "id": 191,
+      "name": "Eufònic",
+      "slug": "eufonic",
+      "url": "https://eufonic.net"
+    },
+    {
+      "id": 195,
+      "name": "EXs",
+      "slug": "ex",
+      "url": "https://exs.international/"
+    },
+    {
+      "id": 182,
+      "name": "Fabra i Coats: Fàbrica de Creació",
+      "slug": "fabra-i-coats-fabrica-de-creacio",
+      "url": "https://www.barcelona.cat/fabraicoats/"
+    },
+    {
+      "id": 77,
+      "name": "FASE",
+      "slug": "fase",
+      "url": "http://fase.xyz"
+    },
+    {
+      "id": 88,
+      "name": "Festival Sâlmon",
+      "slug": "salmon",
+      "url": "http://www.festivalsalmon.com"
+    },
+    {
+      "id": 155,
+      "name": "Filmoteca de Catalunya",
+      "slug": "filmoteca",
+      "url": "https://www.filmoteca.cat/"
+    },
+    {
+      "id": 178,
+      "name": "FUGA",
+      "slug": "fuga",
+      "url": "https://fuga.gallery/"
+    },
+    {
+      "id": 135,
+      "name": "Fundació Arranz Bravo",
+      "slug": "farranzabravo",
+      "url": "http://fundacioarranzbravo.cat/"
+    },
+    {
+      "id": 100,
+      "name": "Fundació Joan Brossa",
+      "slug": "fundacio-joan-brossa",
+      "url": "https://www.fundaciojoanbrossa.cat"
+    },
+    {
+      "id": 13,
+      "name": "Fundació Joan Miró",
+      "slug": "fundacio-joan-miro",
+      "url": "http://www.fmirobcn.org"
+    },
+    {
+      "id": 193,
+      "name": "Fundació Sorigué",
+      "slug": "fundacio-sorigue",
+      "url": "https://www.fundaciosorigue.com/"
+    },
+    {
+      "id": 12,
+      "name": "Fundació Suñol",
+      "slug": "fundacio-sunol",
+      "url": "http://fundaciosunol.org"
+    },
+    {
+      "id": 198,
+      "name": "Fundació Úniques",
+      "slug": "fundacio-uniques",
+      "url": "http://www.fundaciouniques.art"
+    },
+    {
+      "id": 205,
+      "name": "Fundació Vila Casas",
+      "slug": "fundacio-vila-casas",
+      "url": "http://www.fundaciovilacasas.org"
+    },
+    {
+      "id": 103,
+      "name": "Galería Alegría",
+      "slug": "galeria-alegria",
+      "url": "http://www.galeriaalegria.es/"
+    },
+    {
+      "id": 129,
+      "name": "Galeria Contrast",
+      "slug": "galeria-contrast",
+      "url": "https://www.galeriacontrast.com/"
+    },
+    {
+      "id": 130,
+      "name": "Galeria Eude",
+      "slug": "galeria-eude",
+      "url": "http://www.galeriaeude.com/web2021/index.htm"
+    },
+    {
+      "id": 149,
+      "name": "Galeria H2O",
+      "slug": "galeria-h2o",
+      "url": "http://h2o.es"
+    },
+    {
+      "id": 131,
+      "name": "Galeria Joan Gaspar",
+      "slug": "galeria-joan-gaspar",
+      "url": "https://www.galeriajoangaspar.com/"
+    },
+    {
+      "id": 114,
+      "name": "Galeria Joan Prats",
+      "slug": "joanprats",
+      "url": "https://www.galeriajoanprats.com"
+    },
+    {
+      "id": 132,
+      "name": "Galeria Marc Domènech",
+      "slug": "galeria-marc-domenech",
+      "url": "http://www.galeriamarcdomenech.com/"
+    },
+    {
+      "id": 133,
+      "name": "Galeria Marlborough",
+      "slug": "galeria-marlborough",
+      "url": "https://www.galeriamarlborough.com/"
+    },
+    {
+      "id": 80,
+      "name": "Galería Miguel Marcos",
+      "slug": "miguel-marcos",
+      "url": "http://www.miguelmarcos.com"
+    },
+    {
+      "id": 144,
+      "name": "Galeria N2",
+      "slug": "galeria-n2",
+      "url": "http://www.n2galeria.com"
+    },
+    {
+      "id": 78,
+      "name": "Galeria Senda",
+      "slug": "senda",
+      "url": "https://galeriasenda.com"
+    },
+    {
+      "id": 63,
+      "name": "GRAF",
+      "slug": "graf",
+      "url": ""
+    },
+    {
+      "id": 37,
+      "name": "Halfhouse",
+      "slug": "halfhouse",
+      "url": "http://halfhouse.org"
+    },
+    {
+      "id": 30,
+      "name": "Hamaca",
+      "slug": "hamaca",
+      "url": "http://www.hamacaonline.net"
+    },
+    {
+      "id": 9,
+      "name": "Hangar",
+      "slug": "hangar",
+      "url": "http://www.hangar.org"
+    },
+    {
+      "id": 3,
+      "name": "Homesession",
+      "slug": "homesession",
+      "url": "http://homesession.org/"
+    },
+    {
+      "id": 106,
+      "name": "House of Chappaz",
+      "slug": "espaitactel",
+      "url": "https://houseofchappaz.com"
+    },
+    {
+      "id": 158,
+      "name": "IDENSITAT",
+      "slug": "idensitat",
+      "url": "https://www.idensitat.net/"
+    },
+    {
+      "id": 189,
+      "name": "Jiser",
+      "slug": "jiser",
+      "url": "http://jiser.org"
+    },
+    {
+      "id": 166,
+      "name": "Konvent Zero",
+      "slug": "konvent-zero",
+      "url": "http://konventzero.com/"
+    },
+    {
+      "id": 115,
+      "name": "kunst",
+      "slug": "kunst",
+      "url": "https://www.instagram.com/laskunst"
+    },
+    {
+      "id": 143,
+      "name": "L&amp;B Gallery",
+      "slug": "lb-gallery",
+      "url": "http://lbcontemporaryart.com"
+    },
+    {
+      "id": 29,
+      "name": "L'Automàtica",
+      "slug": "lautomatica",
+      "url": "http://lautomatica.org"
+    },
+    {
+      "id": 38,
+      "name": "L'Estruch, Fàbrica de Creació de les Arts en Viu",
+      "slug": "lestruch",
+      "url": "https://lestruch.sabadell.cat/"
+    },
+    {
+      "id": 150,
+      "name": "L21 Barcelona",
+      "slug": "l21-factory",
+      "url": "http://l21gallery.com"
+    },
+    {
+      "id": 70,
+      "name": "La Caldera",
+      "slug": "lacaldera",
+      "url": "http://www.lacaldera.info"
+    },
+    {
+      "id": 10,
+      "name": "La Capella",
+      "slug": "la-capella",
+      "url": "http://lacapella.barcelona"
+    },
+    {
+      "id": 65,
+      "name": "La Escocesa",
+      "slug": "la-escocesa",
+      "url": "http://www.laescocesa.org/"
+    },
+    {
+      "id": 32,
+      "name": "La Fabra Centre d'Art Contemporani",
+      "slug": "fabra-i-coats",
+      "url": "https://www.barcelona.cat/lafabracac"
+    },
+    {
+      "id": 82,
+      "name": "LA INFINITA",
+      "slug": "la-infinita",
+      "url": "http://www.lainfinitalh.org"
+    },
+    {
+      "id": 176,
+      "name": "La Plataforma",
+      "slug": "la-plataforma",
+      "url": "https://laplataformabcn.com"
+    },
+    {
+      "id": 23,
+      "name": "la Poderosa",
+      "slug": "la-poderosa",
+      "url": "http://lapoderosa.es"
+    },
+    {
+      "id": 31,
+      "name": "La Virreina Centre de la Imatge",
+      "slug": "la-virreina",
+      "url": "http://barcelona.cat/lavirreina"
+    },
+    {
+      "id": 89,
+      "name": "La Visiva",
+      "slug": "la-visiva",
+      "url": "http://www.lavisiva.org"
+    },
+    {
+      "id": 151,
+      "name": "LAB36",
+      "slug": "lab36",
+      "url": "https://lab36.org"
+    },
+    {
+      "id": 174,
+      "name": "Lo Pati Centre d'Art",
+      "slug": "lo-pati",
+      "url": "https://www.lopati.cat"
+    },
+    {
+      "id": 84,
+      "name": "LOOP",
+      "slug": "loop",
+      "url": "http://loop-barcelona.com"
+    },
+    {
+      "id": 57,
+      "name": "Luz Broto",
+      "slug": "luz",
+      "url": ""
+    },
+    {
+      "id": 24,
+      "name": "MACBA",
+      "slug": "macba",
+      "url": "http://macba.cat"
+    },
+    {
+      "id": 200,
+      "name": "Malpaís",
+      "slug": "malpais",
+      "url": "http://www.malpais.org"
+    },
+    {
+      "id": 179,
+      "name": "Manifesta 15 Barcelona Metropolitana",
+      "slug": "manifesta-15-barcelona-metropolitana",
+      "url": "https://manifesta15.org/"
+    },
+    {
+      "id": 1,
+      "name": "Marc Permanyer Conde",
+      "slug": "marc",
+      "url": "http://www.marcpermanyer.com"
+    },
+    {
+      "id": 59,
+      "name": "Marc Vives",
+      "slug": "vives",
+      "url": ""
+    },
+    {
+      "id": 134,
+      "name": "Mayoral",
+      "slug": "galeria-mayoral",
+      "url": "http://galeriamayoral.com/"
+    },
+    {
+      "id": 180,
+      "name": "Mèdol. Centre d'Arts Contemporànies de Tarragona",
+      "slug": "medol",
+      "url": "https://medol.cat/"
+    },
+    {
+      "id": 42,
+      "name": "Mercat de les Flors",
+      "slug": "mercat-de-les-flors",
+      "url": "http://mercatflors.cat"
+    },
+    {
+      "id": 203,
+      "name": "MORERA. Museu d'Art Modern i Contemporani de Lleida",
+      "slug": "el-morera",
+      "url": "https://morera.paeria.cat/"
+    },
+    {
+      "id": 201,
+      "name": "Museu d'Art Modern de Tarragona",
+      "slug": "museu-art-modern-tarragona",
+      "url": "http://www.dipta.cat/mamt"
+    },
+    {
+      "id": 113,
+      "name": "Museu de Granollers",
+      "slug": "museugranollers",
+      "url": "https://museugranollers.cat/"
+    },
+    {
+      "id": 64,
+      "name": "Museu Nacional d'Art de Catalunya",
+      "slug": "mnac",
+      "url": "http://www.museunacional.cat"
+    },
+    {
+      "id": 8,
+      "name": "Museu Tàpies",
+      "slug": "fundacio-antoni-tapies",
+      "url": "http://museutapies.org"
+    },
+    {
+      "id": 159,
+      "name": "M|A|C Mataró Art Contemporani",
+      "slug": "mac",
+      "url": "https://www.mataroartcontemporani.cat/i"
+    },
+    {
+      "id": 95,
+      "name": "Noe",
+      "slug": "noe",
+      "url": ""
+    },
+    {
+      "id": 92,
+      "name": "Nogueras Blanchard",
+      "slug": "nogueras-blanchard",
+      "url": "http://www.noguerasblanchard.com"
+    },
+    {
+      "id": 97,
+      "name": "NOMEVOY",
+      "slug": "pira",
+      "url": "http://nomevoy.com"
+    },
+    {
+      "id": 16,
+      "name": "nyamnyam",
+      "slug": "nyamnyam",
+      "url": "http://nyamnyam.net"
+    },
+    {
+      "id": 145,
+      "name": "Palmadotze",
+      "slug": "palmadotze",
+      "url": "http://www.palmadotze.com"
+    },
+    {
+      "id": 75,
+      "name": "Pavelló Mies van der Rohe",
+      "slug": "mies-van-der-rohe",
+      "url": "https://miesbcn.com"
+    },
+    {
+      "id": 146,
+      "name": "Pigment Gallery",
+      "slug": "pigment-gallery",
+      "url": "http://www.pigmentgallery.es"
+    },
+    {
+      "id": 62,
+      "name": "Piramidón",
+      "slug": "piramidon",
+      "url": "http://www.piramidon.com"
+    },
+    {
+      "id": 147,
+      "name": "Polígrafa Obra Gràfica",
+      "slug": "poligrafa-obra-grafica",
+      "url": "http://www.poligrafa.net"
+    },
+    {
+      "id": 177,
+      "name": "Prats Nogueras Blanchard",
+      "slug": "prats-nogueras-blanchard",
+      "url": "https://www.pratsnoguerasblanchard.com"
+    },
+    {
+      "id": 118,
+      "name": "ProjecteSD",
+      "slug": "projectesd",
+      "url": ""
+    },
+    {
+      "id": 192,
+      "name": "Proyecto REME",
+      "slug": "proyecto-reme",
+      "url": "http://www.proyectoreme.com"
+    },
+    {
+      "id": 85,
+      "name": "R.A.R.O. Barcelona",
+      "slug": "raro",
+      "url": "http://www.esrarobarcelona.com"
+    },
+    {
+      "id": 156,
+      "name": "Raccoon Projects",
+      "slug": "raccoon-projects",
+      "url": ""
+    },
+    {
+      "id": 160,
+      "name": "Roca Umbert Fàbrica de les Arts",
+      "slug": "rocaumbert",
+      "url": "http://rocaumbert.com"
+    },
+    {
+      "id": 110,
+      "name": "RocioSantaCruz",
+      "slug": "rociosantacruz",
+      "url": "http://rociosantacruz.com"
+    },
+    {
+      "id": 4,
+      "name": "Sala d'Art Jove",
+      "slug": "sala-dart-jove",
+      "url": "http://saladartjove.cat/"
+    },
+    {
+      "id": 139,
+      "name": "Sala Parés",
+      "slug": "sala-pares",
+      "url": "http://salapares.com"
+    },
+    {
+      "id": 36,
+      "name": "Sant Andreu Contemporani",
+      "slug": "sant-andreu-contemporani",
+      "url": "http://santandreucontemporani.org/"
+    },
+    {
+      "id": 19,
+      "name": "Santa Mònica",
+      "slug": "santa-monica",
+      "url": "http://santamonica.cat"
+    },
+    {
+      "id": 199,
+      "name": "SELTZ by Ritter Ferrer",
+      "slug": "seltz",
+      "url": "https://seltz.art/"
+    },
+    {
+      "id": 111,
+      "name": "sis galeria",
+      "slug": "sisgaleria",
+      "url": "https://web.sisgaleria.com"
+    },
+    {
+      "id": 196,
+      "name": "Sorondo",
+      "slug": "sorondo-projects",
+      "url": "https://sorondoprojects.com/"
+    },
+    {
+      "id": 161,
+      "name": "Spiritvessel",
+      "slug": "spiritvessel",
+      "url": ""
+    },
+    {
+      "id": 138,
+      "name": "Suburbia Contemporary",
+      "slug": "suburbia-contemporary",
+      "url": "http://suburbiacontemporary.com"
+    },
+    {
+      "id": 187,
+      "name": "SWAB",
+      "slug": "swab",
+      "url": "https://swab.es/"
+    },
+    {
+      "id": 128,
+      "name": "Taché Art Gallery",
+      "slug": "galeria-carles-tache",
+      "url": "https://www.carlestache.com/"
+    },
+    {
+      "id": 81,
+      "name": "Tangent Projects",
+      "slug": "tangent-projects",
+      "url": "http://www.tangent-projects.com/"
+    },
+    {
+      "id": 125,
+      "name": "Temporals",
+      "slug": "temporals",
+      "url": "https://ajuntament.barcelona.cat/centrescivics/ca/activitat/temporals-lart-transita-pels-barris"
+    },
+    {
+      "id": 25,
+      "name": "The Green Parrot",
+      "slug": "green-parrot",
+      "url": "http://thegreenparrot.org"
+    },
+    {
+      "id": 169,
+      "name": "The Over",
+      "slug": "the-over",
+      "url": "https://www.the-over.com"
+    },
+    {
+      "id": 72,
+      "name": "Uxval Gochez",
+      "slug": "aurora",
+      "url": "https://www.uxvalgochez.com/contact/"
+    },
+    {
+      "id": 141,
+      "name": "Valid Foto",
+      "slug": "valid-foto",
+      "url": "https://validfoto.com/"
+    },
+    {
+      "id": 137,
+      "name": "Victor Lope Arte Contemporáneo",
+      "slug": "victor-lope",
+      "url": "http://www.victorlope.com"
+    },
+    {
+      "id": 153,
+      "name": "Xarxaprod",
+      "slug": "xarxaprod",
+      "url": "https://xarxaprod.cat/"
+    },
+    {
+      "id": 136,
+      "name": "Zielinsky",
+      "slug": "zielinsky",
+      "url": "https://www.zielinskyart.com"
+    }
+  ]
+}

@@ -1,0 +1,523 @@
+[
+  {
+    "id": 60390,
+    "modified": "2026-09-24T17:35:16",
+    "modified_gmt": "2026-09-24T15:35:16",
+    "slug": "art-a-la-pagina-quico-peinado-i-paula-artes",
+    "status": "publish",
+    "type": "event",
+    "link": "https://graf.cat/events/event/art-a-la-pagina-quico-peinado-i-paula-artes/",
+    "title": {
+      "rendered": "Art a la pàgina: Quico Peinado i Paula Artés"
+    },
+    "author": 175,
+    "featured_media": 60391,
+    "template": "",
+    "meta": {
+      "_acf_changed": false,
+      "_monsterinsights_skip_tracking": false
+    },
+    "event-venues": [
+      895
+    ],
+    "event-tags": [],
+    "class_list": [
+      "post-60390",
+      "event",
+      "type-event",
+      "status-publish",
+      "has-post-thumbnail",
+      "hentry",
+      "event-venue-biblioteca-sofia-barat",
+      "event-category-xerrada"
+    ],
+    "acf": {
+      "title_ca": "Art a la pàgina: Quico Peinado i Paula Artés",
+      "title_es": "Art a la pàgina: Quico Peinado u Paula Artés",
+      "title_en": "Art a la pàgina: Quico Peinado and Paula Artés",
+      "event_category": 305,
+      "event_show_only_own_date": true,
+      "_event_confirmed": true,
+      "_event_public": true,
+      "_event_free": true,
+      "_event_price-min": "",
+      "_event_price-max": "",
+      "_event_web_ca": "https://www.instagram.com/p/DdoEVedCOsB/",
+      "_event_web_es": "https://www.instagram.com/p/DdoEVedCOsB/",
+      "_event_web_en": "https://www.instagram.com/p/DdoEVedCOsB/",
+      "event_contact_email": "",
+      "event_apply_email": "",
+      "is_online_event": false,
+      "is_art_nou_event": false,
+      "is_bgw_event": false,
+      "date_text": "",
+      "register_deadline": null,
+      "altres_organitzadors": ""
+    },
+    "abe_event_venue": "Biblioteca Sofia Barat",
+    "abe_event_category": "Xerrada",
+    "occurrence_id": "23161",
+    "start": "2026-09-29T18:30:00+02:00",
+    "end": "2026-09-29T20:00:00+02:00",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events/60390",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/types/event"
+        }
+      ],
+      "author": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/users/175"
+        }
+      ],
+      "occurrences": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/events/60390/occurrences"
+        }
+      ],
+      "acf:term": [
+        {
+          "embeddable": true,
+          "taxonomy": "event-category",
+          "href": "https://graf.cat/wp-json/wp/v2/event-category/305"
+        }
+      ],
+      "wp:featuredmedia": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/media/60391"
+        }
+      ],
+      "wp:attachment": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/media?parent=60390"
+        }
+      ],
+      "wp:term": [
+        {
+          "taxonomy": "event-venue",
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues?post=60390"
+        },
+        {
+          "taxonomy": "event-tag",
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/event-tags?post=60390"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 59179,
+    "modified": "2026-07-26T14:38:09",
+    "modified_gmt": "2026-07-26T12:38:09",
+    "slug": "lo-que-tiene-vuelo-laia-arguelles-folch",
+    "status": "publish",
+    "type": "event",
+    "link": "https://graf.cat/events/event/lo-que-tiene-vuelo-laia-arguelles-folch/",
+    "title": {
+      "rendered": "Lo que tiene vuelo. Laía Argüelles Folch"
+    },
+    "author": 83,
+    "featured_media": 59180,
+    "template": "",
+    "meta": {
+      "_acf_changed": false,
+      "_monsterinsights_skip_tracking": false
+    },
+    "event-venues": [
+      472
+    ],
+    "event-tags": [],
+    "class_list": [
+      "post-59179",
+      "event",
+      "type-event",
+      "status-publish",
+      "has-post-thumbnail",
+      "hentry",
+      "event-venue-chiquita-room-2",
+      "event-category-exposicio"
+    ],
+    "acf": {
+      "title_ca": "Lo que tiene vuelo. Laía Argüelles Folch",
+      "title_es": "Lo que tiene vuelo. Laía Argüelles Folch",
+      "title_en": "Lo que tiene vuelo. Laía Argüelles Folch",
+      "event_category": 103,
+      "event_show_only_own_date": true,
+      "_event_confirmed": true,
+      "_event_public": true,
+      "_event_free": true,
+      "_event_price-min": "",
+      "_event_price-max": "",
+      "_event_web_ca": "https://chiquitaroom.com/ca/event/lo-que-tiene-vuelo/",
+      "_event_web_es": "https://chiquitaroom.com/event/lo-que-tiene-vuelo/",
+      "_event_web_en": "https://chiquitaroom.com/en/event/lo-que-tiene-vuelo/",
+      "event_contact_email": "",
+      "event_apply_email": "",
+      "is_online_event": false,
+      "is_art_nou_event": false,
+      "is_bgw_event": true,
+      "date_text": "",
+      "register_deadline": null,
+      "altres_organitzadors": ""
+    },
+    "abe_event_venue": "Chiquita Room",
+    "abe_event_category": "Exposició",
+    "occurrence_id": "22737",
+    "start": "2026-09-17T00:00:00+02:00",
+    "end": "2026-11-06T23:59:00+02:00",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events/59179",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/types/event"
+        }
+      ],
+      "author": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/users/83"
+        }
+      ],
+      "occurrences": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/events/59179/occurrences"
+        }
+      ],
+      "acf:term": [
+        {
+          "embeddable": true,
+          "taxonomy": "event-category",
+          "href": "https://graf.cat/wp-json/wp/v2/event-category/103"
+        }
+      ],
+      "wp:featuredmedia": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/media/59180"
+        }
+      ],
+      "wp:attachment": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/media?parent=59179"
+        }
+      ],
+      "wp:term": [
+        {
+          "taxonomy": "event-venue",
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues?post=59179"
+        },
+        {
+          "taxonomy": "event-tag",
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/event-tags?post=59179"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 59371,
+    "modified": "2026-08-05T20:58:15",
+    "modified_gmt": "2026-08-05T18:58:15",
+    "slug": "el-jabon-etc-opening",
+    "status": "publish",
+    "type": "event",
+    "link": "https://graf.cat/events/event/el-jabon-etc-opening/",
+    "title": {
+      "rendered": "El jabón, etc"
+    },
+    "author": 83,
+    "featured_media": 0,
+    "template": "",
+    "meta": {
+      "_acf_changed": false,
+      "_monsterinsights_skip_tracking": false
+    },
+    "event-venues": [
+      472
+    ],
+    "event-tags": [],
+    "class_list": [
+      "post-59371",
+      "event",
+      "type-event",
+      "status-publish",
+      "hentry",
+      "event-venue-chiquita-room-2",
+      "event-category-inauguracio"
+    ],
+    "acf": {
+      "title_ca": "El jabón, etc",
+      "title_es": "El jabón, etc",
+      "title_en": "El jabón, etc",
+      "event_category": 189,
+      "event_show_only_own_date": true,
+      "_event_confirmed": true,
+      "_event_public": true,
+      "_event_free": true,
+      "_event_price-min": "",
+      "_event_price-max": "",
+      "_event_web_ca": "https://chiquitaroom.com/",
+      "_event_web_es": "https://chiquitaroom.com/",
+      "_event_web_en": "https://chiquitaroom.com/",
+      "event_contact_email": "",
+      "event_apply_email": "",
+      "is_online_event": false,
+      "is_art_nou_event": false,
+      "is_bgw_event": false,
+      "date_text": "",
+      "register_deadline": null,
+      "altres_organitzadors": ""
+    },
+    "abe_event_venue": "Chiquita Room",
+    "abe_event_category": "Inauguració",
+    "occurrence_id": "22821",
+    "start": "2026-11-18T19:00:00+02:00",
+    "end": "2026-11-18T21:00:00+02:00",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events/59371",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/types/event"
+        }
+      ],
+      "author": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/users/83"
+        }
+      ],
+      "occurrences": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/events/59371/occurrences"
+        }
+      ],
+      "acf:term": [
+        {
+          "embeddable": true,
+          "taxonomy": "event-category",
+          "href": "https://graf.cat/wp-json/wp/v2/event-category/189"
+        }
+      ],
+      "wp:attachment": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/media?parent=59371"
+        }
+      ],
+      "wp:term": [
+        {
+          "taxonomy": "event-venue",
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues?post=59371"
+        },
+        {
+          "taxonomy": "event-tag",
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/event-tags?post=59371"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 57221,
+    "modified": "2026-08-10T17:31:53",
+    "modified_gmt": "2026-08-10T15:31:53",
+    "slug": "collectiva-destiu-3",
+    "status": "publish",
+    "type": "event",
+    "link": "https://graf.cat/events/event/collectiva-destiu-3/",
+    "title": {
+      "rendered": "Col·lectiva d&#8217;estiu"
+    },
+    "author": 131,
+    "featured_media": 59495,
+    "template": "",
+    "meta": {
+      "_acf_changed": false,
+      "_monsterinsights_skip_tracking": false
+    },
+    "event-venues": [
+      594
+    ],
+    "event-tags": [],
+    "class_list": [
+      "post-57221",
+      "event",
+      "type-event",
+      "status-publish",
+      "has-post-thumbnail",
+      "hentry",
+      "event-venue-galeria-joan-gaspar",
+      "event-category-exposicio"
+    ],
+    "acf": {
+      "title_ca": "Col·lectiva d'estiu",
+      "title_es": "Colectiva de verano",
+      "title_en": "Summer Group Show",
+      "event_category": 103,
+      "event_show_only_own_date": true,
+      "_event_confirmed": true,
+      "_event_public": true,
+      "_event_free": true,
+      "_event_price-min": "",
+      "_event_price-max": "",
+      "_event_web_ca": "https://galeriajoangaspar.com/w/",
+      "_event_web_es": "https://galeriajoangaspar.com/w/",
+      "_event_web_en": "https://galeriajoangaspar.com/w/",
+      "event_contact_email": "",
+      "event_apply_email": "",
+      "is_online_event": false,
+      "is_art_nou_event": false,
+      "is_bgw_event": false,
+      "date_text": "",
+      "register_deadline": null,
+      "altres_organitzadors": ""
+    },
+    "abe_event_venue": "Galeria Joan Gaspar",
+    "abe_event_category": "Exposició",
+    "occurrence_id": "22205",
+    "start": "2026-06-30T00:00:00+02:00",
+    "end": "2026-09-30T23:59:00+02:00",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events/57221",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/types/event"
+        }
+      ],
+      "author": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/users/131"
+        }
+      ],
+      "occurrences": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/events/57221/occurrences"
+        }
+      ],
+      "acf:term": [
+        {
+          "embeddable": true,
+          "taxonomy": "event-category",
+          "href": "https://graf.cat/wp-json/wp/v2/event-category/103"
+        }
+      ],
+      "wp:featuredmedia": [
+        {
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/media/59495"
+        }
+      ],
+      "wp:attachment": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/media?parent=57221"
+        }
+      ],
+      "wp:term": [
+        {
+          "taxonomy": "event-venue",
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues?post=57221"
+        },
+        {
+          "taxonomy": "event-tag",
+          "embeddable": true,
+          "href": "https://graf.cat/wp-json/wp/v2/event-tags?post=57221"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  }
+]
