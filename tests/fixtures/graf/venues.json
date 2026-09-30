@@ -1,0 +1,410 @@
+[
+  {
+    "id": 487,
+    "count": 67,
+    "link": "https://graf.cat/events/venues/macba-museu-dart-contemporani-de-barcelona/",
+    "name": "MACBA, Museu d'Art Contemporani de Barcelona",
+    "slug": "macba-museu-dart-contemporani-de-barcelona",
+    "taxonomy": "event-venue",
+    "meta": [],
+    "acf": [],
+    "address": "Plaça dels Àngels, 1",
+    "city": "Barcelona",
+    "state": "Barcelona",
+    "postcode": "08001",
+    "country": "Espanya",
+    "latitude": "41.383191",
+    "longtitude": "2.166867",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues/487",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/taxonomies/event-venue"
+        }
+      ],
+      "wp:post_type": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events?event-venues=487"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 159,
+    "count": 7,
+    "link": "https://graf.cat/events/venues/macba/",
+    "name": "MACBA",
+    "slug": "macba",
+    "taxonomy": "event-venue",
+    "meta": [],
+    "acf": [],
+    "address": "Plaça dels Àngels, 1",
+    "city": "Barcelona",
+    "state": "Barcelona",
+    "postcode": "08001",
+    "country": "Espanya",
+    "latitude": "41.383152",
+    "longtitude": "2.166940",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues/159",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/taxonomies/event-venue"
+        }
+      ],
+      "wp:post_type": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events?event-venues=159"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 472,
+    "count": 86,
+    "link": "https://graf.cat/events/venues/chiquita-room-2/",
+    "name": "Chiquita Room",
+    "slug": "chiquita-room-2",
+    "taxonomy": "event-venue",
+    "meta": [],
+    "acf": [],
+    "address": "Villarroel, 25",
+    "city": "Barcelona",
+    "state": "",
+    "postcode": "08011",
+    "country": "",
+    "latitude": "41.381459",
+    "longtitude": "2.161547",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues/472",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/taxonomies/event-venue"
+        }
+      ],
+      "wp:post_type": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events?event-venues=472"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 601,
+    "count": 29,
+    "link": "https://graf.cat/events/venues/lb-gallery/",
+    "name": "L&amp;B Gallery",
+    "slug": "lb-gallery",
+    "taxonomy": "event-venue",
+    "meta": [],
+    "acf": [],
+    "address": "Àlaba, 58.",
+    "city": "Barcelona",
+    "state": "Barcelona",
+    "postcode": "08005",
+    "country": "",
+    "latitude": "41.396186",
+    "longtitude": "2.194659",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues/601",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/taxonomies/event-venue"
+        }
+      ],
+      "wp:post_type": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events?event-venues=601"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 895,
+    "count": 4,
+    "link": "https://graf.cat/events/venues/biblioteca-sofia-barat/",
+    "name": "Biblioteca Sofia Barat",
+    "slug": "biblioteca-sofia-barat",
+    "taxonomy": "event-venue",
+    "meta": [],
+    "acf": [],
+    "address": "C/ Girona, 64-68",
+    "city": "Barcelona",
+    "state": "Barcelona",
+    "postcode": "08009",
+    "country": "Espanya",
+    "latitude": "41.394687",
+    "longtitude": "2.171490",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues/895",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/taxonomies/event-venue"
+        }
+      ],
+      "wp:post_type": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events?event-venues=895"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 486,
+    "count": 1,
+    "link": "https://graf.cat/events/venues/mar-mediterrani/",
+    "name": "Mar mediterrani",
+    "slug": "mar-mediterrani",
+    "taxonomy": "event-venue",
+    "meta": [],
+    "acf": [],
+    "address": "",
+    "city": "",
+    "state": "",
+    "postcode": "",
+    "country": "",
+    "latitude": "0.000000",
+    "longtitude": "0.000000",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues/486",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/taxonomies/event-venue"
+        }
+      ],
+      "wp:post_type": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events?event-venues=486"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 251,
+    "count": 0,
+    "link": "https://graf.cat/events/venues/madrid/",
+    "name": "madrid",
+    "slug": "madrid",
+    "taxonomy": "event-venue",
+    "meta": [],
+    "acf": [],
+    "address": "madrid",
+    "city": "",
+    "state": "",
+    "postcode": "",
+    "country": "",
+    "latitude": "0.000000",
+    "longtitude": "0.000000",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues/251",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/taxonomies/event-venue"
+        }
+      ],
+      "wp:post_type": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events?event-venues=251"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  },
+  {
+    "id": 752,
+    "count": 3,
+    "link": "https://graf.cat/events/venues/museu-dhistoria-de-girona-sala-dexposicions/",
+    "name": "Museu d'Història de Girona (Sala d'Exposicions)",
+    "slug": "museu-dhistoria-de-girona-sala-dexposicions",
+    "taxonomy": "event-venue",
+    "meta": [],
+    "acf": [],
+    "address": "Carrer de la Força, 27",
+    "city": "Girona",
+    "state": "Girona",
+    "postcode": "17004",
+    "country": "Espanya",
+    "latitude": "0.000000",
+    "longtitude": "0.000000",
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues/752",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/event-venues"
+        }
+      ],
+      "about": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/taxonomies/event-venue"
+        }
+      ],
+      "wp:post_type": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/events?event-venues=752"
+        }
+      ],
+      "curies": [
+        {
+          "name": "wp",
+          "href": "https://api.w.org/{rel}",
+          "templated": true
+        }
+      ]
+    }
+  }
+]

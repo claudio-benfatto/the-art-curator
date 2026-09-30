@@ -1,0 +1,137 @@
+[
+  {
+    "id": 24,
+    "name": "MACBA",
+    "url": "http://macba.cat",
+    "link": "https://graf.cat/author/macba/",
+    "slug": "macba",
+    "meta": [],
+    "acf": [],
+    "user_switching_url": null,
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users/24",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users"
+        }
+      ]
+    }
+  },
+  {
+    "id": 83,
+    "name": "Chiquita Room",
+    "url": "http://chiquitaroom.com",
+    "link": "https://graf.cat/author/chiquitaroom/",
+    "slug": "chiquitaroom",
+    "meta": [],
+    "acf": [],
+    "user_switching_url": null,
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users/83",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users"
+        }
+      ]
+    }
+  },
+  {
+    "id": 118,
+    "name": "ProjecteSD",
+    "url": "",
+    "link": "https://graf.cat/author/projectesd/",
+    "slug": "projectesd",
+    "meta": [],
+    "acf": [],
+    "user_switching_url": null,
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users/118",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users"
+        }
+      ]
+    }
+  },
+  {
+    "id": 173,
+    "name": "AGUAS",
+    "url": "https://www.instagram.com/aguasssssss",
+    "link": "https://graf.cat/author/aguas/",
+    "slug": "aguas",
+    "meta": [],
+    "acf": [],
+    "user_switching_url": null,
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users/173",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users"
+        }
+      ]
+    }
+  },
+  {
+    "id": 14,
+    "name": "ADN Galeria",
+    "url": "http://adngaleria.com",
+    "link": "https://graf.cat/author/adn/",
+    "slug": "adn",
+    "meta": [],
+    "acf": [],
+    "user_switching_url": null,
+    "_links": {
+      "self": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users/14",
+          "targetHints": {
+            "allow": [
+              "GET"
+            ]
+          }
+        }
+      ],
+      "collection": [
+        {
+          "href": "https://graf.cat/wp-json/wp/v2/users"
+        }
+      ]
+    }
+  }
+]
