@@ -61,6 +61,10 @@ class Venue(Base):
 
     `source` identifies which event source `source_venue_id` / `source_profile_id` are scoped to
     (today, always GRAF's `event-venues` term id / matched `users` profile id).
+
+    A term is a *space* and a profile an *organisation*, so many rows may share one
+    `source_profile_id` — MACBA is one profile and four terms (migration 0002). The join, the URLs,
+    `crawl_enabled` and `is_pilot` are derived, and `ingest/sync.py` recomputes them every run.
     """
 
     __tablename__ = "venues"
@@ -89,7 +93,6 @@ class Venue(Base):
     __table_args__ = (
         Index("ix_venues_geom", "geom", postgresql_using="gist"),
         UniqueConstraint("source", "source_venue_id"),
-        UniqueConstraint("source", "source_profile_id"),
     )
 
 
