@@ -30,15 +30,24 @@ Field-level traps, each with a test in `tests/test_graf_parse.py`:
   event title, `L&amp;B Gallery` as both a term and a profile name. Titles are dedup identifiers
   (CLAUDE.md § 1), so an escaping change upstream must not mint a second identity for one event —
   every persisted string is unescaped here, once.
+
+`fetch()` and `record()` sit at the end: a `Capture` is one fetch, scrubbed and otherwise exactly as
+served. Parsing always starts from one, so a recorded fixture replays through the same code a live
+fetch does.
 """
 
 import html
+import json
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from art_curator.ingest.http import FetchError, PoliteClient
 
 # Third-party prose, dropped before validation. Wider than `desc_*` on purpose: `description` is
 # on both users and venue terms, and events carry `content` and `excerpt`. `guid` and the yoast
@@ -317,3 +326,94 @@ def parse_events(rows: Iterable[Any]) -> list[Event]:
 
 def parse_occurrences(rows: Iterable[Any]) -> list[Occurrence]:
     return [Occurrence.model_validate(row) for row in rows]
+
+
+# --- Fetching and recording -----------------------------------------------------------------------
+
+# Collection -> endpoint. The collection name is also the fixture file a capture is recorded to.
+ENDPOINTS = {"venues": "event-venues", "profiles": "users", "events": "events"}
+
+
+@dataclass(frozen=True)
+class Capture:
+    """One fetch of GRAF: scrubbed, otherwise exactly as served and in the order served."""
+
+    venues: list[dict[str, Any]]
+    profiles: list[dict[str, Any]]
+    events: list[dict[str, Any]]
+
+
+async def fetch(client: PoliteClient, base_url: str, *, deep_occurrences: bool = False) -> Capture:
+    """Every term, profile and live event. Each item is scrubbed the moment it arrives."""
+    base = base_url.rstrip("/")
+    collections: dict[str, list[dict[str, Any]]] = {}
+    for name, path in ENDPOINTS.items():
+        collections[name] = [scrub(item) async for item in client.paginate(f"{base}/{path}")]
+    if deep_occurrences:
+        collections["events"] = await _deep_occurrences(client, base, collections["events"])
+    return Capture(**collections)
+
+
+async def _deep_occurrences(
+    client: PoliteClient, base: str, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The event rows again, with every occurrence `/events/{id}/occurrences` knows about.
+
+    `/events` is already one row per occurrence, so this is the second opinion, not the source: on
+    2026-10-02 every live post had exactly one occurrence and both agreed. It costs one request per
+    post. Each occurrence becomes a copy of its post's list row carrying that occurrence's id and
+    dates, so parsing, the sync and a recorded fixture cannot tell the two apart; where both serve
+    one occurrence, the per-event endpoint's copy wins.
+    """
+    by_occurrence = {(r.get("id"), parse_int(r.get("occurrence_id"))): r for r in rows}
+    posts = {r.get("id"): r for r in rows}
+    for post_id, row in posts.items():
+        url = f"{base}/{ENDPOINTS['events']}/{post_id}/occurrences"
+        body, _ = await client.get_json(url)
+        if not isinstance(body, list):
+            raise FetchError(f"{url}: expected a JSON array, got {type(body).__name__}")
+        for occurrence in scrub(body):
+            occurrence_id = occurrence.get("occurrence_id")
+            by_occurrence[(post_id, parse_int(occurrence_id))] = {
+                **row,
+                "occurrence_id": occurrence_id,  # an int here, a string in a list row; both parse
+                "start": occurrence.get("start"),
+                "end": occurrence.get("end"),
+            }
+    return list(by_occurrence.values())
+
+
+def identity(capture: Capture) -> dict[str, list[dict[str, Any]]]:
+    """Every term and profile, identifiers only: the matcher's regression fixture."""
+    return {
+        "terms": [{k: t.get(k) for k in ("id", "name", "slug")} for t in capture.venues],
+        "profiles": [
+            {k: p.get(k) for k in ("id", "name", "slug", "url")} for p in capture.profiles
+        ],
+    }
+
+
+def record(capture: Capture, directory: Path) -> list[Path]:
+    """Write `capture` as fixtures: `{venues,profiles,events}.json` whole, and `identity.json`.
+
+    The committed `venues`/`profiles`/`events` fixtures are hand-picked records cut from a capture
+    like this one, so record into a scratch directory and copy what a test needs; `identity.json`
+    is committed whole. Checked for prose keys again before anything is written, although `fetch()`
+    already scrubbed: prose committed to git is permanent (`tests/test_no_verbatim.py`).
+    """
+    files = {
+        "venues.json": capture.venues,
+        "profiles.json": capture.profiles,
+        "events.json": capture.events,
+        "identity.json": identity(capture),
+    }
+    found = banned_keys(list(files.values()))
+    if found:
+        raise ValueError(f"refusing to record third-party prose: {sorted(found)}")
+    directory.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for name, payload in files.items():
+        path = directory / name
+        path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+        paths.append(path)
+    return paths
