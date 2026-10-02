@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. Next: P2.
-**Last updated:** 2026-10-02 (rev. 8)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. Next: P2, planned as PRs 17–24 (§ 8).
+**Last updated:** 2026-10-02 (rev. 9)
 
 ---
 
@@ -194,11 +194,61 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | 15 | `cli sync-graf`: report, `--dry-run` (write + rollback), `--min-venues`, `--record` | Report printed; dry run writes nothing; unmatched pilot exits 1 |
 | 16 | `graf.yml` (manual, live GRAF, two syncs + SQL floors) + docs | Green against live GRAF |
 
+### P2 breakdown
+
+**Scope:** the 18 crawlable pilots. **Done when:** `eval-extraction` scores extraction against ~30 hand-labelled pages from ≥12 venues (≥3 of them pages with no current show), prints per-field scores and cost, and a second run while the pages are unchanged gives the same scores within noise. The first scores are the **baseline, not a gate**. They decide whether P3 goes ahead over these 20 venues.
+
+**Design decisions** (each is cheap to get right now and expensive to retrofit):
+
+| Area | Decision | Why |
+|---|---|---|
+| Crawl unit | One crawl per distinct `website_url` among `is_pilot AND crawl_enabled` venues; pages hang off the pilot venue row | MACBA is four terms and one site; crawling per term fetches it four times |
+| Robots | `robots.txt` fetched **through `PoliteClient`** (so UA, delay and retries apply), parsed with `robotparser.parse()`. 404 → allow all; 401/403 → disallow all; 5xx or fetch failure → skip the site this run. `Crawl-delay` raises the per-host delay, never lowers it | `RobotFileParser.read()` uses `urllib` with its own UA, which bypasses all of it |
+| User-Agent | `art-curator/0.1 (+<repo URL>)`, so a webmaster can find out who we are | Descriptive UA is a CLAUDE.md requirement; the current value is just a name |
+| Discovery | Homepage → score same-site links by path and anchor text (ca/es/en: *exposicions/exposiciones/exhibitions, actual/ara/current, agenda, programa, activitats*). Penalise past shows, archives, shops, press and PDFs. Fetch the top index pages, then their detail links. **≤8 pages per site, homepage included**, one language prefix per site | Index pages list current shows, detail pages carry dates and artists. One language avoids extracting the same show three times |
+| Text | `trafilatura` main text, whitespace-normalised, capped at ~24k chars per page. `content_hash` = sha256 of that text, not of the HTML | HTML carries nonces and cache-busters, so its hash changes every fetch and nothing would ever be skipped |
+| Unusable sites | Fewer than ~50 words after extraction → status `thin` (JS-rendered); 403 / challenge → `blocked`. Both are recorded and reported, and the venue stays facts-only. **No headless browser in P2** | Measure first. Revisit if more than ~4 of 18 are unusable |
+| TTL | `cli purge-pages` lands with `crawl`, and `crawl` runs it first every time. P6 only schedules it | `raw_text` is first written in P2; the 7-day TTL has to hold from the first write, not from P6 |
+| Extraction call | Haiku 4.5 over Converse, thinking off, temperature 0. One forced tool (`toolChoice`) carries `Exhibition[]` and `ArtEvent[]`. Pydantic-validated, one retry on failure | No structured outputs on Bedrock (§ 9). A forced tool is the closest equivalent |
+| Dates | The model transcribes dates **as written**, `{day, month, year?}`. Code infers a missing year from `fetched_at` (the nearest year where end ≥ start) and expands month-only dates to month bounds | Year inference is arithmetic (constraint 8), and Catalan pages routinely omit the year |
+| Verbatim guard | At runtime, the longest shared word run between `summary_en` and the page text is capped at **20 words** (margin under the prompt's ~25). On a breach, retry once. On a second breach, keep the facts, store `summary_en = NULL` and count it in the report. The extraction half of `test_no_verbatim.py` plants a copied span and checks it is caught | The prompt asks; the guard enforces |
+| Re-extraction | A page is re-extracted when `(content_hash, EXTRACT_VERSION, model)` differs from what it was last extracted with. `EXTRACT_VERSION` is a constant, bumped by hand when the prompt or schema changes | Unchanged pages are the main avoidable cost; a prompt change must still invalidate them |
+| Dedup | Upsert `exhibitions` on `(venue_id, title_key)`, where `title_key` is the normalised title. The same show on an index page and a detail page merges, and the richer record wins. `first_seen_at` / `last_seen_at` as for snapshots; nothing is deleted | Index and detail pages describe the same show |
+| Test fixtures | Crawl tests use **hand-written synthetic HTML** (`tests/fixtures/crawl/*.html`), never recorded pages. `test_no_verbatim.py` requires a `<!-- synthetic -->` marker and a size cap on every HTML fixture | A recorded page is third-party prose in git (constraint 1) |
+| Gold set | **Labels only, facts only**: url, `content_hash`, and the expected `{kind, title, dates, artists}` per item, in `eval/gold/extraction.yaml`. No page text and no summaries. Eval reads `raw_text` from `venue_pages` or re-crawls; a page whose hash no longer matches its label is **stale**, reported and skipped | The page text cannot be kept past 7 days, so the gold set decays as venues update. That is the price of constraint 1, and re-labelling is part of the job |
+| Summary quality | Not in the gold set. Scored by an optional faithfulness judge (PR 24) and bounded by the verbatim guard | A hand-written reference summary measures wording, not truth |
+| Dev MCP | `queries/events.py` + `mcp_server.py` expose venues, page **metadata** (status, hash, word count, extraction state), exhibitions, events and `llm_calls` cost. **Never `raw_text`.** Labelling reads the live page in a browser | Keeps third-party text out of conversation transcripts |
+
+```
+17 http: text + robots ─ 18 discovery + text (pure) ─ 19 cli crawl + purge-pages ─┐
+20 extract: schema, prompt, dates, guard (pure, stubbed) ──────────────────────────┴─ 21 0003 + cli extract ─┬─ 22 queries + dev MCP
+                                                                                                           └─ 23 gold set + eval-extraction ─ 24 judge (optional)
+```
+
+| # | PR | Done when |
+|---|---|---|
+| 17 | `ingest/http.py`: `get_text` (per-request `Accept`, content-type check, body-size cap), `RobotsPolicy` (fetch via `PoliteClient`, cached per host, `Crawl-delay`); descriptive UA default; `trafilatura` dependency | Robots 404 / 403 / 5xx / disallow / `Crawl-delay` tested with zero wall-clock sleep |
+| 18 | `ingest/crawl.py`: link scoring, index → detail expansion, 8-page cap, language pinning, `trafilatura` text + hash, `ok/thin/blocked/robots` statuses. Pure over synthetic fixtures; fixture marker check in `test_no_verbatim.py` | Synthetic site of 20 links → expected ≤8 pages in expected order |
+| 19 | `cli crawl --pilot` (`venue_pages` upsert by url, `--dry-run`, per-site report) + `cli purge-pages` | Run against the live pilots locally; report has a status for 18/18 sites. **This run is the site survey** |
+| 20 | `llm/extract.py`: pydantic `Exhibition` / `ArtEvent`, versioned prompt, forced tool, one retry, date resolution, verbatim guard; extraction half of `test_no_verbatim.py` | Stubbed: bad JSON → retry → ok; copied span → `summary_en` NULL; year inference table-tested |
+| 21 | Migration 0003: `exhibitions`, `art_events`, extraction markers on `venue_pages`; classified in `test_no_verbatim.py`. `cli extract` (skip unchanged, `--venue`, `--limit`, `--dry-run`, report with cost from `llm_calls`) | Second run on unchanged pages makes zero model calls; first pilot run's cost lands within 2× of § 6 (~$1) |
+| 22 | `queries/events.py` (read-only, async, no agent/transport concerns) + `mcp_server.py` (`mcp` in the dev group) | Usable from Claude Code; no tool returns `raw_text` (tested) |
+| 23 | `eval/extraction.py` (pure scorer) + `cli eval-extraction` + labelling ~30 pages | Done-when above. Reports item recall and precision (title match), date and artist accuracy on matched items, false positives on negative pages, stale count and cost |
+| 24 | *(optional)* Summary faithfulness judge, `purpose=judge`, `JUDGE_MODEL` defaulting to the chat model (already in IAM and `pricing.yaml`) | Per-summary supported/unsupported in the eval report |
+
+PR 20 depends only on the client and can run in parallel with 17–19. PR 23 is mostly human work: Claude Code can draft labels through the MCP server and the live page, but "hand-checked" means a person confirms every item.
+
+**Provisional quality bar** (an input to the P3 decision, not a gate): item recall ≥ 0.8, precision ≥ 0.9, date accuracy ≥ 0.9 on matched items, zero items invented on negative pages.
+
+**Cost:** first pilot extraction ~$1 (160 pages); each eval run ~$0.2, plus ~$1 with the Opus judge. Crawling is free.
+
 ---
 
 ## 9. Open risks
 
 - **Extraction accuracy** across heterogeneous sites — measured in P2, not discovered in P5.
+- **Unusable venue sites** — JS-rendered (`thin`) or bot-protected (`blocked`) pilots stay facts-only. Not surveyed yet: the first `crawl --pilot` run (PR 19) is the survey. If more than ~4 of 18 are unusable, decide on a headless fetch then.
+- **The gold set decays** — page text cannot outlive the 7-day TTL, so labels are pinned to a `content_hash` and go stale when a venue updates its page. Expect to re-label a few pages per month while extraction is being tuned.
 - **Newest-model access on Bedrock** — AWS (2026-09-23): eligibility depends on account usage history, is reassessed as usage grows, and isn't configurable. Opus 5 refused everywhere; Mantle refused for every model, including Haiku 4.5 (which works on the runtime endpoint) and Sonnet 5 (agreement applied). **Worked around, not blocking:** chat on Opus 4.6, extraction on Haiku 4.5, both via runtime inference profiles. Revisit at P3; Claude Platform on AWS if quality demands a newer model.
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
 - ~~**Langfuse SDK surface unverified**~~ — sidestepped 2026-09-22: no Langfuse SDK; plain OTel exports to its OTLP endpoint (`/api/public/otel/v1/traces`, verified against current docs). Not yet exercised against the running Compose instance.
