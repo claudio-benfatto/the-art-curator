@@ -1,11 +1,12 @@
 """Write one GRAF fetch to Postgres: venues, event snapshots, occurrences. Facts only.
 
-Two steps, split so the dry-run report and the real write cannot disagree:
+Three steps, split so the dry-run report and the real write cannot disagree:
 
-1. `plan_venues()` — pure. Terms + the profile join + the pilot list -> the desired venue rows.
+1. `plan_sync()` — pure. Terms + the profile join + the pilot list -> the desired venue rows.
 2. `write_graf()` — applies a fetch inside the caller's transaction and **never commits**. The
    caller commits, or rolls back for `sync-graf --dry-run`: the dry run is the real write undone,
    so every count it prints comes from the same statements a real run executes.
+3. `report()` — pure. The plan and the write's result -> the lines `sync-graf` prints.
 
 Rules the statements encode:
 
@@ -25,6 +26,7 @@ All writes are Core statements on the tables, not ORM objects: a bulk `ON CONFLI
 rows is one round trip (~8k bind parameters, well under asyncpg's 32,767).
 """
 
+from collections import Counter
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
@@ -34,8 +36,16 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from art_curator.db.models import EventOccurrence, EventSnapshot, Venue
-from art_curator.ingest.graf import Event, Profile, Term
-from art_curator.ingest.matching import MatchResult, classify_url
+from art_curator.ingest.graf import (
+    Capture,
+    Event,
+    Profile,
+    Term,
+    parse_events,
+    parse_profiles,
+    parse_terms,
+)
+from art_curator.ingest.matching import MatchResult, classify_url, match_pilots, match_profiles
 
 SOURCE = "graf"
 
@@ -51,6 +61,14 @@ class GrafSnapshot:
     terms: Sequence[Term]
     profiles: Sequence[Profile]
     events: Sequence[Event]
+
+    @classmethod
+    def parse(cls, capture: Capture) -> "GrafSnapshot":
+        return cls(
+            terms=parse_terms(capture.venues),
+            profiles=parse_profiles(capture.profiles),
+            events=parse_events(capture.events),
+        )
 
 
 class VenueRow(NamedTuple):
@@ -95,6 +113,20 @@ class SyncResult:
     events: int  # distinct posts
     occurrences: int
     unknown_venue_events: tuple[int, ...] = field(default=())  # post ids naming an unknown term
+
+
+@dataclass(frozen=True)
+class SyncPlan:
+    match: MatchResult
+    pilots: dict[str, int]  # pilot name -> term id
+    unmatched_pilots: tuple[str, ...]
+    venues: list[VenueRow]
+
+
+def plan_sync(snapshot: GrafSnapshot) -> SyncPlan:
+    match = match_profiles(snapshot.terms, snapshot.profiles)
+    pilots, unmatched = match_pilots(snapshot.terms)
+    return SyncPlan(match, pilots, unmatched, plan_venues(snapshot, match, pilots.values()))
 
 
 def plan_venues(
@@ -292,3 +324,118 @@ async def _upsert_occurrences(session: AsyncSession, rows: list[dict[str, Any]])
             },
         )
     )
+
+
+# --- The report -----------------------------------------------------------------------------------
+
+
+def report(snapshot: GrafSnapshot, plan: SyncPlan, result: SyncResult) -> list[str]:
+    """What `sync-graf` prints. Two blocks are there for a human to read, not to decorate:
+
+    - `contains` lists every containment join, the matcher's only heuristic, so a reviewer reads
+      those lines rather than all of them (`ingest/matching.py`).
+    - `changes` diffs the join against what the database held. The join is recomputed every run,
+      so a GRAF editor renaming a term can move a URL between venues; this is the only place that
+      surfaces it. The first sync into an empty table has nothing to diff and says so.
+    """
+    terms = {t.source_venue_id: t.name for t in snapshot.terms}
+    shared = {name for name, n in Counter(terms.values()).items() if n > 1}
+    profiles = {p.source_profile_id: p for p in snapshot.profiles}
+    rows = {v.source_venue_id: v for v in plan.venues}
+
+    def term(term_id: int) -> str:
+        if term_id not in terms:
+            return f"term {term_id} (not in this fetch)"
+        name = terms[term_id]
+        # GRAF has distinct terms with one name (two `Alzueta Gallery Barcelona Turó`).
+        return f"{name} (term {term_id})" if name in shared else name
+
+    def profile(profile_id: int) -> str:
+        return profiles[profile_id].name if profile_id in profiles else f"profile {profile_id}"
+
+    lines: list[str] = []
+
+    def block(label: str, first: str, rest: Sequence[str] = ()) -> None:
+        lines.append(f"{label:<10} {first}")
+        lines.extend(f"{'':<10} {line}" for line in rest)
+
+    with_geom = sum(1 for v in plan.venues if v.geom is not None)
+    block(
+        "venues",
+        f"{len(plan.venues)} terms   {with_geom} with geometry   "
+        f"{len(plan.venues) - with_geom} without (missing or 0,0)",
+    )
+    block("profiles", f"{len(profiles)}   {sum(1 for p in profiles.values() if p.url)} with a url")
+
+    joined = [v for v in plan.venues if v.source_profile_id is not None]
+    website = sum(1 for v in joined if v.website_url)
+    instagram = sum(1 for v in joined if v.instagram_url)
+    rounds = ", ".join(f"{name} {n}" for name, n in plan.match.counts.items())
+    block(
+        "joined",
+        f"{len(joined)} terms   ({rounds})   {len(plan.match.ambiguous)} ambiguous",
+        [
+            f"{website} website (crawl_enabled)   {instagram} instagram (facts only)   "
+            f"{len(joined) - website - instagram} blank url"
+        ],
+    )
+    ambiguous = sorted(
+        f"{term(t)} -> {' | '.join(profile(p) for p in candidates)}"
+        for t, candidates in plan.match.ambiguous.items()
+    )
+    if ambiguous:
+        block("ambiguous", ambiguous[0], ambiguous[1:])
+    contained = sorted(
+        f"{term(t)} -> {profile(m.source_profile_id)}"
+        for t, m in plan.match.matches.items()
+        if m.round == "contains"
+    )
+    if contained:
+        block("contains", contained[0], contained[1:])
+
+    before, after = result.joins_before, result.joins_after
+    if not before:
+        block("changes", f"first sync: {len(after)} joined")
+    else:
+        gained = sorted(after.keys() - before.keys(), key=term)
+        lost = sorted(before.keys() - after.keys(), key=term)
+        moved = sorted((t for t in after.keys() & before.keys() if after[t] != before[t]), key=term)
+        block(
+            "changes",
+            f"+{len(gained)} joined   -{len(lost)} unjoined   ~{len(moved)} moved",
+            [f"+ {term(t)} -> {profile(after[t])}" for t in gained]
+            + [f"- {term(t)}, was {profile(before[t])}" for t in lost]
+            + [f"~ {term(t)}: {profile(before[t])} -> {profile(after[t])}" for t in moved],
+        )
+    block(
+        "written",
+        f"{result.venues_inserted} new   {result.venues_updated} changed   "
+        f"{result.venues_unjoined} unjoined (no longer served)",
+    )
+
+    crawlable = [name for name, t in plan.pilots.items() if rows[t].crawl_enabled]
+    no_url = [
+        f"{name} ({_no_url_reason(rows[t])})"
+        for name, t in plan.pilots.items()
+        if not rows[t].crawl_enabled
+    ]
+    block(
+        "pilots",
+        f"{len(plan.pilots)}/{len(plan.pilots) + len(plan.unmatched_pilots)} matched   "
+        f"{len(crawlable)} with a crawlable url",
+        ["no url: " + ", ".join(no_url)] if no_url else [],
+    )
+    block(
+        "events",
+        f"{result.events} posts   {result.occurrences} occurrences   "
+        f"{len(result.unknown_venue_events)} naming an unknown venue",
+    )
+    return lines
+
+
+def _no_url_reason(row: VenueRow) -> str:
+    if row.source_profile_id is None:
+        return "no profile"
+    if row.instagram_url:
+        return "instagram only"
+    return "blank url"

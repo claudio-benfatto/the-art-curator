@@ -1,4 +1,5 @@
-"""Writing a GRAF fetch: `plan_venues` (pure) and `write_graf` (real database).
+"""Writing a GRAF fetch: `plan_sync` (pure), `write_graf` (real database), `report` (pure), and
+`cli sync-graf` end to end over a fake GRAF (`tests/graf_stub.py`).
 
 The recorded fixtures already hold the cases that matter, so the tests name real rows:
 
@@ -14,6 +15,7 @@ cannot produce.
 
 import asyncio
 import copy
+import functools
 import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -23,11 +25,23 @@ import pytest
 from alembic import command
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from typer.testing import CliRunner
 
-from art_curator.ingest.graf import parse_events, parse_profiles, parse_terms
-from art_curator.ingest.matching import match_pilots, match_profiles
-from art_curator.ingest.sync import GrafSnapshot, SyncResult, VenueRow, plan_venues, write_graf
+from art_curator import cli
+from art_curator.config import get_settings
+from art_curator.db.session import get_engine, get_sessionmaker
+from art_curator.ingest.graf import banned_keys, parse_events, parse_profiles, parse_terms
+from art_curator.ingest.http import open_client
+from art_curator.ingest.sync import (
+    GrafSnapshot,
+    SyncResult,
+    VenueRow,
+    plan_sync,
+    report,
+    write_graf,
+)
 from tests.db import alembic_config, run_sql
+from tests.graf_stub import BASE_URL, POLICY, FakeGraf, full_corpus, no_sleep
 
 FIXTURES = Path(__file__).parent / "fixtures" / "graf"
 
@@ -56,8 +70,7 @@ def snapshot(
 
 
 def plan(snap: GrafSnapshot) -> list[VenueRow]:
-    pilots, _ = match_pilots(snap.terms)
-    return plan_venues(snap, match_profiles(snap.terms, snap.profiles), pilots.values())
+    return plan_sync(snap).venues
 
 
 def without(key: str, value: int) -> Callable[[list[dict]], list[dict]]:
@@ -68,7 +81,7 @@ def edited(row_id: int, **changes: Any) -> Callable[[list[dict]], list[dict]]:
     return lambda rows: [{**r, **changes} if r["id"] == row_id else r for r in rows]
 
 
-# --- plan_venues: pure ---------------------------------------------------------------------------
+# --- plan_sync: pure ------------------------------------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -374,3 +387,159 @@ def test_zero_venues_is_refused(db):
     with pytest.raises(ValueError, match="zero venues"):
         sync(db, GrafSnapshot(terms=[], profiles=[], events=[]))
     assert query(db, "SELECT count(*) FROM venues WHERE website_url IS NOT NULL") == [(3,)]
+
+
+# --- report: pure --------------------------------------------------------------------------------
+
+
+def _result(snap: GrafSnapshot, joins_before: dict[int, int]) -> SyncResult:
+    venues = plan(snap)
+    return SyncResult(
+        venues=len(venues),
+        venues_inserted=0,
+        venues_updated=0,
+        venues_unjoined=0,
+        joins_before=joins_before,
+        joins_after={v.source_venue_id: v.source_profile_id for v in venues if v.source_profile_id},
+        events=4,
+        occurrences=4,
+    )
+
+
+def test_report_names_every_join_change():
+    # The join is recomputed each run, so a rename can move a URL between venues silently; this
+    # block is the only place it shows.
+    snap = snapshot()
+    before = {159: MACBA_PROFILE, CHIQUITA: 14, 777: MACBA_PROFILE}  # 777: no longer served
+    lines = report(snap, plan_sync(snap), _result(snap, before))
+
+    start = next(i for i, line in enumerate(lines) if line.startswith("changes"))
+    assert lines[start : start + 4] == [
+        "changes    +1 joined   -1 unjoined   ~1 moved",
+        "           + MACBA, Museu d'Art Contemporani de Barcelona -> MACBA",
+        "           - term 777 (not in this fetch), was MACBA",
+        "           ~ Chiquita Room: ADN Galeria -> Chiquita Room",
+    ]
+
+
+def test_report_lists_containment_joins_for_review():
+    snap = snapshot()
+    lines = report(snap, plan_sync(snap), _result(snap, {}))
+
+    assert "contains   MACBA, Museu d'Art Contemporani de Barcelona -> MACBA" in lines
+    assert "changes    first sync: 3 joined" in lines
+
+
+# --- cli sync-graf --------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def run(db, monkeypatch) -> Callable[..., Any]:
+    """`run(*args, graf=FakeGraf())` invokes `sync-graf` against `db` and a fake GRAF."""
+    monkeypatch.setenv("DATABASE_URL", db.render_as_string(hide_password=False))
+    monkeypatch.setenv("GRAF_BASE_URL", BASE_URL)
+    _clear_caches()
+
+    def _run(*args: str, graf: FakeGraf | None = None):
+        graf = graf or FakeGraf(**full_corpus())
+        monkeypatch.setattr(
+            cli,
+            "open_client",
+            functools.partial(open_client, POLICY, transport=graf.transport, sleep=no_sleep),
+        )
+        return CliRunner().invoke(cli.app, ["sync-graf", *args])
+
+    yield _run
+    _clear_caches()
+
+
+def _clear_caches() -> None:
+    for cached in (get_settings, get_engine, get_sessionmaker):
+        cached.cache_clear()
+
+
+VENUE_COUNTS = (
+    "SELECT count(*), count(*) FILTER (WHERE is_pilot), count(*) FILTER (WHERE crawl_enabled) "
+    "FROM venues"
+)
+
+
+def test_sync_graf_writes_and_reports(run, db):
+    result = run()
+
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("GRAF sync\n")
+    for line in [
+        "  venues     570 terms   0 with geometry   570 without (missing or 0,0)",
+        "  joined     156 terms   (slug 92, base-slug 2, name 34, contains 28)   1 ambiguous",
+        "  changes    first sync: 156 joined",
+        "  written    570 new   0 changed   0 unjoined (no longer served)",
+        "  pilots     20/20 matched   18 with a crawlable url",
+        "             no url: ProjecteSD (blank url), #plantauno (no profile)",
+        "  events     4 posts   4 occurrences   0 naming an unknown venue",
+    ]:
+        assert line in result.output.splitlines()
+    assert query(db, VENUE_COUNTS) == [(570, 20, 149)]
+
+
+def test_second_sync_reports_no_changes(run):
+    run()
+    result = run()
+
+    assert result.exit_code == 0, result.output
+    assert "  changes    +0 joined   -0 unjoined   ~0 moved" in result.output
+    assert "  written    0 new   0 changed   0 unjoined (no longer served)" in result.output
+
+
+def test_dry_run_reports_and_writes_nothing(run, db):
+    result = run("--dry-run")
+
+    assert result.exit_code == 0, result.output
+    assert result.output.startswith("GRAF sync (dry run, rolled back)\n")
+    assert "  written    570 new   0 changed   0 unjoined (no longer served)" in result.output
+    assert query(
+        db, "SELECT (SELECT count(*) FROM venues) + (SELECT count(*) FROM event_snapshots)"
+    ) == [(0,)]
+
+
+def test_truncated_fetch_fails_before_writing(run, db):
+    # A blocked or cut-short fetch: without the floor it would unjoin every venue it missed.
+    run()
+    result = run(graf=FakeGraf())  # the trimmed fixture: 8 terms
+
+    assert result.exit_code == 1
+    assert (
+        "FAIL: GRAF served 8 venue terms, expected at least 500. Nothing written." in result.output
+    )
+    assert query(db, VENUE_COUNTS) == [(570, 20, 149)]
+
+
+def test_unmatched_pilot_exits_1_after_committing(run, db):
+    result = run("--min-venues", "1", graf=FakeGraf())
+
+    assert result.exit_code == 1
+    assert "PILOT UNMATCHED: Fundació Joan Miró" in result.output
+    assert len([line for line in result.output.splitlines() if "PILOT UNMATCHED" in line]) == 18
+    assert query(db, "SELECT count(*) FROM venues") == [(8,)]  # the facts are kept
+
+    allowed = run("--min-venues", "1", "--allow-unmatched-pilots", graf=FakeGraf())
+    assert allowed.exit_code == 0, allowed.output
+
+
+def test_deep_occurrences_asks_once_per_post(run):
+    graf = FakeGraf(**full_corpus())
+    result = run("--deep-occurrences", graf=graf)
+
+    assert result.exit_code == 0, result.output
+    assert sum("occurrences" in p for p in graf.paths()) == 4
+
+
+def test_record_writes_scrubbed_fixtures(run, tmp_path):
+    corpus = full_corpus()
+    corpus["profiles"] = [{**p, "description": "Prosa de tercers."} for p in corpus["profiles"]]
+    result = run("--dry-run", "--record", str(tmp_path), graf=FakeGraf(**corpus))
+
+    assert result.exit_code == 0, result.output
+    assert f"recorded {tmp_path / 'identity.json'}" in result.output
+    for name in ("venues", "profiles", "events", "identity"):
+        assert banned_keys(json.loads((tmp_path / f"{name}.json").read_text())) == set()

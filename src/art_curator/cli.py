@@ -1,6 +1,7 @@
 """Command-line entry point: `python -m art_curator.cli <command>`."""
 
 import asyncio
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -10,6 +11,16 @@ from sqlalchemy.engine import make_url
 from art_curator.config import get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_engine, get_sessionmaker
+from art_curator.ingest import graf
+from art_curator.ingest.http import open_client
+from art_curator.ingest.sync import (
+    GrafSnapshot,
+    SyncPlan,
+    SyncResult,
+    plan_sync,
+    report,
+    write_graf,
+)
 from art_curator.llm.client import get_llm_client
 from art_curator.llm.pricing import Usage, cost_usd
 from art_curator.obs import telemetry
@@ -116,6 +127,76 @@ async def _smoke(model: str, *, mantle: bool) -> tuple[LlmCall | None, str | Non
         return row, error
     finally:
         telemetry.setup_telemetry().force_flush()
+        await get_engine().dispose()
+
+
+@app.command("sync-graf")
+def sync_graf(
+    dry_run: Annotated[
+        bool, typer.Option(help="Run every write, print the report, then roll back.")
+    ] = False,
+    deep_occurrences: Annotated[
+        bool,
+        typer.Option(help="Also ask /events/{id}/occurrences for each post: one request per post."),
+    ] = False,
+    min_venues: Annotated[
+        int,
+        typer.Option(
+            help="Fail without writing if GRAF serves fewer venue terms. A blocked or truncated "
+            "fetch would otherwise unjoin every venue it missed."
+        ),
+    ] = 500,
+    record: Annotated[
+        Path | None,
+        typer.Option(metavar="DIR", help="Also write the scrubbed capture to DIR as fixtures."),
+    ] = None,
+    allow_unmatched_pilots: Annotated[
+        bool, typer.Option(help="Exit 0 even if a PLAN.md § 7 pilot matches no venue term.")
+    ] = False,
+) -> None:
+    """Pull GRAF facts into Postgres: venue terms, their profile URLs, live events.
+
+    An unmatched pilot exits 1 *after* committing: the facts are still worth having, and the exit
+    code means a scheduled run cannot swallow it.
+    """
+    settings = get_settings()
+    capture = asyncio.run(_fetch_graf(settings.graf_base_url, deep_occurrences=deep_occurrences))
+    snapshot = GrafSnapshot.parse(capture)
+    plan = plan_sync(snapshot)
+
+    if len(plan.venues) < min_venues:
+        typer.echo(
+            f"FAIL: GRAF served {len(plan.venues)} venue terms, expected at least {min_venues}. "
+            "Nothing written."
+        )
+        raise typer.Exit(1)
+    if record is not None:
+        for path in graf.record(capture, record):
+            typer.echo(f"recorded {path}")
+
+    result = asyncio.run(_write_graf(snapshot, plan, dry_run=dry_run))
+
+    typer.echo("GRAF sync (dry run, rolled back)" if dry_run else "GRAF sync")
+    for line in report(snapshot, plan, result):
+        typer.echo(f"  {line}")
+    for name in plan.unmatched_pilots:
+        typer.echo(f"PILOT UNMATCHED: {name}")
+    if plan.unmatched_pilots and not allow_unmatched_pilots:
+        raise typer.Exit(1)
+
+
+async def _fetch_graf(base_url: str, *, deep_occurrences: bool) -> graf.Capture:
+    async with open_client() as client:
+        return await graf.fetch(client, base_url, deep_occurrences=deep_occurrences)
+
+
+async def _write_graf(snapshot: GrafSnapshot, plan: SyncPlan, *, dry_run: bool) -> SyncResult:
+    try:
+        async with get_sessionmaker()() as session:
+            result = await write_graf(session, snapshot, plan.venues)
+            await (session.rollback() if dry_run else session.commit())
+            return result
+    finally:
         await get_engine().dispose()
 
 
