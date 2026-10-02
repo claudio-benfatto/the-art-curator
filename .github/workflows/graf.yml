@@ -1,0 +1,140 @@
+name: GRAF
+
+# The only workflow that calls live GRAF. CI runs on recorded fixtures, so this is the early
+# warning for API drift or a Cloudflare block. No AWS and no environment gate: GRAF is free and
+# touches no cloud. Manual, because unattended refresh is P6. Also runs on PRs that edit this file
+# so a change to it is proven before merge.
+#
+# The database is the job's own service container and is thrown away with it: this proves the
+# live path end to end, it does not keep event history (PLAN.md § 9).
+on:
+  workflow_dispatch:
+    inputs:
+      deep_occurrences:
+        description: Also call /events/{id}/occurrences for each post
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - .github/workflows/graf.yml
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    # Explicit bash adds pipefail, so `sync-graf | tee` still fails the step.
+    shell: bash
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      db:
+        image: ghcr.io/claudio-benfatto/art-curator-db:pg16
+        env:
+          POSTGRES_USER: art_curator
+          POSTGRES_PASSWORD: art_curator
+          POSTGRES_DB: art_curator
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U art_curator -d art_curator"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://art_curator:art_curator@localhost:5432/art_curator
+      # Inputs go through env, never interpolated into a script. Empty on pull_request.
+      DEEP_OCCURRENCES: ${{ inputs.deep_occurrences }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run alembic upgrade head
+
+      # --min-venues defaults to 500; an unmatched pilot exits 1.
+      - name: First sync
+        run: |
+          args=()
+          if [ "$DEEP_OCCURRENCES" = "true" ]; then args+=(--deep-occurrences); fi
+          uv run python -m art_curator.cli sync-graf "${args[@]}" | tee report.txt
+          { echo '### First sync'; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # Surrogate ids, the join, venue `updated_at` and `first_seen_at` must survive a second run.
+      - name: Rows before the second sync
+        env:
+          DB_CONTAINER: ${{ job.services.db.id }}
+        run: |
+          docker exec -i "$DB_CONTAINER" psql -U art_curator -d art_curator -v ON_ERROR_STOP=1 -At \
+            > before.txt <<'SQL'
+          SELECT id, source_venue_id, source_profile_id, updated_at FROM venues ORDER BY id;
+          SELECT id, source_event_id, venue_id, first_seen_at FROM event_snapshots ORDER BY id;
+          SELECT id, source_occurrence_id, event_id, first_seen_at FROM event_occurrences ORDER BY id;
+          SQL
+
+      - name: Second sync
+        run: |
+          args=()
+          if [ "$DEEP_OCCURRENCES" = "true" ]; then args+=(--deep-occurrences); fi
+          uv run python -m art_curator.cli sync-graf "${args[@]}" | tee report.txt
+          { echo '### Second sync'; echo '```'; cat report.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Idempotency
+        env:
+          DB_CONTAINER: ${{ job.services.db.id }}
+        run: |
+          docker exec -i "$DB_CONTAINER" psql -U art_curator -d art_curator -v ON_ERROR_STOP=1 -At \
+            > after.txt <<'SQL'
+          SELECT id, source_venue_id, source_profile_id, updated_at FROM venues ORDER BY id;
+          SELECT id, source_event_id, venue_id, first_seen_at FROM event_snapshots ORDER BY id;
+          SELECT id, source_occurrence_id, event_id, first_seen_at FROM event_occurrences ORDER BY id;
+          SQL
+          # A diff here is a real failure unless GRAF changed in the seconds between runs; rerun.
+          diff before.txt after.txt
+          echo "$(wc -l < after.txt) rows unchanged across two syncs"
+
+      # PLAN.md § 8 P1 done-when, as floors: live counts drift, exact counts are fixture tests.
+      - name: Done-when
+        env:
+          DB_CONTAINER: ${{ job.services.db.id }}
+        run: |
+          docker exec -i "$DB_CONTAINER" psql -U art_curator -d art_curator -v ON_ERROR_STOP=1 <<'SQL'
+          SELECT count(*) AS terms,
+                 count(geom) AS with_geom,
+                 count(*) FILTER (WHERE website_url IS NOT NULL) AS with_website,
+                 count(*) FILTER (WHERE crawl_enabled) AS crawlable,
+                 count(*) FILTER (WHERE is_pilot) AS pilots,
+                 (SELECT count(*) FROM event_snapshots) AS events
+          FROM venues WHERE source = 'graf';
+
+          DO $$
+          DECLARE
+            r record;
+          BEGIN
+            SELECT count(*) FILTER (WHERE website_url IS NOT NULL) AS with_website,
+                   count(*) FILTER (WHERE is_pilot) AS pilots,
+                   count(*) FILTER (WHERE geom IS NOT NULL
+                                    AND ST_X(geom::geometry) = 0
+                                    AND ST_Y(geom::geometry) = 0) AS at_zero
+              INTO r FROM venues WHERE source = 'graf';
+            IF r.with_website < 145 THEN
+              RAISE EXCEPTION 'only % venue terms joined to a website, floor is 145', r.with_website;
+            END IF;
+            IF r.pilots <> 20 THEN
+              RAISE EXCEPTION '% venues flagged is_pilot, expected 20', r.pilots;
+            END IF;
+            IF r.at_zero > 0 THEN
+              RAISE EXCEPTION '% venues stored at 0,0 instead of NULL', r.at_zero;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM event_snapshots) THEN
+              RAISE EXCEPTION 'no events: GRAF served an empty live window';
+            END IF;
+            IF EXISTS (SELECT 1 FROM event_snapshots WHERE last_seen_at <= first_seen_at) THEN
+              RAISE EXCEPTION 'the second sync did not bump last_seen_at';
+            END IF;
+          END $$;
+          SQL

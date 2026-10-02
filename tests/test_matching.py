@@ -128,7 +128,7 @@ def test_classify_url(url, expected):
 
 
 def test_only_two_profiles_are_instagram(identity):
-    # PLAN.md § 9 estimated ~12. Measured: 2.
+    # PLAN.md § 9 once estimated ~12 Instagram-only venues. Measured: 2 profiles.
     _, ps = identity
     assert sum(1 for p in ps if classify_url(p.url)[1]) == 2
 
