@@ -15,7 +15,8 @@ These are not style preferences. Violating any of them breaks a decision that wa
 The copyright posture is **facts from GRAF, prose from nobody**. GRAF's descriptive text and venue-site prose are copyrighted; facts are not.
 
 - **Do not add a description/summary/body column to any GRAF-sourced table.** If a schema change seems to need one, it is the wrong schema change.
-- `acf.desc_ca` / `desc_es` / `desc_en` from the GRAF API are **read-and-discard**. Never write them to Postgres, never put them in a prompt that produces stored output, never log them anywhere persistent.
+- `acf.desc_ca` / `desc_es` / `desc_en` from the GRAF API are **read-and-discard**. Never write them to Postgres, never put them in a prompt that produces stored output, never log them anywhere persistent. The same goes for `content` / `excerpt` on events and `description` on terms and users: `graf.scrub()` drops all of them from every response before validation.
+- **Third-party prose must not enter the repository either.** Fixtures are scrubbed at capture (`sync-graf --record`), and `test_no_verbatim.py` scans `tests/fixtures/` for banned keys. Prose in a pushed commit means a history rewrite.
 - Venue-page text lands in `venue_pages.raw_text` with a **7-day TTL**: the main body `trafilatura` extracts (no markup, nav or boilerplate) from up to 8 exhibition/agenda pages per venue. That table is a processing cache, not a corpus. The purge job is not optional.
 - Embeddings are computed **only from our own summaries**, never from `raw_text` or GRAF prose. Never feed third-party text into a persistent vector store (this rules out Bedrock Knowledge Bases over venue pages).
 - What survives extraction is an **LLM-written original summary** plus `source_url`. The extraction prompt forbids reproducing spans longer than ~25 words.
@@ -127,36 +128,44 @@ All CI lives in `.github/workflows/`. No other CI system, and no checks that onl
 
 - **On every PR:** `ruff`, `pytest` against a Postgres + PostGIS + pgvector service container, the model-client grep (constraint 2), `tests/test_no_verbatim.py` (constraint 1), and `terraform fmt -check` / `validate` / `plan` when `infra/` changes.
 - **CI never calls a model.** Tests stub `llm/client.py`. A live Bedrock smoke test is a separate `workflow_dispatch` job, run on purpose because it costs money.
+- **CI never calls GRAF either** — fixture tests replay recorded responses. `graf.yml` is the one live job: manual (plus PRs that edit it), no AWS, a throwaway database; it syncs twice and checks the P1 floors and idempotency in SQL.
 - **AWS auth from Actions uses GitHub OIDC** with a role declared in Terraform. Never store long-lived AWS keys as repo secrets.
 - `terraform apply` runs only from `main`, behind a protected GitHub environment that needs manual approval.
 - Pin third-party actions to a commit SHA.
 
 ## The GRAF API
 
-Verified 2026-09-18. WordPress REST, no auth, `robots.txt` permits everything outside `/wp-admin/`.
+WordPress REST, no auth, `robots.txt` permits everything outside `/wp-admin/`. Counts are as of 2026-10-02 and drift — assert floors against live GRAF, exact numbers only against fixtures.
 
 | Endpoint | Count | Notes |
 |---|---|---|
-| `/wp-json/wp/v2/event-venues` | 568 | Venue taxonomy terms. Geo + address. |
-| `/wp-json/wp/v2/users` | 158 | Venue profiles; 146 (92%) have `url` |
-| `/wp-json/wp/v2/events` | 58–104 | **Live window, not an archive** (104 on 09-18, 58 on 09-22) |
+| `/wp-json/wp/v2/event-venues` | 570 | Venue taxonomy terms. Geo + address, **no URL**. 568 on 09-18 |
+| `/wp-json/wp/v2/users` | 158 | Venue profiles; 146 have `url`, **nothing geographic** |
+| `/wp-json/wp/v2/events` | 56–104 | **Live window, not an archive** (104 on 09-18, 56 on 10-02) |
+
+**A term is a space; a profile is an organisation.** Neither is enough alone, so `sync-graf` joins them per term (`ingest/matching.py`: slug → base slug → normalized name → guarded containment). The join is **many-to-one**: MACBA is one profile and four terms, which is why `venues.source_profile_id` is not unique (migration 0002). It is recomputed from scratch every run, as is `is_pilot`; the report's `contains` and `changes` blocks are what a human reviews.
+
+**`event.author` is not a venue↔profile join.** Measured 2026-09-23: 10 of 38 (term, author) pairs disagree with the name join, because `Barcelona Gallery Weekend` authors events at six different galleries.
 
 Gotchas:
 
 - **`longtitude` is misspelled in their API.** The field is literally `longtitude`, not `longitude`. Latitude is spelled correctly. Both are strings.
+- **14 terms sit at `0.000000 / 0.000000`.** They are stored with `geom = NULL`, never as a point in the Gulf of Guinea (constraint 8).
 - The taxonomy's `rest_base` is `event-venues` (plural); the taxonomy *name* is `event-venue` (singular). Event objects carry `event-venues: [<term_id>]`.
 - **`events` returns only the live window regardless of date filters.** Passing `start=2020-01-01` changes nothing. This is why `event_snapshots` exists and why nightly sync is load-bearing — history is unrecoverable if we miss it.
 - Event `date` is `null`. Use `start` / `end` (ISO 8601 with offset).
 - **An event (post `id`) has one or more occurrences** at `/events/{id}/occurrences`, each with its own `occurrence_id`, `start`, `end`. Hence `event_snapshots` (keyed on `source, source_event_id`) + `event_occurrences` (keyed on `source, source_occurrence_id`). On 2026-09-22 all 58 live events had exactly one occurrence — a multi-week show is one occurrence spanning its run. The list endpoint's `occurrence_id` is a **string**; `/occurrences` returns an **int**. The single-event endpoint omits it.
-- `per_page` maxes at 100, but **a page can come back short** (100 requested → 36 returned, `x-wp-total: 58`). Paginate by `x-wp-totalpages`, never by "page was not full".
+- **`/events` returns one row per occurrence**, so a post id can repeat across rows. Snapshots dedupe by post id.
+- `per_page` maxes at 100, but **a page can come back short** (100 requested → 36 returned, `x-wp-total: 58`). Paginate by `x-wp-totalpages`, never by "page was not full" — and read it from the `Headers` object, since `dict(headers)` loses case-insensitivity.
+- `modified_gmt` is naive UTC, `modified` is site-local; `_event_price-*` arrive as `""`; names and titles carry HTML entities. The full list of field traps is the `ingest/graf.py` docstring.
 - Some venue `url` values point at Instagram. Those venues are `crawl_enabled=false` and stay facts-only.
-- Use `curl` over `urllib` when probing — Cloudflare rejects some Python UAs.
+- Use `curl` over `urllib` when probing — Cloudflare rejects some Python UAs. `sync-graf` uses `httpx2` with the `HTTP_USER_AGENT` setting; if Cloudflare starts challenging it, `graf.yml` goes red while fixture CI stays green.
 
 Useful ACF fields on events: `event_category`, `_event_free`, `_event_price-min`, `_event_price-max`, `_event_web_{ca,es,en}`, `event_contact_email`, `is_online_event`, `date_text`, `register_deadline`. The `title_*` fields are usable; the `desc_*` fields are **not** (constraint 1).
 
 ## Stack & conventions
 
-Python 3.12+, FastAPI, SQLAlchemy 2.0 + Alembic, Postgres 16 + PostGIS + pgvector, `anthropic[bedrock]` + `boto3` for models, `pydantic-settings` for config, Terraform for AWS infra, `typer` for the CLI, `httpx` + `trafilatura` for crawling, `python-telegram-bot` for the client, OpenTelemetry + Langfuse for tracing, `pytest`. Docker Compose for local infra through P3; AWS (RDS/Aurora) after. Keep Postgres behind a connection string so the move is a config change.
+Python 3.12+, FastAPI, SQLAlchemy 2.0 + Alembic, Postgres 16 + PostGIS + pgvector, `anthropic[bedrock]` + `boto3` for models, `pydantic-settings` for config, Terraform for AWS infra, `typer` for the CLI, `httpx2` + `trafilatura` for crawling (`httpx2`, not `httpx`: it is what `anthropic` already pins), `python-telegram-bot` for the client, OpenTelemetry + Langfuse for tracing, `pytest`. Docker Compose for local infra through P3; AWS (RDS/Aurora) after. Keep Postgres behind a connection string so the move is a config change.
 
 - All configuration through `config.py` / env. No hardcoded model IDs or endpoints. Prices live in `pricing.yaml`.
 - Async throughout the request path; the ingest CLI may be sync where it's simpler.
@@ -176,7 +185,7 @@ docker compose up -d db langfuse
 uv run alembic upgrade head
 
 uv run python -m art_curator.cli smoke              # traced test call, verifies cost recording
-uv run python -m art_curator.cli sync-graf          # pull GRAF facts, snapshot events
+uv run python -m art_curator.cli sync-graf          # pull GRAF facts, snapshot events; --dry-run rolls back
 uv run python -m art_curator.cli crawl --pilot      # crawl the ~20 pilot venues
 uv run python -m art_curator.cli extract            # venue pages -> exhibitions
 uv run python -m art_curator.cli embed              # summaries -> pgvector (P3)
@@ -191,7 +200,11 @@ docker compose up -d                                # full stack incl. api + bot
 
 ## Current state
 
-**P0 is done, signed off 2026-09-23.** Scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing, `llm/client.py`, telemetry, `cli smoke`. All of `infra/README.md` is done, including steps 4 and 5. **Next up is P1 (`sync-graf`).**
+**P1 is built (2026-10-02)**: PRs 11–16, breakdown in PLAN.md § 8. It is done when the `GRAF` workflow runs green against live GRAF; the last replayed live fetch (10-02) gave 570 terms, 556 with geometry, 156 joined (149 with a website, 1 ambiguous), 20/20 pilots (18 crawlable), 56 events. **Next up is P2 (`crawl` + `extract`).**
+
+Event history accrues only where `sync-graf` runs against a database that is kept — the `GRAF` workflow's is thrown away. Until P6 schedules it, run it locally to keep snapshots.
+
+**P0 is done, signed off 2026-09-23.** Scaffold, CI, Compose + db image, schema + Alembic, Terraform (applied), GitHub OIDC with a gated apply, pricing, `llm/client.py`, telemetry, `cli smoke`. All of `infra/README.md` is done, including steps 4 and 5.
 
 The done-when was met twice, which matters because the two runs prove different things:
 

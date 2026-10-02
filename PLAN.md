@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23 — PRs 1–10 merged, Terraform applied, smoke green locally and from CI. Next: P1 (§ 8).
-**Last updated:** 2026-09-23 (rev. 7)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. Next: P2.
+**Last updated:** 2026-10-02 (rev. 8)
 
 ---
 
@@ -57,7 +57,7 @@ venue websites  ───┘   crawl +   PostGIS+pgvector   capped loop      /ch
 Layering rules: backend never knows about Telegram · `queries/events.py` backs both agent tools and the dev MCP server · every model call (incl. embeddings) goes through `llm/client.py`.
 
 ```
-.github/workflows/         CI: lint, tests, invariant checks, terraform plan/apply
+.github/workflows/         CI: lint, tests, invariant checks, terraform plan/apply; manual smoke + live GRAF
 infra/terraform/           all AWS resources (IAM for Bedrock in P0; RDS, S3, schedulers in P7)
 infra/README.md            manual steps Terraform can't express
 src/art_curator/
@@ -68,7 +68,7 @@ src/art_curator/
   llm/extract.py           page → Exhibition[]
   llm/embed.py             summary → vector (via client.py)
   queries/events.py        shared query module
-  ingest/                  graf.py, crawl.py, resolve.py
+  ingest/                  http.py, graf.py, matching.py, sync.py (P1) · crawl.py, resolve.py
   agent/                   loop.py, tools.py, profile.py
   routes/itinerary.py
   obs/                     telemetry.py, metrics.py
@@ -128,13 +128,14 @@ Embeddings are noise. Chat starts on Opus 4.6; measure a cheaper or newer model 
 
 ## 7. Ingestion
 
-1. **`sync-graf`** — venues (568), users (158), events (58–104, live window → snapshot nightly). Facts only.
+1. **`sync-graf`** — venue terms (~570), profiles (158), events (live window, 56–104 → snapshot). Facts only. A term (space) is joined to a profile (organisation, carries the URL); the join and `is_pilot` are recomputed every run, never accumulated (CLAUDE.md § The GRAF API).
 2. **`crawl`** — robots check, homepage → candidate pages by keyword heuristics, ≤8 pages/venue, `trafilatura` main text, `content_hash`.
 3. **`extract`** — skip unchanged hash; schema-validated `Exhibition[]` with original English summary.
 4. **`embed`** — embed `summary_en` + themes for new/changed exhibitions (P3).
 5. **`resolve`** — match venue-extracted ↔ GRAF on venue + date overlap + fuzzy title.
 
 **Pilot venues:** MACBA, Fundació Joan Miró, CaixaForum Barcelona, La Escocesa, ESPRONCEDA, àngels barcelona, ADN Galeria, Chiquita Room, ProjecteSD, Galeria Marc Domènech, RocioSantaCruz, Pigment Gallery, FUGA Gallery, Dilalica, ethall, Sala Parés, House of Chappaz, Galería Alegría, #plantauno, ACVic.
+All 20 resolve; 18 have a crawlable URL — ProjecteSD (blank profile URL) and #plantauno (no profile) stay facts-only.
 
 ---
 
@@ -143,7 +144,7 @@ Embeddings are noise. Chat starts on Opus 4.6; measure a cheaper or newer model 
 | Phase | Deliverable | Done when |
 |---|---|---|
 | **P0** | Compose (Postgres+PostGIS+pgvector, Langfuse), schema (facts, `venue_pages`, `llm_calls`), config, Terraform (state backend + least-privilege Bedrock IAM + GitHub OIDC role), GitHub Actions CI, instrumented Bedrock client, OTel + `llm_calls` | Smoke call to Haiku 4.5 (runtime Converse) traced with correct cost — Opus 5 / Mantle blocked pending AWS, see § 9 |
-| **P1** | `sync-graf` | 568 venues with geometry, 146 URLs joined, idempotent snapshots |
+| **P1** | `sync-graf` | ~570 venue terms, ~556 with geometry (`0,0` → NULL); ≥145 joined to a website, ≤2 ambiguous; 20/20 pilots; a second run changes no ids, joins or `first_seen_at` |
 | **P2** | `crawl` + `extract` + gold-set eval + dev MCP server | Extraction scored against ~30 hand-checked pages, re-runnable |
 | **P3** | Agent loop, `/chat`, `cli chat`, feedback, **pgvector ranking** | Sensible curated answers; cache hit >80% on exchanges past Opus 4.6's 4096-token minimum; cost within 2× estimate; `iteration_count` recorded; semantic ranking A/B'd against filters-only |
 | **P4** | `build_itinerary` | Ordered itinerary + working maps link |
@@ -177,6 +178,22 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | 9 | GitHub OIDC: plan-only role, apply role, `plan` on `infra/` PRs, gated `apply` on `main` | PR posts plan; apply needs approval |
 | 10 | `cli smoke` (Haiku, runtime Converse) + `workflow_dispatch` smoke job | P0 done-when met |
 
+### P1 breakdown
+
+```
+11 http + config ─ 12 graf parse + scrub + fixtures ─┬─ 14 upsert (+0002) ─ 15 cli ─ 16 live job + docs
+                   13 matcher (pure) ─────────────────┘
+```
+
+| # | PR | Done when |
+|---|---|---|
+| 11 | `ingest/http.py`: polite client, retries, `x-wp-totalpages` pagination; `HTTP_*` settings | Short page, 429 + `Retry-After`, 3× 500 tested with zero wall-clock sleep |
+| 12 | `ingest/graf.py`: pydantic models, `scrub()` at capture, trimmed fixtures + `identity.json` | Fixture prose scan in `test_no_verbatim.py`, same commit as the first fixture |
+| 13 | `ingest/matching.py`: slug → base-slug → name → guarded containment; `classify_url`; pilots | 156 joined / 1 ambiguous over `identity.json`; 20/20 pilots |
+| 14 | `ingest/sync.py` `write_graf()` + migration 0002 (one profile, many terms) | Second run changes no ids or `first_seen_at`; nothing deleted |
+| 15 | `cli sync-graf`: report, `--dry-run` (write + rollback), `--min-venues`, `--record` | Report printed; dry run writes nothing; unmatched pilot exits 1 |
+| 16 | `graf.yml` (manual, live GRAF, two syncs + SQL floors) + docs | Green against live GRAF |
+
 ---
 
 ## 9. Open risks
@@ -186,8 +203,10 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
 - ~~**Langfuse SDK surface unverified**~~ — sidestepped 2026-09-22: no Langfuse SDK; plain OTel exports to its OTLP endpoint (`/api/public/otel/v1/traces`, verified against current docs). Not yet exercised against the running Compose instance.
 - **p95 latency** with three round trips — fallbacks: lower `effort`, then merge search + hydrate.
-- **GRAF's live event window** (58–104 events) — long-running shows depend on crawling.
-- **~12 Instagram-only venues** stay facts-only.
+- **GRAF's live event window** (56–104 events) — long-running shows depend on crawling.
+- **Event history accrues only where `sync-graf` runs against a kept database** — locally, today; the `GRAF` workflow's DB is thrown away. Events that leave the window between runs are lost until P6 schedules it.
+- **GRAF coverage** — 414 of 570 terms join no profile, so have no URL; 23 of 146 URL-bearing profiles join no term (mostly festivals/associations, but also `Galeria N2` ↔ `N2 Galeria`, `Fundació Vila Casas` ↔ `Museu Can Framis`). No pilot affected; an alias table if P2 needs them. Only 1 joined venue is Instagram-only.
+- **The join is partly heuristic and recomputed each run** — 28 containment joins, and a GRAF rename can silently move a URL between venues. The `sync-graf` report lists both for review.
 - **EU database right** — reduced, not zero; blocking for any public launch.
 
 ---
