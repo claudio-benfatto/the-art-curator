@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. Next: P2.
-**Last updated:** 2026-10-02 (rev. 8)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. Next: P2, planned as PRs 17–25 (§ 8).
+**Last updated:** 2026-10-02 (rev. 9)
 
 ---
 
@@ -89,9 +89,10 @@ Each table lands in the phase that first writes it — no speculative schema.
 |---|---|---|
 | Facts (source) | `venues` (`source`, source-scoped ids, name, address, `geom`, website/instagram URL, crawl flags) · `event_snapshots` (one row per event: `source`, source-scoped ids, venue, title, category, free, price range, URLs, first/last seen) · `event_occurrences` (start/end per occurrence, first/last seen) — **no description columns**; `source` is `"graf"` today, other event sources are additive | P0 |
 | Derived (LLM) | `venue_pages` (url, status, `content_hash`, `raw_text`; **7-day TTL**) | P0 |
+| | `venue_seeds` (venue, listing URL, page type, confidence, status, model; no free text) | P2 |
 | | `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, `embedding`, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) | P2 (`embedding` P3) |
 | User | `users` · `profile_facts` (append-only, `superseded_by`) · `conversations` · `messages` · `interactions` · `itineraries` | P3 (`itineraries` P4) |
-| Telemetry | `llm_calls` (trace/span, provider, model, purpose `chat/extract/embed/judge/smoke`, tokens incl. cache, cost, latency, stop_reason) | P0 |
+| Telemetry | `llm_calls` (trace/span, provider, model, purpose `chat/discover/extract/embed/judge/smoke`, tokens incl. cache, cost, latency, stop_reason) | P0 |
 | | `feedback` | P3 |
 
 ---
@@ -194,11 +195,67 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | 15 | `cli sync-graf`: report, `--dry-run` (write + rollback), `--min-venues`, `--record` | Report printed; dry run writes nothing; unmatched pilot exits 1 |
 | 16 | `graf.yml` (manual, live GRAF, two syncs + SQL floors) + docs | Green against live GRAF |
 
+### P2 breakdown
+
+**Scope:** the 18 crawlable pilots. **Done when:** `eval-extraction` scores extraction against ~30 hand-labelled pages from ≥12 venues (≥3 of them pages with no current show), prints per-field scores and cost, and a second run while the pages are unchanged gives the same scores within noise. Every crawlable pilot has an accepted seed (automatic or human-resolved), and discovery accuracy against the human labels is reported. The first scores are the **baseline, not a gate**. They decide whether P3 goes ahead over these 20 venues.
+
+**Design decisions** (each is cheap to get right now and expensive to retrofit):
+
+| Area | Decision | Why |
+|---|---|---|
+| Crawl unit | One crawl per distinct `website_url` among `is_pilot AND crawl_enabled` venues; pages hang off the pilot venue row | MACBA is four terms and one site; crawling per term fetches it four times |
+| Robots | `robots.txt` fetched **through `PoliteClient`** (so UA, delay and retries apply), parsed with `robotparser.parse()`. 404 → allow all; 401/403 → disallow all; 5xx or fetch failure → skip the site this run. `Crawl-delay` raises the per-host delay, never lowers it | `RobotFileParser.read()` uses `urllib` with its own UA, which bypasses all of it |
+| User-Agent | `art-curator/0.1 (+<repo URL>)`, so a webmaster can find out who we are | Descriptive UA is a CLAUDE.md requirement; the current value is just a name |
+| Discovery | **A monthly two-pass Haiku step** that finds each site's *listing* pages (current/upcoming exhibitions, agenda). **Pass 1, links:** the homepage's same-site links (text, URL, nav/main/footer), numbered; Haiku returns ≤3 candidates **by number**, so it cannot invent a URL. **Pass 2, pages:** each candidate is fetched and its text goes to Haiku, which classifies it (`current_listing` / `agenda` / `past_archive` / `single_show` / `other`, count of dated items, language) and gives a confidence. GRAF's current titles and on-host `_event_web_*` URLs for the venue go into both prompts **as hints only**; nothing is accepted or rejected on them | Link structure varies too much across sites for keyword rules. A listing page rarely moves, so finding it monthly rather than nightly keeps cost and churn low |
+| Routing | Code, not the model, routes each candidate: `current_listing`/`agenda` with high confidence → **accepted**; `other`/`past_archive` with high confidence → **rejected**; everything else, a site with no accepted candidate, or a proposal that differs from the seed already in use → **ambiguous**. Thresholds are calibrated against the human labels (PR 24) | Self-reported confidence is poorly calibrated; a categorical page type plus a coarse confidence is easier to check and tune |
+| Human in the loop | Ambiguous sites are listed in the `discover` report. A person resolves them in committed **`ingest/seeds.yaml`** (`pin` or `reject` a URL per venue), reviewed in diffs like `PILOT_VENUES`. A human decision outlives the monthly pass: a pinned venue is not re-discovered unless its seed breaks, and a rejected URL is never proposed again | The machine handles the clear cases; the human sees only the cases it cannot decide |
+| Seeds | `venue_seeds` holds the machine state: venue, URL, page type, confidence, status, model, `discovered_at`. **No free-text reasoning column**: pass 2 sees page text, so anything it writes in prose could quote it | Structured fields only keep third-party text out (constraint 1) |
+| Detail pages | Not discovered by link rules. Extraction of a listing page returns each show's `detail_url` (a fact), and the next crawl fetches detail pages for shows not yet fetched. ≤8 pages per site per crawl, listings first; one language prefix per site | The step that understands the page picks the links. One language avoids extracting the same show three times |
+| Broken seeds | The crawl report flags a seed that 404s, redirects to the homepage, or yields zero items after previously yielding some. That venue is re-discovered on the next `discover` run instead of waiting a month | A site redesign becomes a visible broken seed, not a silent gap |
+| Text | `trafilatura` main text, whitespace-normalised, capped at ~24k chars per page. `content_hash` = sha256 of that text, not of the HTML | HTML carries nonces and cache-busters, so its hash changes every fetch and nothing would ever be skipped |
+| Unusable sites | Fewer than ~50 words after extraction → status `thin` (JS-rendered); 403 / challenge → `blocked`. Both are recorded and reported, and the venue stays facts-only. **No headless browser in P2** | Measure first. Revisit if more than ~4 of 18 are unusable |
+| TTL | `cli purge-pages` lands with `crawl`, and `crawl` runs it first every time. P6 only schedules it | `raw_text` is first written in P2; the 7-day TTL has to hold from the first write, not from P6 |
+| Extraction call | Haiku 4.5 over Converse, thinking off, temperature 0. One forced tool (`toolChoice`) carries `Exhibition[]` and `ArtEvent[]`. Pydantic-validated, one retry on failure | No structured outputs on Bedrock (§ 9). A forced tool is the closest equivalent |
+| Dates | The model transcribes dates **as written**, `{day, month, year?}`. Code infers a missing year from `fetched_at` (the nearest year where end ≥ start) and expands month-only dates to month bounds | Year inference is arithmetic (constraint 8), and Catalan pages routinely omit the year |
+| Verbatim guard | At runtime, the longest shared word run between `summary_en` and the page text is capped at **20 words** (margin under the prompt's ~25). On a breach, retry once. On a second breach, keep the facts, store `summary_en = NULL` and count it in the report. The extraction half of `test_no_verbatim.py` plants a copied span and checks it is caught | The prompt asks; the guard enforces |
+| Re-extraction | A page is re-extracted when `(content_hash, EXTRACT_VERSION, model)` differs from what it was last extracted with. `EXTRACT_VERSION` is a constant, bumped by hand when the prompt or schema changes | Unchanged pages are the main avoidable cost; a prompt change must still invalidate them |
+| Dedup | Upsert `exhibitions` on `(venue_id, title_key)`, where `title_key` is the normalised title. The same show on an index page and a detail page merges, and the richer record wins. `first_seen_at` / `last_seen_at` as for snapshots; nothing is deleted | Index and detail pages describe the same show |
+| Test fixtures | Crawl tests use **hand-written synthetic HTML** (`tests/fixtures/crawl/*.html`), never recorded pages. `test_no_verbatim.py` requires a `<!-- synthetic -->` marker and a size cap on every HTML fixture | A recorded page is third-party prose in git (constraint 1) |
+| Gold set | **Labels only, facts only**: url, `content_hash`, and the expected `{kind, title, dates, artists}` per item, in `eval/gold/extraction.yaml`. No page text and no summaries. Eval reads `raw_text` from `venue_pages` or re-crawls; a page whose hash no longer matches its label is **stale**, reported and skipped | The page text cannot be kept past 7 days, so the gold set decays as venues update. That is the price of constraint 1, and re-labelling is part of the job |
+| Summary quality | Not in the gold set. Scored by an optional faithfulness judge (PR 25) and bounded by the verbatim guard | A hand-written reference summary measures wording, not truth |
+| Dev MCP | `queries/events.py` + `mcp_server.py` expose venues, page **metadata** (status, hash, word count, extraction state), exhibitions, events and `llm_calls` cost. **Never `raw_text`.** Labelling reads the live page in a browser | Keeps third-party text out of conversation transcripts |
+
+```
+17 http: text + robots ─ 18 discover (stubbed) ─ 19 0003 + cli discover + seeds.yaml ─ 20 cli crawl + purge-pages ─┐
+21 extract: schema, prompt, dates, guard (stubbed) ─────────────────────────────────────────────────────────────────┴─ 22 0004 + cli extract ─┬─ 23 queries + dev MCP
+                                                                                                                                             └─ 24 gold set + eval ─ 25 judge (optional)
+```
+
+| # | PR | Done when |
+|---|---|---|
+| 17 | `ingest/http.py`: `get_text` (per-request `Accept`, content-type check, body-size cap), `RobotsPolicy` (fetch via `PoliteClient`, cached per host, `Crawl-delay`); descriptive UA default; `trafilatura` dependency | Robots 404 / 403 / 5xx / disallow / `Crawl-delay` tested with zero wall-clock sleep |
+| 18 | `ingest/discover.py`: link collection (same host, numbered, nav/main/footer), pass 1 and pass 2 prompts with GRAF hints, forced tools, pydantic validation, routing rules. Synthetic HTML fixtures; marker check in `test_no_verbatim.py` | Stubbed: invented link number rejected; each routing outcome covered; no GRAF prose in either prompt |
+| 19 | Migration 0003: `venue_seeds`, `discover` added to `llm_calls.purpose` (masked bodies, like extract). `ingest/seeds.yaml` overrides. `cli discover` (`--venue`, `--dry-run`, report listing accepted / rejected / ambiguous) | Run on the live pilots: every crawlable site has a status; ambiguous ones resolved in `seeds.yaml`. **This run is the site survey** |
+| 20 | `cli crawl --pilot`: accepted and pinned seeds plus known detail URLs, `trafilatura` text + hash, `ok/thin/blocked/robots` statuses, `venue_pages` upsert by url, broken-seed flags, `--dry-run`, per-site report. `cli purge-pages` | Second crawl of unchanged pages changes no hashes; every page older than 7 days has `raw_text` NULL |
+| 21 | `llm/extract.py`: pydantic `Exhibition` / `ArtEvent` (with `detail_url`), versioned prompt, forced tool, one retry, date resolution, verbatim guard; extraction half of `test_no_verbatim.py` | Stubbed: bad JSON → retry → ok; copied span → `summary_en` NULL; year inference table-tested |
+| 22 | Migration 0004: `exhibitions`, `art_events`, extraction markers on `venue_pages`; classified in `test_no_verbatim.py`. `cli extract` (skip unchanged, `--venue`, `--limit`, `--dry-run`, report with cost from `llm_calls`). Crawl follows `detail_url` | Second run on unchanged pages makes zero model calls; first pilot run's cost lands within 2× of § 6 (~$1) |
+| 23 | `queries/events.py` (read-only, async, no agent/transport concerns) + `mcp_server.py` (`mcp` in the dev group) | Usable from Claude Code; no tool returns `raw_text` (tested) |
+| 24 | `eval/extraction.py` (pure scorer) + `cli eval-extraction` + labelling ~30 pages and the correct listing URL per venue | Done-when above. Reports item recall and precision (title match), date and artist accuracy on matched items, false positives on negative pages, stale count and cost. For discovery: accuracy vs the human-labelled listings, the ambiguous rate (human load), and **accepted-but-wrong** (the dangerous case) |
+| 25 | *(optional)* Summary faithfulness judge, `purpose=judge`, `JUDGE_MODEL` defaulting to the chat model (already in IAM and `pricing.yaml`) | Per-summary supported/unsupported in the eval report |
+
+PR 21 depends only on the client and can run in parallel with 17–20. `discover` runs by hand in P2; P6 schedules it monthly alongside the nightly crawl. PR 24 is mostly human work: Claude Code can draft labels through the MCP server and the live page, but "hand-checked" means a person confirms every item.
+
+**Provisional quality bar** (an input to the P3 decision, not a gate): item recall ≥ 0.8, precision ≥ 0.9, date accuracy ≥ 0.9 on matched items, zero items invented on negative pages.
+
+**Cost:** discovery ~$0.02 per site per month (≈5k tokens for pass 1, ≈4k per candidate for pass 2), so ~$0.40/month for the pilots and ~$3/month at 158 venues. First pilot extraction ~$1 (160 pages). Each eval run ~$0.2, plus ~$1 with the Opus judge. Crawling is free.
+
 ---
 
 ## 9. Open risks
 
 - **Extraction accuracy** across heterogeneous sites — measured in P2, not discovered in P5.
+- **Unusable venue sites** — JS-rendered (`thin`) or bot-protected (`blocked`) pilots stay facts-only. Not surveyed yet: the first `discover` run (PR 19) is the survey. If more than ~4 of 18 are unusable, decide on a headless fetch then.
+- **The gold set decays** — page text cannot outlive the 7-day TTL, so labels are pinned to a `content_hash` and go stale when a venue updates its page. Expect to re-label a few pages per month while extraction is being tuned.
 - **Newest-model access on Bedrock** — AWS (2026-09-23): eligibility depends on account usage history, is reassessed as usage grows, and isn't configurable. Opus 5 refused everywhere; Mantle refused for every model, including Haiku 4.5 (which works on the runtime endpoint) and Sonnet 5 (agreement applied). **Worked around, not blocking:** chat on Opus 4.6, extraction on Haiku 4.5, both via runtime inference profiles. Revisit at P3; Claude Platform on AWS if quality demands a newer model.
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
 - ~~**Langfuse SDK surface unverified**~~ — sidestepped 2026-09-22: no Langfuse SDK; plain OTel exports to its OTLP endpoint (`/api/public/otel/v1/traces`, verified against current docs). Not yet exercised against the running Compose instance.
