@@ -119,7 +119,7 @@ services:
 
   langfuse-postgres:
     # Separate from `db` on purpose: dropping Langfuse must never touch app data.
-    image: docker.io/postgres:17
+    image: docker.io/postgres:18
     profiles: [langfuse]
     environment:
       POSTGRES_USER: langfuse
