@@ -3,7 +3,7 @@
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
 **Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. Next: P2, planned as PRs 17–25 (§ 8).
-**Last updated:** 2026-10-02 (rev. 9)
+**Last updated:** 2026-10-03 (rev. 10)
 
 ---
 
@@ -130,7 +130,7 @@ Embeddings are noise. Chat starts on Opus 4.6; measure a cheaper or newer model 
 ## 7. Ingestion
 
 1. **`sync-graf`** — venue terms (~570), profiles (158), events (live window, 56–104 → snapshot). Facts only. A term (space) is joined to a profile (organisation, carries the URL); the join and `is_pilot` are recomputed every run, never accumulated (CLAUDE.md § The GRAF API).
-2. **`crawl`** — robots check, homepage → candidate pages by keyword heuristics, ≤8 pages/venue, `trafilatura` main text, `content_hash`.
+2. **`crawl`** — robots check, accepted seeds + detail URLs from extraction, ≤8 pages/site, `trafilatura` `html2txt` text, `content_hash` (§ 8).
 3. **`extract`** — skip unchanged hash; schema-validated `Exhibition[]` with original English summary.
 4. **`embed`** — embed `summary_en` + themes for new/changed exhibitions (P3).
 5. **`resolve`** — match venue-extracted ↔ GRAF on venue + date overlap + fuzzy title.
@@ -212,8 +212,8 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | Seeds | `venue_seeds` holds the machine state: venue, URL, page type, confidence, status, model, `discovered_at`. **No free-text reasoning column**: pass 2 sees page text, so anything it writes in prose could quote it | Structured fields only keep third-party text out (constraint 1) |
 | Detail pages | Not discovered by link rules. Extraction of a listing page returns each show's `detail_url` (a fact), and the next crawl fetches detail pages for shows not yet fetched. ≤8 pages per site per crawl, listings first; one language prefix per site | The step that understands the page picks the links. One language avoids extracting the same show three times |
 | Broken seeds | The crawl report flags a seed that 404s, redirects to the homepage, or yields zero items after previously yielding some. That venue is re-discovered on the next `discover` run instead of waiting a month | A site redesign becomes a visible broken seed, not a silent gap |
-| Text | `trafilatura` main text, whitespace-normalised, capped at ~24k chars per page. `content_hash` = sha256 of that text, not of the HTML | HTML carries nonces and cache-busters, so its hash changes every fetch and nothing would ever be skipped |
-| Unusable sites | Fewer than ~50 words after extraction → status `thin` (JS-rendered); 403 / challenge → `blocked`. Both are recorded and reported, and the venue stays facts-only. **No headless browser in P2** | Measure first. Revisit if more than ~4 of 18 are unusable |
+| Text | `trafilatura` **`html2txt`** (all visible text, no markup), whitespace-normalised, capped at ~24k chars per page. `content_hash` = sha256 of that text, not of the HTML | Main-text extraction drops the dates, which sit in headers and sidebars: MACBA listing 48 → 0, àngels 458 → 0, MACBA/ADN/Rocío detail pages → 0 (probe, 2026-10-03). HTML carries nonces, so its hash would change every fetch |
+| Unusable sites | Fewer than ~50 words after extraction → status `thin` (JS-rendered); 403 / challenge → `blocked`. Both are recorded and reported, and the venue stays facts-only. **No headless browser in P2; never bypass a bot challenge** | Surveyed 2026-10-03: 5 of 18 unusable (§ 9). Accepted as coverage gaps |
 | TTL | `cli purge-pages` lands with `crawl`, and `crawl` runs it first every time. P6 only schedules it | `raw_text` is first written in P2; the 7-day TTL has to hold from the first write, not from P6 |
 | Extraction call | Haiku 4.5 over Converse, thinking off, temperature 0. One forced tool (`toolChoice`) carries `Exhibition[]` and `ArtEvent[]`. Pydantic-validated, one retry on failure | No structured outputs on Bedrock (§ 9). A forced tool is the closest equivalent |
 | Dates | The model transcribes dates **as written**, `{day, month, year?}`. Code infers a missing year from `fetched_at` (the nearest year where end ≥ start) and expands month-only dates to month bounds | Year inference is arithmetic (constraint 8), and Catalan pages routinely omit the year |
@@ -254,7 +254,7 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 ## 9. Open risks
 
 - **Extraction accuracy** across heterogeneous sites — measured in P2, not discovered in P5.
-- **Unusable venue sites** — JS-rendered (`thin`) or bot-protected (`blocked`) pilots stay facts-only. Not surveyed yet: the first `discover` run (PR 19) is the survey. If more than ~4 of 18 are unusable, decide on a headless fetch then.
+- **Unusable venue sites** — surveyed by hand 2026-10-03 (curl, our UA): **5 of 18** crawlable pilots stay facts-only. `blocked` (Cloudflare challenge): Fundació Joan Miró, CaixaForum. `thin` (JS-rendered): Dilalica, Sala Parés, Espronceda. Above the ~4 threshold; decided to accept the gaps rather than add a headless fetch. Robots allows our UA on all 18. P2 accuracy is measured over the other 13.
 - **The gold set decays** — page text cannot outlive the 7-day TTL, so labels are pinned to a `content_hash` and go stale when a venue updates its page. Expect to re-label a few pages per month while extraction is being tuned.
 - **Newest-model access on Bedrock** — AWS (2026-09-23): eligibility depends on account usage history, is reassessed as usage grows, and isn't configurable. Opus 5 refused everywhere; Mantle refused for every model, including Haiku 4.5 (which works on the runtime endpoint) and Sonnet 5 (agreement applied). **Worked around, not blocking:** chat on Opus 4.6, extraction on Haiku 4.5, both via runtime inference profiles. Revisit at P3; Claude Platform on AWS if quality demands a newer model.
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
