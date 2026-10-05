@@ -8,7 +8,7 @@ callers name a model and nothing else changes:
 - **InvokeModel** (`global.` / `us.` / `eu.` … inference profiles) — the runtime endpoint, same
   Messages shape. Chat runs here on Opus 4.6. No top-level automatic caching (§ 6).
 - **Converse** (`converse_message`) — the runtime endpoint's model-agnostic shape, for
-  extraction, judge and embeddings.
+  discovery, extraction, judge and embeddings.
 
 Streaming is not wrapped yet: `/chat` lands in P3 and will add a recorded stream here.
 """
@@ -33,7 +33,7 @@ from art_curator.db.session import get_sessionmaker
 from art_curator.llm.pricing import Usage, cost_usd, price_for
 from art_curator.obs import telemetry
 
-Purpose = Literal["chat", "extract", "embed", "judge", "smoke"]
+Purpose = Literal["chat", "discover", "extract", "embed", "judge", "smoke"]
 PURPOSES: tuple[str, ...] = get_args(Purpose)
 
 PROVIDER_MANTLE = "bedrock-mantle"

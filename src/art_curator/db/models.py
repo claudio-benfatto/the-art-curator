@@ -29,7 +29,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-LLM_PURPOSES = ("chat", "extract", "embed", "judge", "smoke")
+LLM_PURPOSES = ("chat", "discover", "extract", "embed", "judge", "smoke")
 
 
 class Base(DeclarativeBase):

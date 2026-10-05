@@ -4,7 +4,9 @@ The real `LlmClient` runs unchanged; only the wire is fake:
 - Both Messages transports (Mantle and InvokeModel) share an httpx2 `MockTransport`, so the
   SDK's own request building and response parsing run as in production. Queue responses with
   `StubLlm.reply` / `StubLlm.fail`.
-- Converse gets a botocore `Stubber` on a real (credential-less) boto3 client.
+- Converse gets a botocore `Stubber` on a real (credential-less) boto3 client, so request
+  parameters are validated against the service model. Queue a forced-tool answer with
+  `StubLlm.tool_reply`; what was sent is in `StubLlm.converse_requests`.
 
 Rows go to `StubLlm.calls` instead of the database, unless a recorder is passed. Spans go to an
 in-memory exporter (`StubLlm.spans`) — exactly what Langfuse would receive.
@@ -57,6 +59,11 @@ class StubLlm:
         )
         self.converse_stub = Stubber(runtime)
         self.converse_stub.activate()
+        self.converse_requests: list[dict[str, Any]] = []  # Converse parameters, as sent
+        runtime.meta.events.register(
+            "provide-client-params.bedrock-runtime.Converse",
+            lambda params, **_: self.converse_requests.append(params),
+        )
 
         # A private provider, so tests never touch the global one.
         self.exporter = InMemorySpanExporter()
@@ -106,4 +113,35 @@ class StubLlm:
         body = {"type": "error", "error": {"type": "invalid_request_error", "message": "stub"}}
         self._responses.append(
             httpx2.Response(status, json=body, headers={"request-id": request_id})
+        )
+
+    def tool_reply(
+        self,
+        name: str,
+        tool_input: dict[str, Any] | None,
+        *,
+        tool_use_id: str = "tooluse_stub",
+        request_id: str = "aws-req-stub",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ) -> None:
+        """Queue a Converse response that calls tool `name` with `tool_input`. `None` queues a
+        plain-text answer instead: the model ignoring a forced tool."""
+        if tool_input is None:
+            content: list[dict[str, Any]] = [{"text": "stub"}]
+        else:
+            content = [{"toolUse": {"toolUseId": tool_use_id, "name": name, "input": tool_input}}]
+        self.converse_stub.add_response(
+            "converse",
+            {
+                "output": {"message": {"role": "assistant", "content": content}},
+                "stopReason": "end_turn" if tool_input is None else "tool_use",
+                "usage": {
+                    "inputTokens": input_tokens,
+                    "outputTokens": output_tokens,
+                    "totalTokens": input_tokens + output_tokens,
+                },
+                "metrics": {"latencyMs": 10},
+                "ResponseMetadata": {"RequestId": request_id},
+            },
         )

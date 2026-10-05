@@ -111,7 +111,7 @@ def test_chat_bodies_are_exported():
     assert "a reply" in attrs["langfuse.observation.output"]
 
 
-@pytest.mark.parametrize("purpose", ["extract", "judge"])
+@pytest.mark.parametrize("purpose", ["discover", "extract", "judge"])
 def test_page_text_purposes_never_export_bodies(purpose):
     stub = StubLlm()
     _converse(stub, purpose, SECRET_PAGE_TEXT)
