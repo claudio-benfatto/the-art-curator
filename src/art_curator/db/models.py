@@ -163,8 +163,9 @@ class EventOccurrence(Base):
 
 
 class VenuePage(Base):
-    """A crawled venue page. `raw_text` is trafilatura's main body and is purged (set NULL) after
-    7 days; the row survives so `content_hash` can still skip unchanged pages."""
+    """A crawled venue page. `raw_text` is trafilatura's `html2txt` (all visible text) and is
+    purged (set NULL) after 7 days; the row survives so `content_hash` can still skip unchanged
+    pages."""
 
     __tablename__ = "venue_pages"
 
