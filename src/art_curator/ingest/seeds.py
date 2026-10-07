@@ -246,6 +246,10 @@ _HOMEPAGE_OUTCOMES = {
 }
 
 INVALID_ANSWER = "invalid model answer"
+# Why a site is ambiguous when no candidate's own reason says so.
+NOTHING_CHOSEN = "the model chose no link from the homepage"
+NOTHING_CLASSIFIED = "no chosen page could be read and classified"
+NOTHING_ACCEPTED = "no candidate was accepted"
 
 
 @dataclass(frozen=True)
@@ -306,7 +310,10 @@ async def discover_site(
         verdicts.append((link.url, verdict))
 
     routing = route_site(verdicts, site.seeds_in_use)
-    return SiteResult(site, SiteOutcome(routing.status), routing.candidates, tuple(skipped))
+    detail = ""
+    if routing.status is SeedStatus.AMBIGUOUS:
+        detail = NOTHING_ACCEPTED if verdicts else NOTHING_CLASSIFIED if chosen else NOTHING_CHOSEN
+    return SiteResult(site, SiteOutcome(routing.status), routing.candidates, tuple(skipped), detail)
 
 
 # --- venue_seeds ---------------------------------------------------------------------------------
@@ -359,8 +366,10 @@ _MARKS = {SeedStatus.ACCEPTED: "+", SeedStatus.REJECTED: "-", SeedStatus.AMBIGUO
 def report(results: Sequence[SiteResult], unmatched_overrides: Sequence[str] = ()) -> list[str]:
     """What `discover` prints: a count per outcome, then every site under its outcome.
 
-    Candidates are marked `+` accepted, `-` rejected, `?` ambiguous. The `ambiguous` block is the
-    one a person acts on, by pinning or rejecting URLs in `seeds.yaml`.
+    Candidates are marked `+` accepted, `-` rejected, `?` ambiguous. A rejected or ambiguous one
+    is followed by the routing rule that decided it (`discover.Reason`), and an ambiguous site
+    says why on its first line. The `ambiguous` block is the one a person acts on, by pinning or
+    rejecting URLs in `seeds.yaml`.
     """
     lines: list[str] = []
 
@@ -383,7 +392,7 @@ def report(results: Sequence[SiteResult], unmatched_overrides: Sequence[str] = (
                 outcome,
                 head,
                 [f"pin {url}" for url in site.pinned if outcome is SiteOutcome.PINNED]
-                + [_candidate_line(c) for c in result.candidates]
+                + [line for c in result.candidates for line in _candidate_lines(c)]
                 + [f"! {s.url}   {s.reason}" for s in result.skipped]
                 + (
                     [f"in use {url}" for url in site.seeds_in_use]
@@ -396,9 +405,12 @@ def report(results: Sequence[SiteResult], unmatched_overrides: Sequence[str] = (
     return lines
 
 
-def _candidate_line(candidate: Candidate) -> str:
+def _candidate_lines(candidate: Candidate) -> list[str]:
     verdict = candidate.verdict
-    return (
+    line = (
         f"{_MARKS[candidate.status]} {candidate.url}   {verdict.page_type} {verdict.confidence}   "
         f"{verdict.dated_items} dated   {verdict.language}"
     )
+    if candidate.status is SeedStatus.ACCEPTED:
+        return [line]
+    return [line, f"  {candidate.status}: {candidate.reason}"]

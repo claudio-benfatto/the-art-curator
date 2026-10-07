@@ -448,15 +448,32 @@ NOT_LISTING_TYPES: frozenset[PageType] = frozenset({"other", "past_archive"})
 DECISIVE: frozenset[Confidence] = frozenset({"high"})
 
 
-def route(verdict: PageVerdict) -> SeedStatus:
+class Reason(StrEnum):
+    """Which routing rule gave a candidate its status. The values are what the `discover` report
+    prints, and they are written here, by us: the model never explains itself in prose, because
+    the pass that could reads third-party page text (CLAUDE.md § 1)."""
+
+    LISTING = "the model is sure this is a listing"
+    NOT_LISTING = "the model is sure this is not a listing"
+    SINGLE_SHOW = "one show's page: the whole programme or just one show, only a person can tell"
+    UNSURE = "the model is not sure of the page type"
+    NOT_SEED_IN_USE = "would be accepted, but differs from the seed in use"
+
+
+def explain(verdict: PageVerdict) -> tuple[SeedStatus, Reason]:
     """One candidate, on its own. A `single_show` is never decided here: it may be a one-room
     gallery's whole listing or just one show's page, and only a person can tell."""
-    if verdict.confidence in DECISIVE:
-        if verdict.page_type in LISTING_TYPES:
-            return SeedStatus.ACCEPTED
-        if verdict.page_type in NOT_LISTING_TYPES:
-            return SeedStatus.REJECTED
-    return SeedStatus.AMBIGUOUS
+    if verdict.page_type == "single_show":
+        return SeedStatus.AMBIGUOUS, Reason.SINGLE_SHOW
+    if verdict.confidence not in DECISIVE:
+        return SeedStatus.AMBIGUOUS, Reason.UNSURE
+    if verdict.page_type in LISTING_TYPES:
+        return SeedStatus.ACCEPTED, Reason.LISTING
+    return SeedStatus.REJECTED, Reason.NOT_LISTING
+
+
+def route(verdict: PageVerdict) -> SeedStatus:
+    return explain(verdict)[0]
 
 
 @dataclass(frozen=True)
@@ -464,6 +481,7 @@ class Candidate:
     url: str
     verdict: PageVerdict
     status: SeedStatus
+    reason: Reason
 
 
 @dataclass(frozen=True)
@@ -491,9 +509,9 @@ def route_site(
     in_use = {url_key(url) for url in seeds_in_use}
     candidates = []
     for url, verdict in verdicts:
-        status = route(verdict)
+        status, reason = explain(verdict)
         if status is SeedStatus.ACCEPTED and in_use and url_key(url) not in in_use:
-            status = SeedStatus.AMBIGUOUS
-        candidates.append(Candidate(url, verdict, status))
+            status, reason = SeedStatus.AMBIGUOUS, Reason.NOT_SEED_IN_USE
+        candidates.append(Candidate(url, verdict, status, reason))
     accepted = any(c.status is SeedStatus.ACCEPTED for c in candidates)
     return SiteRouting(SeedStatus.ACCEPTED if accepted else SeedStatus.AMBIGUOUS, tuple(candidates))
