@@ -1,12 +1,14 @@
 """Fetch one venue page and say whether it is usable (PLAN.md § 8, P2: Text, Unusable sites).
 
-**Text** is `trafilatura.html2txt`: the page's visible strings, markup gone, navigation and
-headers kept. Not the main-body `extract()`, which drops the dates (probe, 2026-10-03).
+**Text** is every visible string on the page: markup gone, navigation, asides and footers kept.
+Not the main-body `extract()`, which drops the dates (probe, 2026-10-03).
 
-It is not quite all of the page. `html2txt` cleans by default, which removes `<footer>`,
-`<aside>`, anything whose class or id says "footer", and cookie banners, along with scripts and
-styles. Turning cleaning off brings those back together with the script and style source, so the
-default stays. A site that keeps its dates in an `<aside>` would lose them here.
+Nor `html2txt`'s own cleaning, which is on by default and removes any `div` whose class or id
+merely *contains* "footer". On two pilot listings that was the listing itself: FUGA kept 129 of
+549 words and Sala Parés 125 of 525, and discovery called both pages "other" (2026-10-07). So
+`page_text` removes only what a browser never shows (`INVISIBLE_TAGS`) and turns that cleaning
+off. Opening hours and addresses come along; a model reads past those, and cannot read what was
+cut.
 
 **A page we cannot use is an answer, not an error.** `blocked` and `thin` are recorded and
 reported, and the venue stays facts-only. Nothing here retries with another User-Agent, solves a
@@ -19,13 +21,16 @@ The text this module returns is third-party prose. It may go to a model and into
 from dataclasses import dataclass
 from enum import StrEnum
 
-from trafilatura import html2txt
+from trafilatura import html2txt, load_html
 
 from art_curator.ingest.http import FetchError, Page, PoliteClient, RobotsPolicy, RobotsStatus
 
 MAX_TEXT_CHARS = 24_000
 # Under this, the page was rendered by JavaScript we did not run, or there is nothing on it.
 THIN_WORDS = 50
+
+# Never rendered as text by a browser. `<noscript>` is, but only with scripting off.
+INVISIBLE_TAGS = ("script", "style", "noscript", "template", "svg")
 
 BLOCKED_STATUSES = frozenset({401, 403})
 # Cloudflare marks a challenge response with this header, whatever status it carries.
@@ -57,7 +62,13 @@ class Fetched:
 
 def page_text(html: bytes | str) -> str:
     """All visible text of `html`, whitespace collapsed, capped at `MAX_TEXT_CHARS`."""
-    return " ".join(html2txt(html).split())[:MAX_TEXT_CHARS]
+    tree = load_html(html)
+    if tree is None:
+        return ""
+    for element in list(tree.iter(*INVISIBLE_TAGS)):
+        if element.getparent() is not None:
+            element.drop_tree()  # keeps the text that follows the element
+    return " ".join(html2txt(tree, clean=False).split())[:MAX_TEXT_CHARS]
 
 
 async def fetch_page(client: PoliteClient, robots: RobotsPolicy, url: str) -> Fetched:

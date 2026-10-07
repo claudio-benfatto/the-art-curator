@@ -380,7 +380,7 @@ async def classify_page(
     text: str,
     hints: GrafHints,
 ) -> PageVerdict:
-    """Pass 2: what kind of page `text` (the candidate's `html2txt`) is."""
+    """Pass 2: what kind of page `text` (the candidate's `pages.page_text`) is."""
     return await _forced_tool(
         llm,
         model,

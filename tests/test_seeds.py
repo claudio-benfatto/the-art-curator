@@ -143,9 +143,37 @@ def test_page_text_is_visible_text_on_one_line():
 
     assert "Prova U Artista Inventada 12.09.2026 – 30.11.2026" in text  # the dates survive
     assert text.startswith("Exposicions Agenda Artistes Visita")  # and so does the navigation
-    # trafilatura's default cleaning: no scripts, and no <footer> either.
-    assert "MARCA-SCRIPT" not in text and "De dimarts a dissabte" not in text and "<" not in text
+    assert text.endswith("De dimarts a dissabte, d'onze a set.")  # and the footer
+    assert "MARCA-SCRIPT" not in text and "<" not in text
     assert "\n" not in text and "  " not in text
+
+
+def test_page_text_keeps_content_whatever_its_container_is_called():
+    """`html2txt`'s default cleaning drops any div whose class contains "footer". On FUGA's and
+    Sala Parés's listings that div was the listing (2026-10-07)."""
+    body = (
+        "<html><body>"
+        '<div class="lay-content hascustomfooter"><h2>Prova U</h2><p>12.09 – 30.11</p></div>'
+        '<aside><p>Fins al 30.11</p></aside><div id="cookie-banner">Galetes</div>'
+        "<footer>Carrer de la Prova, 1</footer>"
+        "</body></html>"
+    )
+
+    assert pages.page_text(body) == (
+        "Prova U 12.09 – 30.11 Fins al 30.11 Galetes Carrer de la Prova, 1"
+    )
+
+
+def test_page_text_drops_only_what_a_browser_never_shows():
+    body = (
+        "<html><head><title>Títol</title><style>.a{color:red}</style></head><body>"
+        "<p>abans</p><script>var x = 'SCRIPT';</script>després"
+        "<style>.b{}</style><svg><text>SVG</text></svg><template><p>PLANTILLA</p></template>"
+        "<noscript>SENSE-JS</noscript><!-- comentari --><p>final</p>"
+        "</body></html>"
+    )
+
+    assert pages.page_text(body) == "abans després final"  # the text after an element stays
 
 
 def test_page_text_is_capped():
