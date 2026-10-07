@@ -4,9 +4,10 @@ Spans always exist once `setup_telemetry()` has run, so every `llm_calls` row ca
 and span id. Export to Langfuse (OTLP/HTTP) is optional and off by default; without it, spans
 still correlate rows within a request.
 
-Bodies (prompt and completion text) go on spans only for purposes in `BODY_PURPOSES`. Extraction
-prompts contain venue-page text, and judge prompts will compare against it — third-party prose
-that must not reach a persistent store (CLAUDE.md § 1). Langfuse is one, so those are masked.
+Bodies (prompt and completion text) go on spans only for purposes in `BODY_PURPOSES`. Discovery
+and extraction prompts contain venue-page text, and judge prompts will compare against it —
+third-party prose that must not reach a persistent store (CLAUDE.md § 1). Langfuse is one, so
+those are masked.
 """
 
 import base64

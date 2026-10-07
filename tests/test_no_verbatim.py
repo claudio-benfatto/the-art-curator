@@ -11,6 +11,10 @@ capture, and `test_fixtures_carry_no_third_party_prose` is the check that they s
 This one is not like a failing test elsewhere: once prose is in a pushed commit, removing it is a
 history rewrite. That is why the scan landed in the same commit as the first fixture.
 
+Crawl fixtures (P2): tests for discovery and crawling need HTML, and a recorded venue page is
+third-party prose in git. Every HTML fixture is therefore hand-written, says so with a
+`<!-- synthetic -->` marker on its first line, and stays small enough to read in review.
+
 The extraction half (no output span > ~25 words copied from its source) lands with `extract`
 in P2.
 """
@@ -160,3 +164,47 @@ def test_scrub_removes_planted_prose_by_prefix(prefix):
     for lang in ("ca", "es", "en"):
         planted = {"acf": {f"{prefix}{lang}": "prosa", "title_ca": "keep"}}
         assert scrub(planted) == {"acf": {"title_ca": "keep"}}
+
+
+# --- HTML fixtures: synthetic only ----------------------------------------------------------------
+
+SYNTHETIC_MARKER = "<!-- synthetic -->"
+# A hand-written page has no reason to be long; a saved one is rarely under 50 KB.
+MAX_HTML_FIXTURE_BYTES = 8_000
+
+
+def _html_fixtures() -> list[Path]:
+    return sorted(p for p in FIXTURES.rglob("*") if p.suffix.lower() in (".html", ".htm"))
+
+
+def _html_fixture_problem(content: bytes) -> str | None:
+    if not content.startswith(SYNTHETIC_MARKER.encode()):
+        return f"does not start with {SYNTHETIC_MARKER}"
+    if len(content) > MAX_HTML_FIXTURE_BYTES:
+        return f"is {len(content)} bytes, over the {MAX_HTML_FIXTURE_BYTES} cap"
+    return None
+
+
+def test_there_are_html_fixtures_to_scan():
+    assert _html_fixtures(), f"no HTML fixtures under {FIXTURES}"
+
+
+@pytest.mark.parametrize("path", _html_fixtures(), ids=lambda p: p.name)
+def test_html_fixtures_are_synthetic(path: Path):
+    problem = _html_fixture_problem(path.read_bytes())
+    assert problem is None, (
+        f"{path.relative_to(FIXTURES.parent)} {problem}. HTML fixtures are written by hand, "
+        f"never saved from a venue site; do not push a recorded page."
+    )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"<!DOCTYPE html><html><body>a saved page</body></html>",
+        b"<html><!-- synthetic --></html>",  # the marker leads the file or does not count
+        SYNTHETIC_MARKER.encode() + b"x" * MAX_HTML_FIXTURE_BYTES,
+    ],
+)
+def test_planted_html_fixture_is_caught(content):
+    assert _html_fixture_problem(content)
