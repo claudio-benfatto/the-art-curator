@@ -35,7 +35,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 # someone decides which rules apply to it — that decision is the point.
 SOURCE_TABLES = {"venues", "event_snapshots", "event_occurrences"}  # facts only, ever
 PROSE_CACHE = {"venue_pages": {"raw_text"}}  # third-party text, 7-day TTL, purged
-OWN_TABLES = {"llm_calls"}  # our data; no third-party text
+# Our data; no third-party text. `venue_seeds` is enums, counts and URLs (tests/test_seeds.py).
+OWN_TABLES = {"llm_calls", "venue_seeds"}
 
 PROSE = re.compile(r"desc|summary|body|content|excerpt|abstract|prose|blurb|text|html", re.I)
 THIRD_PARTY_TEXT = re.compile(r"raw|html|body|excerpt|page_text", re.I)

@@ -18,7 +18,7 @@ GRAF's current titles and on-site event URLs go into both prompts **as hints onl
 accepted or rejected on them, and `GrafHints` can hold nothing else — titles and URLs are facts.
 
 This module does no I/O of its own: it is handed HTML and text, and reaches a model only through
-`LlmClient` (CLAUDE.md § 2). Fetching, `venue_seeds` and the CLI land in PR 19.
+`LlmClient` (CLAUDE.md § 2). Fetching, `venue_seeds` and the human overrides are `ingest/seeds.py`.
 """
 
 from collections.abc import Collection, Iterable, Sequence
@@ -76,11 +76,16 @@ class Link:
     region: Region
 
 
-def collect_links(html: bytes | str, page_url: str, *, limit: int = MAX_LINKS) -> list[Link]:
+def collect_links(
+    html: bytes | str, page_url: str, *, exclude: Iterable[str] = (), limit: int = MAX_LINKS
+) -> list[Link]:
     """The page's same-site links in document order, deduplicated and numbered from 1.
 
     `page_url` is the final URL after redirects (`Page.url`), so a homepage that redirects from
     `example.cat` to `www.example.cat` still counts its own links as same-site.
+
+    `exclude` are URLs a person has rejected. They are dropped before numbering, so the model is
+    never shown them and cannot propose them again.
     """
     tree = load_html(html)
     if tree is None:
@@ -90,7 +95,7 @@ def collect_links(html: bytes | str, page_url: str, *, limit: int = MAX_LINKS) -
     site = site_key(page_url)
 
     links: list[Link] = []
-    seen: set[str] = set()
+    seen: set[str] = {url_key(url) for url in exclude}
     for anchor in tree.iter("a"):
         href = (anchor.get("href") or "").strip()
         if not href or href.startswith("#"):
