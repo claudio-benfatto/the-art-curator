@@ -1,0 +1,18 @@
+# Human decisions about where a venue's site lists its exhibitions (PLAN.md § 8, P2).
+#
+# `discover` handles the clear cases and lists the rest as ambiguous in its report. A person
+# settles those here, and the change is reviewed in a diff like `PILOT_VENUES`.
+#
+#   pin:    the listing page(s) to crawl. A pinned venue is not sent to the model again.
+#   reject: URLs that are not a listing. They are never proposed again.
+#
+# Keys are venue names as in `PILOT_VENUES` (`ingest/matching.py`), compared the same way, so
+# case and accents do not matter. URLs only: no notes copied from a venue's page.
+#
+#   venues:
+#     Galeria Exemple:
+#       pin: https://www.exemple.cat/ca/exposicions
+#       reject:
+#         - https://www.exemple.cat/ca/noticies
+
+venues: {}

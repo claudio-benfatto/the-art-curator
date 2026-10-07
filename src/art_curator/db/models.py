@@ -31,6 +31,17 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 LLM_PURPOSES = ("chat", "discover", "extract", "embed", "judge", "smoke")
 
+# What `ingest/discover.py` can say about a page. `tests/test_seeds.py` checks these against its
+# Literals, so a new page type cannot reach the database without a migration.
+SEED_PAGE_TYPES = ("current_listing", "agenda", "past_archive", "single_show", "other")
+SEED_CONFIDENCES = ("high", "medium", "low")
+SEED_LANGUAGES = ("ca", "es", "en", "other")
+SEED_STATUSES = ("accepted", "rejected", "ambiguous")
+
+
+def _one_of(column: str, values: tuple[str, ...]) -> str:
+    return f"{column} IN (" + ", ".join(f"'{v}'" for v in values) + ")"
+
 
 class Base(DeclarativeBase):
     metadata = MetaData(
@@ -186,6 +197,39 @@ class VenuePage(Base):
             "fetched_at",
             postgresql_where=text("raw_text IS NOT NULL"),
         ),
+    )
+
+
+class VenueSeed(Base):
+    """What `discover` concluded about one candidate listing page: the machine's state. Human
+    decisions live in `ingest/seeds.yaml` and are never written here.
+
+    Every column is an enum, a count, a URL or an id. There is deliberately no reasoning column:
+    the pass that fills this table reads third-party page text, and anything it wrote in prose
+    could quote it (CLAUDE.md § 1).
+    """
+
+    __tablename__ = "venue_seeds"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"))
+    url: Mapped[str]
+    page_type: Mapped[str]
+    confidence: Mapped[str]
+    dated_items: Mapped[int]
+    language: Mapped[str]
+    status: Mapped[str]
+    model: Mapped[str]
+    discovered_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        UniqueConstraint("venue_id", "url"),
+        CheckConstraint(_one_of("page_type", SEED_PAGE_TYPES), name="page_type"),
+        CheckConstraint(_one_of("confidence", SEED_CONFIDENCES), name="confidence"),
+        CheckConstraint(_one_of("language", SEED_LANGUAGES), name="language"),
+        CheckConstraint(_one_of("status", SEED_STATUSES), name="status"),
+        CheckConstraint("dated_items >= 0", name="dated_items"),
     )
 
 

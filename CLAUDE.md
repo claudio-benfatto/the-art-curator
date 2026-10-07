@@ -17,7 +17,7 @@ The copyright posture is **facts from GRAF, prose from nobody**. GRAF's descript
 - **Do not add a description/summary/body column to any GRAF-sourced table.** If a schema change seems to need one, it is the wrong schema change.
 - `acf.desc_ca` / `desc_es` / `desc_en` from the GRAF API are **read-and-discard**. Never write them to Postgres, never put them in a prompt that produces stored output, never log them anywhere persistent. The same goes for `content` / `excerpt` on events and `description` on terms and users: `graf.scrub()` drops all of them from every response before validation.
 - **Third-party prose must not enter the repository either.** Fixtures are scrubbed at capture (`sync-graf --record`), and `test_no_verbatim.py` scans `tests/fixtures/` for banned keys. Prose in a pushed commit means a history rewrite.
-- Venue-page text lands in `venue_pages.raw_text` with a **7-day TTL**: all visible text from `trafilatura.html2txt` (no markup, but nav and footers included) from up to 8 exhibition/agenda pages per venue. Not the main-body `extract()`: it drops the dates, which sit in page headers and sidebars. That table is a processing cache, not a corpus. The purge job is not optional.
+- Venue-page text lands in `venue_pages.raw_text` with a **7-day TTL**: visible text from `trafilatura.html2txt` (no markup; nav and headers included, but its default cleaning drops `<footer>`, `<aside>` and cookie banners) from up to 8 exhibition/agenda pages per venue. Not the main-body `extract()`: it drops the dates, which sit in page headers and sidebars. That table is a processing cache, not a corpus. The purge job is not optional.
 - Embeddings are computed **only from our own summaries**, never from `raw_text` or GRAF prose. Never feed third-party text into a persistent vector store (this rules out Bedrock Knowledge Bases over venue pages).
 - What survives extraction is an **LLM-written original summary** plus `source_url`. The extraction prompt forbids reproducing spans longer than ~25 words.
 - `tests/test_no_verbatim.py` enforces this. Do not skip or weaken it.
@@ -186,6 +186,7 @@ uv run alembic upgrade head
 
 uv run python -m art_curator.cli smoke              # traced test call, verifies cost recording
 uv run python -m art_curator.cli sync-graf          # pull GRAF facts, snapshot events; --dry-run rolls back
+uv run python -m art_curator.cli discover           # find each pilot site's listing page (model calls); --venue, --dry-run
 uv run python -m art_curator.cli crawl --pilot      # crawl the ~20 pilot venues
 uv run python -m art_curator.cli extract            # venue pages -> exhibitions
 uv run python -m art_curator.cli embed              # summaries -> pgvector (P3)
@@ -201,6 +202,8 @@ docker compose up -d                                # full stack incl. api + bot
 ## Current state
 
 **P1 is built (2026-10-02)**: PRs 11–16, breakdown in PLAN.md § 8. It is done when the `GRAF` workflow runs green against live GRAF; the last replayed live fetch (10-02) gave 570 terms, 556 with geometry, 156 joined (149 with a website, 1 ambiguous), 20/20 pilots (18 crawlable), 56 events. **Next up is P2 (`crawl` + `extract`).**
+
+**P2 in progress**: PRs 17–19 are built (polite page fetch + robots, two-pass discovery, `venue_seeds` + `cli discover`). `discover` reads a page, sends its text to Haiku and keeps only the verdict (enums and a count) in `venue_seeds`; page text is not stored until `crawl` lands. Human decisions go in `ingest/seeds.yaml` (`pin` / `reject` per venue), never in the table. **`discover` has not yet been run against the live pilots.** That run is the site survey PR 19 is done by, and its ambiguous sites still need resolving in `seeds.yaml`. Next is PR 20 (`crawl` + `purge-pages`).
 
 Event history accrues only where `sync-graf` runs against a database that is kept — the `GRAF` workflow's is thrown away. Until P6 schedules it, run it locally to keep snapshots.
 

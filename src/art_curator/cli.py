@@ -1,18 +1,21 @@
 """Command-line entry point: `python -m art_curator.cli <command>`."""
 
 import asyncio
+from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
 
 import typer
-from sqlalchemy import select
+from pydantic import ValidationError
+from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 
 from art_curator.config import get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_engine, get_sessionmaker
-from art_curator.ingest import graf
-from art_curator.ingest.http import open_client
+from art_curator.ingest import graf, seeds
+from art_curator.ingest.http import RobotsPolicy, open_client
 from art_curator.ingest.sync import (
     GrafSnapshot,
     SyncPlan,
@@ -197,6 +200,99 @@ async def _write_graf(snapshot: GrafSnapshot, plan: SyncPlan, *, dry_run: bool) 
             await (session.rollback() if dry_run else session.commit())
             return result
     finally:
+        await get_engine().dispose()
+
+
+@app.command()
+def discover(
+    venue: Annotated[
+        str | None,
+        typer.Option(help="Only this venue, by name. Case and accents do not matter."),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            help="Run every fetch and model call, print the report, then roll back the seeds. "
+            "The model calls are still made, paid for and recorded."
+        ),
+    ] = False,
+) -> None:
+    """Find where each crawlable pilot's site lists its exhibitions. Calls a model: about two
+    cents per site.
+
+    Sites the model is sure about are accepted. The rest are printed as ambiguous, for a person
+    to settle in `ingest/seeds.yaml`; a venue pinned there is not sent to the model.
+    """
+    try:
+        overrides = seeds.load_overrides()
+    except ValidationError as exc:
+        typer.echo(f"FAIL: ingest/seeds.yaml is invalid.\n{exc}")
+        raise typer.Exit(1) from exc
+
+    run = asyncio.run(_discover(overrides, venue, dry_run=dry_run))
+    if run is None:
+        typer.echo("FAIL: no crawlable pilot venues. Run sync-graf first.")
+        raise typer.Exit(1)
+    if not run.results:
+        typer.echo(f"FAIL: no crawlable pilot venue is named {venue!r}. Known: {run.known}")
+        raise typer.Exit(1)
+
+    typer.echo("Discover (dry run, rolled back)" if dry_run else "Discover")
+    for line in seeds.report(run.results, run.unmatched_overrides):
+        typer.echo(f"  {line}")
+    typer.echo(f"  {'written':<11} {run.written} seeds")
+    typer.echo(f"  {'cost':<11} ${run.cost_usd}   {run.calls} model calls")
+
+
+@dataclass(frozen=True)
+class _DiscoverRun:
+    results: list[seeds.SiteResult]
+    known: str  # every crawlable pilot's name, for the `--venue` error
+    unmatched_overrides: list[str]
+    written: int = 0
+    calls: int = 0
+    cost_usd: Decimal = Decimal(0)
+
+
+async def _discover(
+    overrides: seeds.SeedOverrides, venue: str | None, *, dry_run: bool
+) -> _DiscoverRun | None:
+    model = get_settings().extract_model
+    llm = get_llm_client()
+    try:
+        # Three short transactions rather than one held open across minutes of fetching.
+        async with get_sessionmaker()() as session:
+            sites = await seeds.load_sites(session, overrides)
+        if not sites:
+            return None
+        names = [site.name for site in sites]
+        unmatched = overrides.unmatched(names)
+        selected = seeds.select_sites(sites, venue)
+        if not selected:
+            return _DiscoverRun([], ", ".join(sorted(names)), unmatched)
+
+        with llm.tracer.start_as_current_span("discover") as span:
+            trace_id, _ = telemetry.span_ids(span)
+            async with open_client() as client:
+                robots = RobotsPolicy(client)
+                results = [
+                    await seeds.discover_site(client, robots, llm, model, site) for site in selected
+                ]
+
+        async with get_sessionmaker()() as session:
+            written = await seeds.write_seeds(session, results, model)
+            await (session.rollback() if dry_run else session.commit())
+            # Spend is recorded in its own transactions, so a dry run's rollback leaves it.
+            calls, cost = (
+                await session.execute(
+                    select(func.count(), func.coalesce(func.sum(LlmCall.cost_usd), 0)).where(
+                        LlmCall.trace_id == trace_id
+                    )
+                )
+            ).one()
+        return _DiscoverRun(results, "", unmatched, written, calls, cost)
+    finally:
+        telemetry.setup_telemetry().force_flush()
         await get_engine().dispose()
 
 
