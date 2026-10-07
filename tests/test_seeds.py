@@ -28,6 +28,7 @@ from art_curator.ingest.discover import (
     Candidate,
     GrafHints,
     PageVerdict,
+    Reason,
     SeedStatus,
 )
 from art_curator.ingest.http import RobotsPolicy, open_client
@@ -218,7 +219,7 @@ def test_site_with_a_plain_listing_is_accepted():
 
     assert result.outcome is SiteOutcome.ACCEPTED
     assert result.candidates == (
-        Candidate(LISTING_URL, _verdict("current_listing"), SeedStatus.ACCEPTED),
+        Candidate(LISTING_URL, _verdict("current_listing"), SeedStatus.ACCEPTED, Reason.LISTING),
     )
     # The agenda link 404s: reported, never classified.
     assert result.skipped == (Skipped(AGENDA_URL, "error (HTTP 404)"),)
@@ -263,6 +264,7 @@ def test_rejected_url_is_never_shown_to_the_model():
     assert f"[{AGENDA_LINK}] (nav) Artistes" in pass1  # renumbered: no gap to choose
     # The model chose nothing: a person decides, and nothing is stored.
     assert (result.outcome, result.candidates) == (SiteOutcome.AMBIGUOUS, ())
+    assert result.detail == seeds.NOTHING_CHOSEN
 
 
 def test_a_different_proposal_never_replaces_the_seed_in_use():
@@ -272,8 +274,10 @@ def test_a_different_proposal_never_replaces_the_seed_in_use():
 
     result = _discover(Site(1, VENUE, f"{HOST}/", seeds_in_use=(AGENDA_URL,)), fake, stub)
 
-    assert result.outcome is SiteOutcome.AMBIGUOUS
-    assert [c.status for c in result.candidates] == [SeedStatus.AMBIGUOUS]
+    assert (result.outcome, result.detail) == (SiteOutcome.AMBIGUOUS, seeds.NOTHING_ACCEPTED)
+    assert [(c.status, c.reason) for c in result.candidates] == [
+        (SeedStatus.AMBIGUOUS, Reason.NOT_SEED_IN_USE)
+    ]
 
 
 def test_thin_candidate_is_skipped_without_a_model_call():
@@ -283,7 +287,7 @@ def test_thin_candidate_is_skipped_without_a_model_call():
 
     result = _discover(SITE, fake, stub)
 
-    assert result.outcome is SiteOutcome.AMBIGUOUS
+    assert (result.outcome, result.detail) == (SiteOutcome.AMBIGUOUS, seeds.NOTHING_CLASSIFIED)
     assert result.skipped == (Skipped(LISTING_URL, "thin (HTTP 200)"),)
     assert len(stub.converse_requests) == 1
 
@@ -349,16 +353,22 @@ def test_report_groups_sites_by_outcome_and_marks_each_candidate():
                     "https://sala.test/mostra",
                     _verdict("single_show", "medium", 1),
                     SeedStatus.AMBIGUOUS,
+                    Reason.SINGLE_SHOW,
                 ),
                 Candidate("https://sala.test/botiga", _verdict("other", "high", 0),
-                          SeedStatus.REJECTED),
+                          SeedStatus.REJECTED, Reason.NOT_LISTING),
             ),
             (Skipped("https://sala.test/agenda", "error (HTTP 404)"),),
+            seeds.NOTHING_ACCEPTED,
         ),
         SiteResult(
             SITE,
             SiteOutcome.ACCEPTED,
-            (Candidate(LISTING_URL, _verdict("current_listing"), SeedStatus.ACCEPTED),),
+            (
+                Candidate(
+                    LISTING_URL, _verdict("current_listing"), SeedStatus.ACCEPTED, Reason.LISTING
+                ),
+            ),
         ),
         SiteResult(Site(3, "Museu Mur", "https://mur.test/"), SiteOutcome.BLOCKED,
                    detail="blocked (HTTP 403)"),
@@ -370,9 +380,12 @@ def test_report_groups_sites_by_outcome_and_marks_each_candidate():
         "sites       4   1 accepted   1 ambiguous   1 pinned   1 blocked",
         "accepted    Galeria Exemple",
         f"            + {LISTING_URL}   current_listing high   3 dated   ca",
-        "ambiguous   Sala Prova",
+        "ambiguous   Sala Prova   no candidate was accepted",
         "            ? https://sala.test/mostra   single_show medium   1 dated   ca",
+        "              ambiguous: one show's page: the whole programme or just one show, only a "
+        "person can tell",
         "            - https://sala.test/botiga   other high   0 dated   ca",
+        "              rejected: the model is sure this is not a listing",
         "            ! https://sala.test/agenda   error (HTTP 404)",
         "            in use https://sala.test/ara",
         "pinned      Espai Fix",
@@ -472,7 +485,7 @@ def _write(url: URL, results: list[SiteResult], *, commit: bool = True) -> int:
 def _result(url: str, page_type: str = "current_listing", confidence: str = "high") -> SiteResult:
     verdict = _verdict(page_type, confidence)
     return SiteResult(
-        SITE, SiteOutcome.ACCEPTED, (Candidate(url, verdict, discover.route(verdict)),)
+        SITE, SiteOutcome.ACCEPTED, (Candidate(url, verdict, *discover.explain(verdict)),)
     )
 
 

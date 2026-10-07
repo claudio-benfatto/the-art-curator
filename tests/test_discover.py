@@ -21,6 +21,7 @@ from art_curator.ingest.discover import (
     Link,
     LinkChoice,
     PageVerdict,
+    Reason,
     SeedStatus,
     collect_links,
     route,
@@ -360,22 +361,24 @@ def test_tool_schemas_have_no_free_text_field(model):
 
 
 @pytest.mark.parametrize(
-    ("page_type", "confidence", "expected"),
+    ("page_type", "confidence", "expected", "reason"),
     [
-        ("current_listing", "high", SeedStatus.ACCEPTED),
-        ("agenda", "high", SeedStatus.ACCEPTED),
-        ("other", "high", SeedStatus.REJECTED),
-        ("past_archive", "high", SeedStatus.REJECTED),
-        ("single_show", "high", SeedStatus.AMBIGUOUS),
-        ("current_listing", "medium", SeedStatus.AMBIGUOUS),
-        ("agenda", "low", SeedStatus.AMBIGUOUS),
-        ("other", "medium", SeedStatus.AMBIGUOUS),
-        ("past_archive", "low", SeedStatus.AMBIGUOUS),
-        ("single_show", "low", SeedStatus.AMBIGUOUS),
+        ("current_listing", "high", SeedStatus.ACCEPTED, Reason.LISTING),
+        ("agenda", "high", SeedStatus.ACCEPTED, Reason.LISTING),
+        ("other", "high", SeedStatus.REJECTED, Reason.NOT_LISTING),
+        ("past_archive", "high", SeedStatus.REJECTED, Reason.NOT_LISTING),
+        ("single_show", "high", SeedStatus.AMBIGUOUS, Reason.SINGLE_SHOW),
+        ("current_listing", "medium", SeedStatus.AMBIGUOUS, Reason.UNSURE),
+        ("agenda", "low", SeedStatus.AMBIGUOUS, Reason.UNSURE),
+        ("other", "medium", SeedStatus.AMBIGUOUS, Reason.UNSURE),
+        ("past_archive", "low", SeedStatus.AMBIGUOUS, Reason.UNSURE),
+        ("single_show", "low", SeedStatus.AMBIGUOUS, Reason.SINGLE_SHOW),
     ],
 )
-def test_route_one_candidate(page_type, confidence, expected):
-    assert route(_verdict(page_type, confidence)) is expected
+def test_route_one_candidate(page_type, confidence, expected, reason):
+    verdict = _verdict(page_type, confidence)
+    assert route(verdict) is expected
+    assert discover.explain(verdict) == (expected, reason)
 
 
 def test_route_ignores_the_item_count():
@@ -420,7 +423,9 @@ def test_proposal_that_differs_from_the_seed_in_use_is_ambiguous():
     routing = route_site([(LINKS[1].url, _verdict("agenda"))], seeds_in_use=[LINKS[0].url])
 
     assert routing.status is SeedStatus.AMBIGUOUS
-    assert [c.status for c in routing.candidates] == [SeedStatus.AMBIGUOUS]
+    assert [(c.status, c.reason) for c in routing.candidates] == [
+        (SeedStatus.AMBIGUOUS, Reason.NOT_SEED_IN_USE)
+    ]
 
 
 def test_seed_in_use_is_confirmed_whatever_its_spelling():
