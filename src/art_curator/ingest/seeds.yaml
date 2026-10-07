@@ -15,4 +15,15 @@
 #       reject:
 #         - https://www.exemple.cat/ca/noticies
 
-venues: {}
+venues:
+  Sala Parés:
+    pin:
+    - https://salapares.com/exposiciones-actuales/ # but misses dates
+  Galería Alegría:
+    pin:
+    - https://www.galeriaalegria.es/en 
+  Espronceda:
+    pin:
+    - https://www.espronceda.net/events/ # but ajax
+    reject:
+    - https://www.espronceda.net/projects/
