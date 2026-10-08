@@ -187,7 +187,8 @@ uv run alembic upgrade head
 uv run python -m art_curator.cli smoke              # traced test call, verifies cost recording
 uv run python -m art_curator.cli sync-graf          # pull GRAF facts, snapshot events; --dry-run rolls back
 uv run python -m art_curator.cli discover           # find each pilot site's listing page (model calls); --venue, --dry-run
-uv run python -m art_curator.cli crawl --pilot      # crawl the ~20 pilot venues
+uv run python -m art_curator.cli crawl --pilot      # fetch pinned/accepted listing pages; purges first; --venue, --dry-run
+uv run python -m art_curator.cli purge-pages        # NULL raw_text older than 7 days (crawl also does this)
 uv run python -m art_curator.cli extract            # venue pages -> exhibitions
 uv run python -m art_curator.cli embed              # summaries -> pgvector (P3)
 uv run python -m art_curator.cli eval-extraction    # score against the gold set
@@ -203,7 +204,9 @@ docker compose up -d                                # full stack incl. api + bot
 
 **P1 is built (2026-10-02)**: PRs 11–16, breakdown in PLAN.md § 8. It is done when the `GRAF` workflow runs green against live GRAF; the last replayed live fetch (10-02) gave 570 terms, 556 with geometry, 156 joined (149 with a website, 1 ambiguous), 20/20 pilots (18 crawlable), 56 events. **Next up is P2 (`crawl` + `extract`).**
 
-**P2 in progress**: PRs 17–19 are built (polite page fetch + robots, two-pass discovery, `venue_seeds` + `cli discover`). `discover` reads a page, sends its text to Haiku and keeps only the verdict (enums and a count) in `venue_seeds`; page text is not stored until `crawl` lands. Human decisions go in `ingest/seeds.yaml` (`pin` / `reject` per venue), never in the table. **`discover` has not yet been run against the live pilots.** That run is the site survey PR 19 is done by, and its ambiguous sites still need resolving in `seeds.yaml`. Next is PR 20 (`crawl` + `purge-pages`).
+**P2 in progress**: PRs 17–20 are built (polite page fetch + robots, two-pass discovery, `venue_seeds` + `cli discover`, `cli crawl` + `cli purge-pages`). `discover` reads a page, sends its text to Haiku and keeps only the verdict (enums and a count) in `venue_seeds`. Human decisions go in `ingest/seeds.yaml` (`pin` / `reject` per venue), never in the table. `discover` was run against the live pilots on 2026-10-07 and the sites it could not settle are pinned.
+
+`crawl` is the first thing that writes `venue_pages.raw_text`. It fetches a venue's pins, or else its accepted seeds (a pin replaces them), and stores text and hash only for an `ok` page; `thin` / `blocked` / `robots` / `error` are a `status` (migration 0005) with both NULL, and `unavailable` is reported but never written. It purges text past 7 days before fetching, even on `--dry-run`, and exits 1 after committing if a listing 404s or redirects to the homepage. Run against the live pilots on 2026-10-08: 18 sites, 21 pages, 20 `ok` and 1 `thin` (Galería Alegría's splash page), Dilalica without a seed, no broken seeds; a second run left every hash unchanged. Detail pages are not crawled until extraction names them (PR 22). Next is PR 21 (extraction core, stubbed).
 
 Event history accrues only where `sync-graf` runs against a database that is kept — the `GRAF` workflow's is thrown away. Until P6 schedules it, run it locally to keep snapshots.
 

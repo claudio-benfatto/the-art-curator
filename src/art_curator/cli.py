@@ -14,6 +14,7 @@ from sqlalchemy.engine import make_url
 from art_curator.config import get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_engine, get_sessionmaker
+from art_curator.ingest import crawl as crawling
 from art_curator.ingest import graf, seeds
 from art_curator.ingest.http import RobotsPolicy, open_client
 from art_curator.ingest.sync import (
@@ -293,6 +294,111 @@ async def _discover(
         return _DiscoverRun(results, "", unmatched, written, calls, cost)
     finally:
         telemetry.setup_telemetry().force_flush()
+        await get_engine().dispose()
+
+
+@app.command()
+def crawl(
+    pilot: Annotated[
+        bool, typer.Option(help="Crawl the crawlable pilot venues. The only scope there is so far.")
+    ] = False,
+    venue: Annotated[
+        str | None,
+        typer.Option(help="Only this venue, by name. Case and accents do not matter."),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            help="Fetch every page, print the report, then roll back the pages. The purge of "
+            "expired text is still committed: the TTL is not optional."
+        ),
+    ] = False,
+) -> None:
+    """Fetch each pilot site's listing pages into venue_pages. No model is called.
+
+    Pages come from `ingest/seeds.yaml` pins, else from the seeds `discover` accepted. Text older
+    than 7 days is purged first, every run. A broken seed exits 1 *after* committing, so a
+    scheduled run cannot swallow it.
+    """
+    if not pilot:
+        typer.echo("FAIL: only the pilot venues can be crawled so far. Pass --pilot.")
+        raise typer.Exit(1)
+    try:
+        overrides = seeds.load_overrides()
+    except ValidationError as exc:
+        typer.echo(f"FAIL: ingest/seeds.yaml is invalid.\n{exc}")
+        raise typer.Exit(1) from exc
+
+    run = asyncio.run(_crawl(overrides, venue, dry_run=dry_run))
+    if run is None:
+        typer.echo("FAIL: no crawlable pilot venues. Run sync-graf first.")
+        raise typer.Exit(1)
+    if not run.crawls:
+        typer.echo(f"FAIL: no crawlable pilot venue is named {venue!r}. Known: {run.known}")
+        raise typer.Exit(1)
+
+    typer.echo("Crawl (dry run, rolled back)" if dry_run else "Crawl")
+    typer.echo(f"  {'purged':<11} {_purged(run.purged)}")
+    for line in crawling.report(run.crawls):
+        typer.echo(f"  {line}")
+    typer.echo(f"  {'written':<11} {run.written} pages")
+    if crawling.broken_seeds(run.crawls):
+        raise typer.Exit(1)
+
+
+@dataclass(frozen=True)
+class _CrawlRun:
+    crawls: list[crawling.SiteCrawl]
+    known: str  # every crawlable pilot's name, for the `--venue` error
+    purged: int
+    written: int = 0
+
+
+async def _crawl(
+    overrides: seeds.SeedOverrides, venue: str | None, *, dry_run: bool
+) -> _CrawlRun | None:
+    try:
+        # Short transactions rather than one held open across minutes of fetching.
+        async with get_sessionmaker()() as session:
+            purged = await crawling.purge_pages(session)
+            await session.commit()
+            targets = await crawling.load_targets(session, overrides)
+        if not targets:
+            return None
+        selected = crawling.select_targets(targets, venue)
+        if not selected:
+            return _CrawlRun([], ", ".join(sorted(t.site.name for t in targets)), purged)
+
+        async with open_client() as client:
+            robots = RobotsPolicy(client)
+            crawls = [await crawling.crawl_site(client, robots, target) for target in selected]
+
+        async with get_sessionmaker()() as session:
+            written = await crawling.write_pages(session, crawls)
+            await (session.rollback() if dry_run else session.commit())
+        return _CrawlRun(crawls, "", purged, written)
+    finally:
+        await get_engine().dispose()
+
+
+@app.command("purge-pages")
+def purge_pages() -> None:
+    """Drop venue-page text older than 7 days. `crawl` does this first on every run; this is the
+    same purge on its own, for a scheduler or for a day nothing is crawled."""
+    typer.echo(f"Purged {_purged(asyncio.run(_purge_pages()))}")
+
+
+def _purged(count: int) -> str:
+    return f"{count} pages of text older than {crawling.PAGE_TTL_DAYS} days"
+
+
+async def _purge_pages() -> int:
+    try:
+        async with get_sessionmaker()() as session:
+            purged = await crawling.purge_pages(session)
+            await session.commit()
+            return purged
+    finally:
         await get_engine().dispose()
 
 
