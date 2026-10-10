@@ -2,8 +2,9 @@
 
 In the order `cli crawl` runs it:
 
-1. `purge_pages()` — `raw_text` older than `PAGE_TTL_DAYS` is set NULL. First, every run: the TTL
-   has to hold from the first write, not from the day a scheduler exists (CLAUDE.md § 1).
+1. `purge_pages()` — `raw_text` and `links` older than `PAGE_TTL_DAYS` are set NULL. First, every
+   run: the TTL has to hold from the first write, not from the day a scheduler exists
+   (CLAUDE.md § 1).
 2. `load_targets()` — per site (`seeds.load_sites`), the listing pages to fetch and the hashes
    already stored for them.
 3. `crawl_site()` — network only, no database, no model. Each page becomes a `CrawledPage`.
@@ -20,6 +21,9 @@ Rules the code encodes:
 - **`unavailable` is not an answer**, so it is reported and not written: a site that timed out
   tonight keeps what last night's crawl stored.
 - **`content_hash` is the sha256 of the text**, never of the HTML, which carries nonces.
+- **A listing keeps its links.** Extraction names a show's own page by link number, and the text
+  has no URLs in it, so an `ok` listing's numbered same-site links (`discover.collect_links`) are
+  stored beside its text. Detail pages keep none: nothing asks them for a link.
 - **A broken seed is flagged, not worked around**: the listing 404s, or now redirects to the
   homepage. The third sign, a listing that yields no items after yielding some, needs extraction
   and lands with it (PR 22).
@@ -27,8 +31,9 @@ Rules the code encodes:
 `Target.details` is the slot for the detail pages extraction will name (PR 22). Nothing fills it
 yet; the cap and the listings-first order already apply to it.
 
-`CrawledPage.text` is third-party prose. It goes into `venue_pages.raw_text` and nowhere else: it
-is kept out of `repr`, and the report prints a word count, never the words.
+`CrawledPage.text` is third-party prose, and so is the text of its `links`. They go into
+`venue_pages.raw_text` and `venue_pages.links` and nowhere else: both are kept out of `repr`, and
+the report prints a word count, never the words.
 """
 
 import hashlib
@@ -43,7 +48,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from art_curator.db.models import VenuePage
-from art_curator.ingest.discover import url_key
+from art_curator.ingest.discover import Link, collect_links, url_key
 from art_curator.ingest.http import PoliteClient, RobotsPolicy
 from art_curator.ingest.matching import normalize_name
 from art_curator.ingest.pages import Fetched, PageStatus, fetch_page
@@ -137,6 +142,7 @@ class CrawledPage:
     text: str = field(default="", repr=False)  # `ok` only; third-party prose
     change: Change | None = None  # `ok` only
     broken: Broken | None = None  # listing pages only
+    links: tuple[Link, ...] = field(default=(), repr=False)  # `ok` listings only; third-party text
 
     @property
     def detail(self) -> str:
@@ -185,6 +191,7 @@ def _crawled(fetched: Fetched, target: Target, *, is_listing: bool) -> CrawledPa
     return CrawledPage(
         fetched.url, fetched.status, fetched.http_status, words, content_hash, fetched.text,
         change, broken,
+        links=tuple(collect_links(fetched.page.content, fetched.page.url)) if is_listing else (),
     )  # fmt: skip
 
 
@@ -213,6 +220,10 @@ async def write_pages(session: AsyncSession, crawls: Sequence[SiteCrawl]) -> int
             "http_status": page.http_status,
             "content_hash": page.content_hash,
             "raw_text": page.text or None,
+            "links": [
+                {"number": link.number, "url": link.url, "text": link.text} for link in page.links
+            ]
+            or None,
             "fetched_at": fetched_at,
         }
         for crawl in crawls
@@ -232,15 +243,16 @@ async def write_pages(session: AsyncSession, crawls: Sequence[SiteCrawl]) -> int
 
 
 async def purge_pages(session: AsyncSession) -> int:
-    """Set `raw_text` NULL on every page fetched more than `PAGE_TTL_DAYS` ago. Returns how many.
-    The row and its `content_hash` stay. The age is computed in Postgres (CLAUDE.md § 8)."""
+    """Set `raw_text` and `links` NULL on every page fetched more than `PAGE_TTL_DAYS` ago.
+    Returns how many. The row and its `content_hash` stay. The age is computed in Postgres
+    (CLAUDE.md § 8)."""
     result = await session.execute(
         update(PAGES)
         .where(
             PAGES.c.raw_text.is_not(None),
             PAGES.c.fetched_at < func.now() - timedelta(days=PAGE_TTL_DAYS),
         )
-        .values(raw_text=None)
+        .values(raw_text=None, links=None)
     )
     return result.rowcount
 
