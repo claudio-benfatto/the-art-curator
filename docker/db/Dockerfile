@@ -5,7 +5,7 @@
 #
 # Extensions are only made *available* here. `CREATE EXTENSION` is the first Alembic migration's
 # job, so local, CI and RDS all take the same path.
-FROM pgvector/pgvector:0.8.6-pg16-bookworm
+FROM pgvector/pgvector:0.8.7-pg16-bookworm
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends postgresql-16-postgis-3 \
