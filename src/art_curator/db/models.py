@@ -38,6 +38,10 @@ SEED_CONFIDENCES = ("high", "medium", "low")
 SEED_LANGUAGES = ("ca", "es", "en", "other")
 SEED_STATUSES = ("accepted", "rejected", "ambiguous")
 
+# What a fetch can leave on a `venue_pages` row: `ingest/pages.PageStatus` without `unavailable`,
+# which is no answer at all and is never written (`tests/test_crawl.py` checks the pair).
+PAGE_STATUSES = ("ok", "thin", "blocked", "robots", "error")
+
 
 def _one_of(column: str, values: tuple[str, ...]) -> str:
     return f"{column} IN (" + ", ".join(f"'{v}'" for v in values) + ")"
@@ -176,13 +180,15 @@ class EventOccurrence(Base):
 class VenuePage(Base):
     """A crawled venue page. `raw_text` is all visible text (`ingest/pages.py`) and is
     purged (set NULL) after 7 days; the row survives so `content_hash` can still skip unchanged
-    pages."""
+    pages. Only an `ok` page holds text or a hash: a page we could not use is a status and nothing
+    else."""
 
     __tablename__ = "venue_pages"
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     venue_id: Mapped[int] = mapped_column(ForeignKey("venues.id"))
     url: Mapped[str] = mapped_column(unique=True)
+    status: Mapped[str]  # what the last fetch found; one of PAGE_STATUSES
     http_status: Mapped[int | None]
     content_hash: Mapped[str | None]  # sha256 hex of raw_text
     raw_text: Mapped[str | None]  # 7-day TTL — the only third-party prose in the database
@@ -197,6 +203,7 @@ class VenuePage(Base):
             "fetched_at",
             postgresql_where=text("raw_text IS NOT NULL"),
         ),
+        CheckConstraint(_one_of("status", PAGE_STATUSES), name="status"),
     )
 
 
