@@ -124,9 +124,11 @@ class StubLlm:
         request_id: str = "aws-req-stub",
         input_tokens: int = 0,
         output_tokens: int = 0,
+        stop_reason: str | None = None,
     ) -> None:
         """Queue a Converse response that calls tool `name` with `tool_input`. `None` queues a
-        plain-text answer instead: the model ignoring a forced tool."""
+        plain-text answer instead: the model ignoring a forced tool. `stop_reason` overrides
+        the one that follows from that, e.g. `max_tokens` for an answer cut short."""
         if tool_input is None:
             content: list[dict[str, Any]] = [{"text": "stub"}]
         else:
@@ -135,7 +137,7 @@ class StubLlm:
             "converse",
             {
                 "output": {"message": {"role": "assistant", "content": content}},
-                "stopReason": "end_turn" if tool_input is None else "tool_use",
+                "stopReason": stop_reason or ("end_turn" if tool_input is None else "tool_use"),
                 "usage": {
                     "inputTokens": input_tokens,
                     "outputTokens": output_tokens,

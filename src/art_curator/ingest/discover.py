@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationIn
 from trafilatura import load_html
 
 from art_curator.llm.client import LlmClient
+from art_curator.llm.tools import forced_tool, tool_use, validation_feedback, with_failed_result
 
 PURPOSE = "discover"
 
@@ -238,27 +239,10 @@ PASS1_TOOL = "choose_listing_links"
 PASS2_TOOL = "classify_page"
 
 
-def _tool_config(name: str, description: str, output: type[BaseModel]) -> dict[str, Any]:
-    """One tool, and the model must call it. Bedrock has no structured outputs on this endpoint,
-    so a forced tool plus pydantic is the closest equivalent (CLAUDE.md § 5)."""
-    return {
-        "tools": [
-            {
-                "toolSpec": {
-                    "name": name,
-                    "description": description,
-                    "inputSchema": {"json": output.model_json_schema()},
-                }
-            }
-        ],
-        "toolChoice": {"tool": {"name": name}},
-    }
-
-
-PASS1_TOOL_CONFIG = _tool_config(
+PASS1_TOOL_CONFIG = forced_tool(
     PASS1_TOOL, "Record which links most likely lead to the venue's listing page.", LinkChoice
 )
-PASS2_TOOL_CONFIG = _tool_config(PASS2_TOOL, "Record what kind of page this is.", PageVerdict)
+PASS2_TOOL_CONFIG = forced_tool(PASS2_TOOL, "Record what kind of page this is.", PageVerdict)
 
 
 # --- prompts -------------------------------------------------------------------------------------
@@ -414,21 +398,15 @@ async def _forced_tool[T: BaseModel](
             inferenceConfig={"maxTokens": MAX_OUTPUT_TOKENS, "temperature": 0},
             toolConfig=tool_config,
         )
-        reply = response["output"]["message"]
-        use = next((block["toolUse"] for block in reply["content"] if "toolUse" in block), None)
+        use = tool_use(response)
         if use is None:
             error = "the model did not call the tool"
             continue
         try:
             return output.model_validate(use["input"], context=context)
         except ValidationError as exc:
-            # Location and message only. pydantic's default rendering echoes the input back.
-            error = "; ".join(
-                f"{'.'.join(str(part) for part in e['loc']) or 'input'}: {e['msg']}"
-                for e in exc.errors()
-            )
-        failed = {"toolUseId": use["toolUseId"], "content": [{"text": error}], "status": "error"}
-        messages = [*messages, reply, {"role": "user", "content": [{"toolResult": failed}]}]
+            error = validation_feedback(exc)
+        messages = with_failed_result(messages, response, use, error)
     name = tool_config["toolChoice"]["tool"]["name"]
     raise DiscoveryError(f"{name}: invalid after one retry ({error})")
 
