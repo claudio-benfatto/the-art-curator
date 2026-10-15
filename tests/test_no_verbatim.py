@@ -1,8 +1,9 @@
 """CLAUDE.md § 1: facts from GRAF, prose from nobody. Do not skip or weaken these tests.
 
 Schema half (P0): no source-fact table may carry a prose column, and third-party page text may
-live only in `venue_pages.raw_text`. Checked against the models *and* the migrated database, so a
-hand-written migration cannot slip a column past the models.
+live only in `venue_pages.raw_text` and, for link text, `venue_pages.links`. Checked against the
+models *and* the migrated database, so a hand-written migration cannot slip a column past the
+models.
 
 Repository half (P1): **third-party prose must not enter git either.** A recorded GRAF fixture is
 the obvious way for it to happen — 45 of 158 venue profiles carry a `description` of up to 6330
@@ -41,7 +42,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 # Every table must be classified here. A new table fails `test_every_table_is_classified` until
 # someone decides which rules apply to it — that decision is the point.
 SOURCE_TABLES = {"venues", "event_snapshots", "event_occurrences"}  # facts only, ever
-PROSE_CACHE = {"venue_pages": {"raw_text"}}  # third-party text, 7-day TTL, purged
+# Third-party text, 7-day TTL, purged. `links` carries each link's text, and a CHECK ties it to
+# `raw_text`, so one purge covers both (tests/test_crawl.py).
+PROSE_CACHE = {"venue_pages": {"raw_text", "links"}}
 # Our data; no third-party text. `venue_seeds` is enums, counts and URLs (tests/test_seeds.py).
 OWN_TABLES = {"llm_calls", "venue_seeds"}
 
