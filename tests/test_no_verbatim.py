@@ -15,19 +15,26 @@ Crawl fixtures (P2): tests for discovery and crawling need HTML, and a recorded 
 third-party prose in git. Every HTML fixture is therefore hand-written, says so with a
 `<!-- synthetic -->` marker on its first line, and stays small enough to read in review.
 
-The extraction half (no output span > ~25 words copied from its source) lands with `extract`
-in P2.
+Extraction half (P2): `summary_en` is the only prose that outlives a venue page, so it has to be
+ours. The prompt forbids reproducing ~25 consecutive words; `extract.longest_shared_run` enforces
+20. A summary that copies is sent back once, and one that copies twice is dropped while the facts
+are kept. The tests here plant a copied span and check each step.
 """
 
+import asyncio
 import json
 import re
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from art_curator.db.models import Base
 from art_curator.ingest.graf import DROP_KEYS, DROP_PREFIXES, banned_keys, scrub
+from art_curator.llm import extract
+from art_curator.llm.extract import MAX_SHARED_WORDS, longest_shared_run
 from tests.db import run_sql
+from tests.llm_stub import StubLlm
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -209,3 +216,176 @@ def test_html_fixtures_are_synthetic(path: Path):
 )
 def test_planted_html_fixture_is_caught(content):
     assert _html_fixture_problem(content)
+
+
+# --- Extraction: the summary is ours --------------------------------------------------------------
+
+# An invented page. `PASSAGE` is the sentence a lazy summary would lift.
+PASSAGE = (
+    "The exhibition gathers forty small paintings made on salvaged shutters during two winters "
+    "in a village that the reservoir later covered, shown beside the notebooks in which the "
+    "painter logged the weather of every single working day."
+)
+PAGE_TEXT = f"Galeria Exemple Exposicions Agenda Prova U Maria Exemple 12.09 – 30.11 {PASSAGE} Avís"
+OWN_SUMMARY = (
+    "Maria Exemple paints on reclaimed window shutters. The works remember a village drowned "
+    "by a reservoir, and hang alongside her weather diaries."
+)
+
+
+def _span(words: int) -> str:
+    """The first `words` words of `PASSAGE`."""
+    return " ".join(PASSAGE.split()[:words])
+
+
+def _answer(summary: str | None) -> dict:
+    return {
+        "exhibitions": [
+            {
+                "title": "Prova U",
+                "artists": ["Maria Exemple"],
+                "start": {"day": 12, "month": 9, "year": None},
+                "end": {"day": 30, "month": 11, "year": None},
+                "at_venue": True,
+                "link": None,
+                "summary_en": summary,
+                "themes": ["memory"],
+                "media": ["painting"],
+                "confidence": "high",
+            }
+        ],
+        "events": [],
+    }
+
+
+def _extract(stub: StubLlm) -> extract.Extraction:
+    return asyncio.run(
+        extract.extract_page(
+            stub.client,
+            "global.anthropic.claude-haiku-4-5-20251001-v1:0",
+            venue_name="Galeria Exemple",
+            url="https://www.exemple.cat/ca/exposicions",
+            text=PAGE_TEXT,
+            fetched_on=date(2026, 10, 10),
+        )
+    )
+
+
+def test_guard_is_stricter_than_the_prompt():
+    assert MAX_SHARED_WORDS == 20  # PLAN.md § 8; the prompt says ~25
+    assert len(PASSAGE.split()) > 25
+
+
+def test_shared_run_is_counted_in_words():
+    assert longest_shared_run(_span(21), PAGE_TEXT) == 21
+    assert longest_shared_run(f"Our lead-in. {_span(12)} and our own ending.", PAGE_TEXT) == 12
+    assert longest_shared_run(OWN_SUMMARY, PAGE_TEXT) <= 3
+    assert longest_shared_run("", PAGE_TEXT) == 0
+    assert longest_shared_run(OWN_SUMMARY, "") == 0
+
+
+def test_shared_run_ignores_case_punctuation_and_line_breaks():
+    disguised = _span(21).upper().replace(" ", ",\n", 5).replace("PAINTINGS", "«paintings»")
+    assert longest_shared_run(disguised, PAGE_TEXT) == 21
+
+
+def test_shared_run_is_the_longest_not_the_total():
+    """Two short borrowings do not add up to a long one."""
+    words = PASSAGE.split()
+    stitched = f"{' '.join(words[:15])} — nothing of theirs here — {' '.join(words[15:30])}"
+    assert longest_shared_run(stitched, PAGE_TEXT) == 15
+
+
+def test_shared_run_finds_a_span_that_starts_late_in_a_repetitive_page():
+    """The page repeats its opening words; the copy must still be matched from the right place."""
+    page = f"The exhibition gathers. The exhibition gathers forty. {PASSAGE}"
+    assert longest_shared_run(_span(25), page) == 25
+
+
+@pytest.mark.parametrize(("words", "allowed"), [(20, True), (21, False), (33, False)])
+def test_planted_copied_span_is_caught(words, allowed):
+    """Like `test_planted_column_is_caught`, for what the model writes."""
+    stub = StubLlm()
+    stub.tool_reply(extract.TOOL, _answer(_span(words)))
+    stub.tool_reply(extract.TOOL, _answer(_span(words)))
+
+    result = _extract(stub)
+
+    [exhibition] = result.exhibitions
+    if allowed:
+        assert exhibition.summary_en == _span(words)
+        assert (result.summaries_dropped, len(stub.calls)) == (0, 1)
+    else:
+        assert exhibition.summary_en is None
+        assert (result.summaries_dropped, len(stub.calls)) == (1, 2)
+    # Either way the facts survive: a copied summary costs the summary, not the exhibition.
+    assert (exhibition.title, exhibition.start_date) == ("Prova U", date(2026, 9, 12))
+
+
+def test_copied_summary_is_sent_back_once_and_a_rewrite_is_kept():
+    stub = StubLlm()
+    stub.tool_reply(extract.TOOL, _answer(PASSAGE), tool_use_id="use_1")
+    stub.tool_reply(extract.TOOL, _answer(OWN_SUMMARY))
+
+    result = _extract(stub)
+
+    assert result.exhibitions[0].summary_en == OWN_SUMMARY
+    assert result.summaries_dropped == 0
+    feedback = stub.converse_requests[1]["messages"][2]["content"][0]["toolResult"]
+    assert (feedback["toolUseId"], feedback["status"]) == ("use_1", "error")
+    [told] = feedback["content"]
+    assert "exhibitions.0.summary_en" in told["text"]
+    assert f"repeats {len(PASSAGE.split())} consecutive words" in told["text"]
+    assert _span(5) not in told["text"]  # where and how long, never the span
+
+
+def test_summary_may_come_back_null_instead():
+    stub = StubLlm()
+    stub.tool_reply(extract.TOOL, _answer(PASSAGE))
+    stub.tool_reply(extract.TOOL, _answer(None))
+
+    result = _extract(stub)
+
+    assert result.exhibitions[0].summary_en is None
+    assert result.summaries_dropped == 0  # the model's own choice, not the guard's
+
+
+@pytest.mark.parametrize("second", [{"exhibitions": "none"}, None])
+def test_facts_survive_when_the_retry_after_a_copy_is_unusable(second):
+    """The first answer was valid apart from its prose, so it is not thrown away."""
+    stub = StubLlm()
+    stub.tool_reply(extract.TOOL, _answer(PASSAGE))
+    stub.tool_reply(extract.TOOL, second)
+
+    result = _extract(stub)
+
+    assert [e.title for e in result.exhibitions] == ["Prova U"]
+    assert result.exhibitions[0].summary_en is None
+    assert result.summaries_dropped == 1
+
+
+def test_only_the_copied_summary_is_dropped():
+    both = _answer(PASSAGE)
+    both["exhibitions"].append(
+        {**both["exhibitions"][0], "title": "Altra", "summary_en": OWN_SUMMARY}
+    )
+    stub = StubLlm()
+    stub.tool_reply(extract.TOOL, both)
+    stub.tool_reply(extract.TOOL, both)
+
+    result = _extract(stub)
+
+    assert [e.summary_en for e in result.exhibitions] == [None, OWN_SUMMARY]
+    assert result.summaries_dropped == 1
+
+
+def test_a_copy_after_an_invalid_answer_is_dropped_without_a_third_call():
+    """One retry in all: validation and the guard share it."""
+    stub = StubLlm()
+    stub.tool_reply(extract.TOOL, {})
+    stub.tool_reply(extract.TOOL, _answer(PASSAGE))
+
+    result = _extract(stub)
+
+    assert result.exhibitions[0].summary_en is None
+    assert (result.summaries_dropped, len(stub.calls)) == (1, 2)
