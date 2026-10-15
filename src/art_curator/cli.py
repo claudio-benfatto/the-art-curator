@@ -1,7 +1,7 @@
 """Command-line entry point: `python -m art_curator.cli <command>`."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
@@ -15,7 +15,7 @@ from art_curator.config import get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_engine, get_sessionmaker
 from art_curator.ingest import crawl as crawling
-from art_curator.ingest import graf, seeds
+from art_curator.ingest import extraction, graf, seeds
 from art_curator.ingest.http import RobotsPolicy, open_client
 from art_curator.ingest.sync import (
     GrafSnapshot,
@@ -378,6 +378,99 @@ async def _crawl(
             await (session.rollback() if dry_run else session.commit())
         return _CrawlRun(crawls, "", purged, written)
     finally:
+        await get_engine().dispose()
+
+
+@app.command()
+def extract(
+    venue: Annotated[
+        str | None,
+        typer.Option(help="Only this venue, by name. Case and accents do not matter."),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option(min=1, help="Send at most this many pages to the model; the rest wait."),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            help="Run every model call, print the report, then roll back what was written. The "
+            "calls are still made, paid for and recorded, and the purge is still committed."
+        ),
+    ] = False,
+) -> None:
+    """Read exhibitions and events off the crawled pages. Calls a model: under a cent a page.
+
+    Only a page whose text, prompt version or model changed since its last extraction is sent.
+    Text older than 7 days is purged first, as in `crawl`. A page that failed, or a listing that
+    found items last time and none now, exits 1 *after* committing.
+    """
+    run = asyncio.run(_extract(venue, limit, dry_run=dry_run))
+    if run is None:
+        typer.echo("FAIL: no crawled pages. Run crawl --pilot first.")
+        raise typer.Exit(1)
+    if run.known:
+        typer.echo(f"FAIL: no crawled page belongs to a venue named {venue!r}. Known: {run.known}")
+        raise typer.Exit(1)
+
+    typer.echo("Extract (dry run, rolled back)" if dry_run else "Extract")
+    typer.echo(f"  {'purged':<11} {_purged(run.purged)}")
+    for line in extraction.report(run.plan, run.results):
+        typer.echo(f"  {line}")
+    typer.echo(
+        f"  {'written':<11} {run.written.exhibitions} exhibitions   {run.written.events} events"
+        f"   {run.written.pages} pages marked"
+    )
+    per_page = f"   ${run.cost_usd / len(run.results):.6f} a page" if run.results else ""
+    typer.echo(f"  {'cost':<11} ${run.cost_usd}   {run.calls} model calls{per_page}")
+    if any(r.extraction is None or r.broken for r in run.results):
+        raise typer.Exit(1)
+
+
+@dataclass(frozen=True)
+class _ExtractRun:
+    purged: int
+    plan: extraction.PagePlan = extraction.PagePlan()
+    results: list[extraction.PageResult] = field(default_factory=list)
+    known: str = ""  # set only when `--venue` matched nothing: every venue with a crawled page
+    written: extraction.Written = extraction.Written()
+    calls: int = 0
+    cost_usd: Decimal = Decimal(0)
+
+
+async def _extract(venue: str | None, limit: int | None, *, dry_run: bool) -> _ExtractRun | None:
+    model = get_settings().extract_model
+    llm = get_llm_client()
+    try:
+        # Short transactions rather than one held open across minutes of model calls.
+        async with get_sessionmaker()() as session:
+            purged = await crawling.purge_pages(session)
+            await session.commit()
+            everything = await extraction.load_pages(session, model)
+        if not everything.venue_names:
+            return None
+        plan = extraction.select_pages(everything, venue)
+        if not plan.venue_names:
+            return _ExtractRun(purged, known=", ".join(everything.venue_names))
+
+        with llm.tracer.start_as_current_span("extract") as span:
+            trace_id, _ = telemetry.span_ids(span)
+            results = await extraction.extract_pages(llm, model, plan.to_extract[:limit])
+
+        async with get_sessionmaker()() as session:
+            written = await extraction.write_results(session, results, model)
+            await (session.rollback() if dry_run else session.commit())
+            # Spend is recorded in its own transactions, so a dry run's rollback leaves it.
+            calls, cost = (
+                await session.execute(
+                    select(func.count(), func.coalesce(func.sum(LlmCall.cost_usd), 0)).where(
+                        LlmCall.trace_id == trace_id
+                    )
+                )
+            ).one()
+        return _ExtractRun(purged, plan, results, "", written, calls, cost)
+    finally:
+        telemetry.setup_telemetry().force_flush()
         await get_engine().dispose()
 
 

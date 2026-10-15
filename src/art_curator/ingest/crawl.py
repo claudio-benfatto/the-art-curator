@@ -26,10 +26,10 @@ Rules the code encodes:
   stored beside its text. Detail pages keep none: nothing asks them for a link.
 - **A broken seed is flagged, not worked around**: the listing 404s, or now redirects to the
   homepage. The third sign, a listing that yields no items after yielding some, needs extraction
-  and lands with it (PR 22).
-
-`Target.details` is the slot for the detail pages extraction will name (PR 22). Nothing fills it
-yet; the cap and the listings-first order already apply to it.
+  and is flagged by `cli extract` (`ingest/extraction.py`).
+- **A show's own page is fetched once.** `Target.details` are the `detail_url`s extraction named
+  for shows at the venue that are not over, minus every URL already in `venue_pages`. They come
+  after the listings, inside the same `MAX_PAGES_PER_SITE`, and are stored as `kind = 'detail'`.
 
 `CrawledPage.text` is third-party prose, and so is the text of its `links`. They go into
 `venue_pages.raw_text` and `venue_pages.links` and nowhere else: both are kept out of `repr`, and
@@ -47,7 +47,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from art_curator.db.models import VenuePage
+from art_curator.db.models import Exhibition, VenuePage
 from art_curator.ingest.discover import Link, collect_links, url_key
 from art_curator.ingest.http import PoliteClient, RobotsPolicy
 from art_curator.ingest.matching import normalize_name
@@ -55,6 +55,7 @@ from art_curator.ingest.pages import Fetched, PageStatus, fetch_page
 from art_curator.ingest.seeds import SeedOverrides, Site, load_sites
 
 PAGES = VenuePage.__table__
+EXHIBITIONS = Exhibition.__table__
 
 PAGE_TTL_DAYS = 7
 MAX_PAGES_PER_SITE = 8
@@ -101,13 +102,15 @@ async def load_targets(session: AsyncSession, overrides: SeedOverrides) -> list[
     sites = await load_sites(session, overrides)
     if not sites:
         return []
+    venue_ids = [site.venue_id for site in sites]
     stored: dict[int, dict[str, str | None]] = {}
     for venue_id, url, content_hash in await session.execute(
         select(PAGES.c.venue_id, PAGES.c.url, PAGES.c.content_hash).where(
-            PAGES.c.venue_id.in_([site.venue_id for site in sites])
+            PAGES.c.venue_id.in_(venue_ids)
         )
     ):
         stored.setdefault(venue_id, {})[url] = content_hash
+    shows = await _detail_urls(session, venue_ids)
 
     targets = []
     for site in sites:
@@ -117,8 +120,34 @@ async def load_targets(session: AsyncSession, overrides: SeedOverrides) -> list[
         listings: dict[str, str] = {}
         for url in site.pinned or site.seeds_in_use:
             listings.setdefault(url_key(url), spelling.get(url_key(url), url))
-        targets.append(Target(site, tuple(listings.values()), hashes=hashes))
+        # A show's page is fetched once: any row for it, whatever its status, means it was.
+        known = {*spelling, *listings, url_key(site.url)}
+        details: dict[str, str] = {}
+        for url in shows.get(site.venue_id, ()):
+            if url_key(url) not in known:
+                details.setdefault(url_key(url), url)
+        targets.append(
+            Target(site, tuple(listings.values()), tuple(details.values()), hashes=hashes)
+        )
     return targets
+
+
+async def _detail_urls(session: AsyncSession, venue_ids: Sequence[int]) -> dict[int, list[str]]:
+    """The own pages extraction named for each venue's shows here and not over, earliest start
+    first. "Over" is decided in Postgres (CLAUDE.md § 8); a show with no end date may be on."""
+    found: dict[int, list[str]] = {}
+    for venue_id, url in await session.execute(
+        select(EXHIBITIONS.c.venue_id, EXHIBITIONS.c.detail_url)
+        .where(
+            EXHIBITIONS.c.venue_id.in_(venue_ids),
+            EXHIBITIONS.c.detail_url.is_not(None),
+            EXHIBITIONS.c.at_venue,
+            func.coalesce(EXHIBITIONS.c.end_date, func.current_date()) >= func.current_date(),
+        )
+        .order_by(EXHIBITIONS.c.start_date.nulls_last(), EXHIBITIONS.c.id)
+    ):
+        found.setdefault(venue_id, []).append(url)
+    return found
 
 
 def select_targets(targets: Sequence[Target], venue: str | None) -> list[Target]:
@@ -143,6 +172,7 @@ class CrawledPage:
     change: Change | None = None  # `ok` only
     broken: Broken | None = None  # listing pages only
     links: tuple[Link, ...] = field(default=(), repr=False)  # `ok` listings only; third-party text
+    listing: bool = True  # else a show's own page, named by extraction
 
     @property
     def detail(self) -> str:
@@ -177,7 +207,10 @@ def _crawled(fetched: Fetched, target: Target, *, is_listing: bool) -> CrawledPa
     broken = _broken(fetched, target.site) if is_listing else None
     words = len(fetched.text.split())
     if fetched.status is not PageStatus.OK:
-        return CrawledPage(fetched.url, fetched.status, fetched.http_status, words, broken=broken)
+        return CrawledPage(
+            fetched.url, fetched.status, fetched.http_status, words, broken=broken,
+            listing=is_listing,
+        )  # fmt: skip
 
     content_hash = text_hash(fetched.text)
     stored = target.hashes.get(fetched.url)
@@ -192,6 +225,7 @@ def _crawled(fetched: Fetched, target: Target, *, is_listing: bool) -> CrawledPa
         fetched.url, fetched.status, fetched.http_status, words, content_hash, fetched.text,
         change, broken,
         links=tuple(collect_links(fetched.page.content, fetched.page.url)) if is_listing else (),
+        listing=is_listing,
     )  # fmt: skip
 
 
@@ -216,6 +250,7 @@ async def write_pages(session: AsyncSession, crawls: Sequence[SiteCrawl]) -> int
         {
             "venue_id": crawl.site.venue_id,
             "url": page.url,
+            "kind": "listing" if page.listing else "detail",
             "status": page.status.value,
             "http_status": page.http_status,
             "content_hash": page.content_hash,
