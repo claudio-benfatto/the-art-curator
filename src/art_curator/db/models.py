@@ -27,6 +27,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 LLM_PURPOSES = ("chat", "discover", "extract", "embed", "judge", "smoke")
@@ -181,7 +182,11 @@ class VenuePage(Base):
     """A crawled venue page. `raw_text` is all visible text (`ingest/pages.py`) and is
     purged (set NULL) after 7 days; the row survives so `content_hash` can still skip unchanged
     pages. Only an `ok` page holds text or a hash: a page we could not use is a status and nothing
-    else."""
+    else.
+
+    `links` is a listing page's numbered same-site links, `[{number, url, text}]`, which
+    extraction answers with to name a show's own page. Their text is third-party too, so they
+    are purged with `raw_text` and cannot exist without it."""
 
     __tablename__ = "venue_pages"
 
@@ -192,6 +197,8 @@ class VenuePage(Base):
     http_status: Mapped[int | None]
     content_hash: Mapped[str | None]  # sha256 hex of raw_text
     raw_text: Mapped[str | None]  # 7-day TTL — the only third-party prose in the database
+    # none_as_null: a page without links is SQL NULL, not a JSON `null` the CHECK would count.
+    links: Mapped[list[dict[str, str | int]] | None] = mapped_column(JSONB(none_as_null=True))
     fetched_at: Mapped[datetime]
     created_at: Mapped[datetime] = _created_at()
 
@@ -204,6 +211,7 @@ class VenuePage(Base):
             postgresql_where=text("raw_text IS NOT NULL"),
         ),
         CheckConstraint(_one_of("status", PAGE_STATUSES), name="status"),
+        CheckConstraint("links IS NULL OR raw_text IS NOT NULL", name="links_with_text"),
     )
 
 
