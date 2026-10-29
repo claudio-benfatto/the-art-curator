@@ -6,6 +6,7 @@ No venue site is fetched and no model exists on this path: `FakeSite` fakes the 
 
 import asyncio
 import functools
+import json
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -13,6 +14,7 @@ import httpx2
 import pytest
 from alembic import command
 from sqlalchemy.engine import URL
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from typer.testing import CliRunner
 
@@ -70,6 +72,48 @@ def test_page_text_stays_out_of_repr():
 
     assert "Col·lectiu Fictici" in page.text
     assert "Col·lectiu Fictici" not in repr(page)
+    assert "Segona mostra" in [link.text for link in page.links]
+    assert "Segona mostra" not in repr(page)
+
+
+def test_ok_listing_carries_its_numbered_links():
+    """What extraction will answer with to name a show's own page: the text has no URLs."""
+    page = _page(Target(SITE, (LISTING_URL,)), FakeSite())
+
+    assert [(link.number, link.url.removeprefix(HOST), link.text) for link in page.links] == [
+        (1, "/ca/exposicions/", "Exposicions"),
+        (2, "/ca/agenda", "Agenda"),
+        (3, "/ca/artistes", "Artistes"),
+        (4, "/ca/visita", "Visita"),
+        (5, "/ca/exposicions/prova-u", "Prova U"),
+        (6, "/ca/exposicions/segona-mostra", "Segona mostra"),
+        (7, "/ca/exposicions/tercera", "Tercera"),
+    ]
+    assert "/ca/exposicions/prova-u" not in page.text
+
+
+def test_links_resolve_against_the_url_the_listing_ended_up_at():
+    moved = httpx2.Response(301, headers={"location": f"{HOST}/ca/ara/"})
+    relative = (
+        '<html><body><a href="prova-u">Prova U</a>' + "<p>paraula</p>" * 60 + "</body></html>"
+    )
+    fake = FakeSite({"/ca/exposicions/": moved, "/ca/ara/": html(relative)})
+
+    page = _page(Target(SITE, (LISTING_URL,)), fake)
+
+    assert page.url == LISTING_URL  # the row's key is still the URL as requested
+    assert [link.url for link in page.links] == [f"{HOST}/ca/ara/prova-u"]
+
+
+def test_detail_page_keeps_no_links():
+    """Nothing asks a detail page for a link, so its link text is not stored."""
+    detail_url = f"{HOST}/ca/exposicions/prova-u"
+    target = Target(SITE, (LISTING_URL,), details=(detail_url,))
+
+    listing, detail = _crawl(target, FakeSite({"/ca/exposicions/prova-u": html(LISTING)})).pages
+
+    assert (detail.status, detail.text) == (PageStatus.OK, LISTING_TEXT)
+    assert listing.links and detail.links == ()
 
 
 @pytest.mark.parametrize(
@@ -109,6 +153,7 @@ def test_unusable_page_is_a_status_with_no_text(response, status, detail):
 
     assert (page.status, page.detail) == (status, detail)
     assert (page.text, page.content_hash, page.change, page.broken) == ("", None, None, None)
+    assert page.links == ()
 
 
 def test_robots_and_unavailable_are_statuses_too():
@@ -265,6 +310,12 @@ def _page_state(url: URL) -> dict[str, tuple]:
     return {r[0]: r[1:] for r in rows}
 
 
+def _links(url: URL) -> dict[str, list[dict] | None]:
+    [rows] = run_sql(url, "SELECT url, links FROM venue_pages")
+    # An untyped query hands JSONB back as text.
+    return {u: json.loads(v) if isinstance(v, str) else v for u, v in rows}
+
+
 def _accept(url: URL, *seed_urls: str, status: str = "accepted", venue_id: int = 1) -> None:
     run_sql(
         url,
@@ -312,6 +363,46 @@ def test_page_is_stored_with_its_text_and_hash(db):
     [(url, (_, venue_id, status, http_status, content_hash, raw_text))] = _page_state(db).items()
     assert (url, venue_id, status, http_status) == (LISTING_URL, 1, "ok", 200)
     assert (content_hash, raw_text) == (LISTING_HASH, LISTING_TEXT)
+
+
+def test_listing_is_stored_with_its_links(db):
+    _accept(db, LISTING_URL)
+
+    _crawl_and_write(db, FakeSite())
+
+    [stored] = _links(db).values()
+    assert len(stored) == 7
+    assert stored[4] == {"number": 5, "url": f"{HOST}/ca/exposicions/prova-u", "text": "Prova U"}
+
+
+def test_page_without_links_stores_sql_null(db):
+    """Not a JSON `null`, which `links IS NULL` would not see and the CHECK would refuse."""
+    _accept(db, LISTING_URL)
+
+    _crawl_and_write(db, FakeSite({"/ca/exposicions/": html(THIN_PAGE)}))
+    assert run_sql(db, "SELECT count(*) FROM venue_pages WHERE links IS NULL") == [[(1,)]]
+
+    _crawl_and_write(db, FakeSite({"/ca/exposicions/": html("<p>paraula</p>" * 60)}))
+    assert run_sql(db, "SELECT status, links IS NULL FROM venue_pages") == [[("ok", True)]]
+
+
+def test_page_that_stops_working_loses_its_links_too(db):
+    _accept(db, LISTING_URL)
+    _crawl_and_write(db, FakeSite())
+
+    _crawl_and_write(db, FakeSite({"/ca/exposicions/": html(THIN_PAGE)}))
+
+    assert _links(db) == {LISTING_URL: None}
+
+
+def test_links_cannot_be_stored_without_the_text(db):
+    """The schema, not just the purge, keeps link text under the page's TTL (CLAUDE.md § 1)."""
+    orphan = (
+        "INSERT INTO venue_pages (venue_id, url, status, links, fetched_at) "
+        f"VALUES (1, '{HOST}/x', 'ok', '[]', now())"
+    )
+    with pytest.raises(IntegrityError, match="ck_venue_pages_links_with_text"):
+        run_sql(db, orphan)
 
 
 def test_second_crawl_of_an_unchanged_page_changes_no_hash_or_id(db):
@@ -383,16 +474,20 @@ def test_rolled_back_write_leaves_nothing(db):
 
 # --- the purge -----------------------------------------------------------------------------------
 
+OLD_LINKS = '[{"number": 1, "url": "u", "text": "enllaç"}]'
 OLD_AND_NEW_PAGES = f"""
-INSERT INTO venue_pages (venue_id, url, status, http_status, content_hash, raw_text, fetched_at)
+INSERT INTO venue_pages
+  (venue_id, url, status, http_status, content_hash, raw_text, links, fetched_at)
 VALUES
-  (1, '{HOST}/vella', 'ok', 200, 'h-vella', 'text vell', now() - interval '7 days 1 minute'),
-  (1, '{HOST}/recent', 'ok', 200, 'h-recent', 'text recent', now() - interval '6 days 23 hours'),
-  (1, '{HOST}/buida', 'thin', 200, NULL, NULL, now() - interval '30 days')
+  (1, '{HOST}/vella', 'ok', 200, 'h-vella', 'text vell', '{OLD_LINKS}',
+   now() - interval '7 days 1 minute'),
+  (1, '{HOST}/recent', 'ok', 200, 'h-recent', 'text recent', '{OLD_LINKS}',
+   now() - interval '6 days 23 hours'),
+  (1, '{HOST}/buida', 'thin', 200, NULL, NULL, NULL, now() - interval '30 days')
 """
 TEXT_PAST_TTL = (
     "SELECT count(*) FROM venue_pages "
-    "WHERE raw_text IS NOT NULL AND fetched_at < now() - interval '7 days'"
+    "WHERE (raw_text IS NOT NULL OR links IS NOT NULL) AND fetched_at < now() - interval '7 days'"
 )
 
 
@@ -412,6 +507,11 @@ def test_purge_drops_text_past_seven_days_and_keeps_the_row_and_hash(db):
         "/buida": (None, None),
     }
     assert run_sql(db, TEXT_PAST_TTL) == [[(0,)]]
+    assert {path: links is None for path, links in _links(db).items()} == {
+        f"{HOST}/vella": True,  # link text is third-party too, and goes with the page text
+        f"{HOST}/recent": False,
+        f"{HOST}/buida": True,
+    }
     assert _in_session(db, crawl.purge_pages) == 0
 
 
