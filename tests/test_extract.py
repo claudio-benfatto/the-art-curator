@@ -299,6 +299,20 @@ def test_a_second_call_in_the_same_reply_is_answered_too():
     assert results[1]["content"][0]["text"].startswith("Not read: only the first call is.")
 
 
+@pytest.mark.parametrize("listing", [False, True])
+def test_a_year_without_a_month_is_no_date(listing):
+    """What the prompt asks for a year alone, applied when the model writes it as a date."""
+    year_alone = {"day": None, "month": None, "year": 2027}
+    item = exhibition_input(start={"day": 12, "month": 9, "year": 2026}, end=year_alone)
+    stub = StubLlm()
+    stub.tool_reply(TOOL, answer([listed(item) if listing else item]))
+
+    [exhibition] = run_extract(stub, listing=listing).exhibitions
+
+    assert (exhibition.start_date, exhibition.end_date) == (date(2026, 9, 12), None)
+    assert len(stub.calls) == 1
+
+
 def test_validation_feedback_does_not_echo_the_answer():
     """The retry names the field and the rule, not what the model wrote there."""
     stub = StubLlm()

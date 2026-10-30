@@ -140,6 +140,15 @@ class ListedItem(BaseModel):
     )
     confidence: Confidence
 
+    @field_validator("start", "end", mode="before")
+    @classmethod
+    def _a_year_alone_is_no_date(cls, value: Any) -> Any:
+        """The prompt makes a year alone ("2027") null. Haiku writes it as a date with a null
+        month instead, and again on the retry (MACBA, 2026-10-30), so it is read as meant."""
+        if isinstance(value, dict) and value.get("month") is None:
+            return None
+        return value
+
     @field_validator("link")
     @classmethod
     def _listed(cls, value: int | None, info: ValidationInfo) -> int | None:
