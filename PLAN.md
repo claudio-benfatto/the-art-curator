@@ -119,13 +119,15 @@ Assumptions: Bedrock global endpoint at Anthropic list price (verify in P0; regi
 
 **Extraction measured 2026-10-29** (`EXTRACT_VERSION` 1, 19 pilot listings, 25 calls): $0.72, **$0.038 a page**. Input 4.8k–24k tokens a call (median 9.7k, ~3.5k of it prompt + tool schema, so it never reaches Haiku's 4096-token caching minimum on its own). Output median 3.5k, and 4 calls cut off at 8192. Output was 64% of the cost: every show on a listing was described, and 82 of the 103 stored were over.
 
+**Version 3, 2026-10-30: $0.015 a page across 45 pages, ~$0.022 a listing.** 45 of 45 ok (one after a retry), none cut off, no listing capped with nothing current; a second run made zero calls.
+
 **Version 2, 2026-10-30** (facts only on listings, descriptions from a show's own page): listings $0.76 for 22 calls, no cheaper, and 2 still cut off at 16k. A listed item is still **~107 output tokens** (Pigment: 9,116 for 85 items); archive items had rarely carried a summary anyway. Listing cost scales with item count, and listings are archives: Pigment 77 of 79 over, ADN 78 of 81. **Detail pages: $0.0105 a page** (26 pages, 32 calls), which works. All 10 listings with rows run newest first, so version 3 keeps a listing's first 40 items in page order (§ 8, Extraction call). Expected, not measured: 40 exhibitions ≈ 4.3k output tokens, ~$0.03 with a 10k-token page; both lists full ≈ 10k, ~$0.06.
 
 | Item | Estimate |
 |---|---|
-| Extraction, pilot initial | v1 $0.72 (19 listings); v2 $0.76 (listings) + $0.27 (26 detail pages), measured. v3: measure on its re-run of the 19 listings |
-| Extraction, pilot nightly (~10% changed) | re-derive from the v3 measurement |
-| Extraction, all 158 venues | re-derive from the v3 measurement |
+| Extraction, pilot initial | v1 $0.72 (19 listings); v2 $0.76 (listings) + $0.27 (26 detail pages); **v3 $0.69 for all 45 pages** (46 calls, none cut off), so ~$0.41 for the 19 listings at the v2 detail-page rate |
+| Extraction, pilot nightly (~10% changed) | ~$0.07/night, ~$2/mo |
+| Extraction, all 158 venues | ~8× the pilots: ~$5.5 initial, ~$16/mo nightly |
 | Chat, Opus 4.6, compact + hydrate + caching | ~$0.05/exchange (same per-token price as Opus 5; caching starts only past 4096 tokens) |
 | **PoC total** (300 exchanges + pilot extraction) | **~$18/mo** |
 
@@ -245,7 +247,7 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | 20 | Migration 0005: `venue_pages.status`. `cli crawl --pilot`: pinned seeds, else accepted ones (detail URLs from PR 22), visible text + hash, `ok/thin/blocked/robots/error` statuses, `venue_pages` upsert by url, broken-seed flags (gone, redirects home), `--dry-run`, per-site report. `cli purge-pages` | Second crawl of unchanged pages changes no hashes; every page older than 7 days has `raw_text` NULL |
 | 21 | `llm/extract.py`: pydantic `Exhibition` / `ArtEvent` (with `detail_url`, `at_venue`), versioned prompt, forced tool, one retry, date resolution, verbatim guard; extraction half of `test_no_verbatim.py`. `llm/tools.py`: the forced-tool pieces, shared with discovery | Stubbed: bad JSON → retry → ok; copied span → `summary_en` NULL; year inference table-tested |
 | 21a | Migration 0006: `venue_pages.links`. `crawl` stores an `ok` listing's numbered links; `purge-pages` NULLs them with the text | Links are stored for listings only, never without `raw_text` (CHECK), and are gone after 7 days |
-| 22 | Migration 0007: `exhibitions`, `art_events`, extraction markers on `venue_pages`; classified in `test_no_verbatim.py`. `cli extract` (skip unchanged, `--venue`, `--limit`, `--dry-run`, report with cost from `llm_calls`). `extract` passes a listing's stored links; crawl follows `detail_url` | Second run on unchanged pages makes zero model calls (met 2026-10-29). Version 3 on the pilots: no listing cut off, a listing costs less than v1's measured $0.038, and the cost is recorded in § 6 |
+| 22 | Migration 0007: `exhibitions`, `art_events`, extraction markers on `venue_pages`; classified in `test_no_verbatim.py`. `cli extract` (skip unchanged, `--venue`, `--limit`, `--dry-run`, report with cost from `llm_calls`). `extract` passes a listing's stored links; crawl follows `detail_url` | Second run on unchanged pages makes zero model calls (met 2026-10-29). Version 3 on the pilots: no listing cut off, a listing costs less than v1's measured $0.038, and the cost is recorded in § 6 (met 2026-10-30: ~$0.022 a listing) |
 | 23 | `queries/events.py` (read-only, async, no agent/transport concerns) + `mcp_server.py` (`mcp` in the dev group) | Usable from Claude Code; no tool returns `raw_text` (tested) |
 | 24 | `eval/extraction.py` (pure scorer) + `cli eval-extraction` + labelling ~30 pages and the correct listing URL per venue | Done-when above. Reports item recall and precision (title match), date and artist accuracy on matched items, false positives on negative pages, stale count and cost. For discovery: accuracy vs the human-labelled listings, the ambiguous rate (human load), and **accepted-but-wrong** (the dangerous case) |
 | 25 | *(optional)* Summary faithfulness judge, `purpose=judge`, `JUDGE_MODEL` defaulting to the chat model (already in IAM and `pricing.yaml`) | Per-summary supported/unsupported in the eval report |
