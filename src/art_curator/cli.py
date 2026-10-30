@@ -399,11 +399,13 @@ def extract(
         ),
     ] = False,
 ) -> None:
-    """Read exhibitions and events off the crawled pages. Calls a model: under a cent a page.
+    """Read exhibitions and events off the crawled pages. Calls a model: a few cents a page
+    (PLAN.md § 6 has the measured cost).
 
     Only a page whose text, prompt version or model changed since its last extraction is sent.
-    Text older than 7 days is purged first, as in `crawl`. A page that failed, or a listing that
-    found items last time and none now, exits 1 *after* committing.
+    Text older than 7 days is purged first, as in `crawl`. A page that failed, a listing that
+    found items last time and none now, or a call the endpoint refused, exits 1 *after*
+    committing what was extracted.
     """
     run = asyncio.run(_extract(venue, limit, dry_run=dry_run))
     if run is None:
@@ -415,7 +417,7 @@ def extract(
 
     typer.echo("Extract (dry run, rolled back)" if dry_run else "Extract")
     typer.echo(f"  {'purged':<11} {_purged(run.purged)}")
-    for line in extraction.report(run.plan, run.results):
+    for line in extraction.report(run.plan, run.results, run.stopped):
         typer.echo(f"  {line}")
     typer.echo(
         f"  {'written':<11} {run.written.exhibitions} exhibitions   {run.written.events} events"
@@ -423,7 +425,7 @@ def extract(
     )
     per_page = f"   ${run.cost_usd / len(run.results):.6f} a page" if run.results else ""
     typer.echo(f"  {'cost':<11} ${run.cost_usd}   {run.calls} model calls{per_page}")
-    if any(r.extraction is None or r.broken for r in run.results):
+    if run.stopped or any(r.extraction is None or r.broken for r in run.results):
         raise typer.Exit(1)
 
 
@@ -436,6 +438,7 @@ class _ExtractRun:
     written: extraction.Written = extraction.Written()
     calls: int = 0
     cost_usd: Decimal = Decimal(0)
+    stopped: str = ""  # the endpoint refused a call: the pages after it were not sent
 
 
 async def _extract(venue: str | None, limit: int | None, *, dry_run: bool) -> _ExtractRun | None:
@@ -455,10 +458,10 @@ async def _extract(venue: str | None, limit: int | None, *, dry_run: bool) -> _E
 
         with llm.tracer.start_as_current_span("extract") as span:
             trace_id, _ = telemetry.span_ids(span)
-            results = await extraction.extract_pages(llm, model, plan.to_extract[:limit])
+            extracted = await extraction.extract_pages(llm, model, plan.to_extract[:limit])
 
         async with get_sessionmaker()() as session:
-            written = await extraction.write_results(session, results, model)
+            written = await extraction.write_results(session, extracted.results, model)
             await (session.rollback() if dry_run else session.commit())
             # Spend is recorded in its own transactions, so a dry run's rollback leaves it.
             calls, cost = (
@@ -468,7 +471,9 @@ async def _extract(venue: str | None, limit: int | None, *, dry_run: bool) -> _E
                     )
                 )
             ).one()
-        return _ExtractRun(purged, plan, results, "", written, calls, cost)
+        return _ExtractRun(
+            purged, plan, extracted.results, "", written, calls, cost, extracted.stopped
+        )
     finally:
         telemetry.setup_telemetry().force_flush()
         await get_engine().dispose()

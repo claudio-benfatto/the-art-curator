@@ -275,6 +275,30 @@ def test_answer_invalid_twice_fails_the_page(tool_input):
     assert len(stub.calls) == 2
 
 
+def test_a_second_call_in_the_same_reply_is_answered_too():
+    """Converse refuses a retry that leaves any call unanswered (ValidationException, pilot run
+    2026-10-30). Only the first call is read; the others are told so."""
+    stub = StubLlm()
+    stub.tool_reply(
+        TOOL,
+        {"exhibitions": [exhibition_input()]},
+        tool_use_id="use_1",
+        more_calls=[{"events": [event_input()]}],
+    )
+    stub.tool_reply(TOOL, answer(events=[event_input()]))
+
+    result = run_extract(stub)
+
+    assert (len(result.exhibitions), len(result.events)) == (1, 1)
+    results = [block["toolResult"] for block in stub.converse_requests[1]["messages"][2]["content"]]
+    assert [(r["toolUseId"], r["status"]) for r in results] == [
+        ("use_1", "error"),
+        ("use_1_2", "error"),
+    ]
+    assert "events: Field required" in results[0]["content"][0]["text"]
+    assert results[1]["content"][0]["text"].startswith("Not read: only the first call is.")
+
+
 def test_validation_feedback_does_not_echo_the_answer():
     """The retry names the field and the rule, not what the model wrote there."""
     stub = StubLlm()

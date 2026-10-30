@@ -195,11 +195,38 @@ def test_a_page_that_fails_does_not_stop_the_rest():
     stub.tool_reply(extract.TOOL, {})
     stub.tool_reply(extract.TOOL, {"exhibitions": [], "events": []})
 
-    results = asyncio.run(extraction.extract_pages(stub.client, HAIKU, [page(), page(AGENDA_URL)]))
+    extracted = asyncio.run(
+        extraction.extract_pages(stub.client, HAIKU, [page(), page(AGENDA_URL)])
+    )
 
-    assert [r.error.startswith("record_programme") for r in results] == [True, False]
-    assert results[1].extraction == Extraction((), ())
+    assert [r.error.startswith("record_programme") for r in extracted.results] == [True, False]
+    assert extracted.results[1].extraction == Extraction((), ())
+    assert extracted.stopped == ""
     assert len(stub.calls) == 3
+
+
+def test_a_refused_call_stops_the_run_but_keeps_what_was_extracted():
+    """The first page is paid for: losing it to the second page's refusal would pay twice."""
+    stub = StubLlm()
+    stub.tool_reply(extract.TOOL, {"exhibitions": [], "events": []})
+    stub.converse_stub.add_client_error(
+        "converse", service_error_code="ThrottlingException", service_message="Too many requests"
+    )
+
+    extracted = asyncio.run(
+        extraction.extract_pages(
+            stub.client, HAIKU, [page(), page(AGENDA_URL), page(DETAIL_URL, listing=False)]
+        )
+    )
+
+    assert [r.page.url for r in extracted.results] == [LISTING_URL]
+    assert extracted.stopped.startswith("ThrottlingException: An error occurred")
+    assert [row.error_type for row in stub.calls] == [None, "ThrottlingException"]  # both recorded
+
+    lines = extraction.report(PagePlan(to_extract=(page(), page(AGENDA_URL))), extracted.results,
+                              extracted.stopped)  # fmt: skip
+    assert "extracted   1   1 ok   1 left for the next run" in lines
+    assert lines[-1].startswith("stopped     the endpoint refused a call: ThrottlingException:")
 
 
 def test_a_listing_gives_facts_and_a_show_page_its_description():
@@ -210,7 +237,7 @@ def test_a_listing_gives_facts_and_a_show_page_its_description():
 
     listing, detail = asyncio.run(
         extraction.extract_pages(stub.client, HAIKU, [page(), page(DETAIL_URL, listing=False)])
-    )
+    ).results
 
     assert [r.page.listing for r in (listing, detail)] == [True, False]
     assert [s.summary_en for s in listing.extraction.exhibitions] == [None]

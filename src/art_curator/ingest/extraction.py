@@ -29,7 +29,8 @@ Rules the code encodes:
 - **A listing that stops yielding is a broken seed**, the third sign after "gone" and "redirects
   home" (`crawl.Broken`): it found items last time and finds none now.
 - **A model endpoint that refuses the call stops the run**, as in `discover`: that is not the
-  page's doing, and marking every page failed would hide it.
+  page's doing, and marking every page failed would hide it. What was extracted before it is
+  still written, since it is paid for, and the pages after it wait for the next run.
 
 Page text and link text are third-party prose: they are kept out of `repr`, go to the model, and
 are never printed. What is written is facts and our own summaries (`extract.longest_shared_run`).
@@ -40,6 +41,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
+from botocore.exceptions import BotoCoreError, ClientError
 from sqlalchemy import Date, case, cast, func, select, update
 from sqlalchemy.dialects.postgresql import ARRAY, insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -206,11 +208,16 @@ class PageResult:
         )
 
 
-async def extract_pages(
-    llm: LlmClient, model: str, pages: Sequence[PageToExtract]
-) -> list[PageResult]:
-    """Extract every page. An answer that stays unusable fails that page and the run goes on;
-    anything else `extract_page` raises (the endpoint refusing the call) stops it."""
+@dataclass(frozen=True)
+class Extracted:
+    results: list[PageResult]
+    stopped: str = ""  # what the endpoint said when it refused a call; the pages after it wait
+
+
+async def extract_pages(llm: LlmClient, model: str, pages: Sequence[PageToExtract]) -> Extracted:
+    """Extract every page. An answer that stays unusable fails that page and the run goes on. A
+    call the endpoint refuses (credentials, throttling, a malformed request) stops the run there,
+    with the pages already extracted kept for writing."""
     results = []
     for page in pages:
         try:
@@ -226,9 +233,11 @@ async def extract_pages(
             )
         except ExtractionError as exc:
             results.append(PageResult(page, error=str(exc)))
+        except (BotoCoreError, ClientError) as exc:
+            return Extracted(results, stopped=f"{type(exc).__name__}: {exc}")
         else:
             results.append(PageResult(page, extraction))
-    return results
+    return Extracted(results)
 
 
 # --- exhibitions, art_events, venue_pages --------------------------------------------------------
@@ -380,10 +389,10 @@ async def _exhibition_ids(
 EXPIRED_ADVICE = "its text was purged before it was extracted: crawl again"
 
 
-def report(plan: PagePlan, results: Sequence[PageResult]) -> list[str]:
+def report(plan: PagePlan, results: Sequence[PageResult], stopped: str = "") -> list[str]:
     """What `extract` prints: page counts, item counts, then every page sent to the model under
     its venue. A `broken` line follows a listing that stopped yielding; pages whose text expired
-    come last."""
+    come next, and last what stopped the run, if something did."""
     lines: list[str] = []
 
     def block(label: str, *parts: str) -> None:
@@ -406,7 +415,8 @@ def report(plan: PagePlan, results: Sequence[PageResult]) -> list[str]:
         str(len(results)),
         f"{len(done)} ok",
         f"{len(failed)} failed" if failed else "",
-        f"{left} left by --limit" if left else "",
+        f"{left} left for the next run" if left and stopped else "",
+        f"{left} left by --limit" if left and not stopped else "",
     )
     if done:
         dropped = sum(e.summaries_dropped for e in done)
@@ -441,4 +451,6 @@ def report(plan: PagePlan, results: Sequence[PageResult]) -> list[str]:
                 )
     for page in plan.expired:
         block("expired", page.url, EXPIRED_ADVICE)
+    if stopped:
+        block("stopped", f"the endpoint refused a call: {stopped}")
     return lines

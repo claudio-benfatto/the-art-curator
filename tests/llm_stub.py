@@ -14,6 +14,7 @@ in-memory exporter (`StubLlm.spans`) — exactly what Langfuse would receive.
 
 import json
 from collections import deque
+from collections.abc import Sequence
 from typing import Any
 
 import boto3
@@ -125,14 +126,20 @@ class StubLlm:
         input_tokens: int = 0,
         output_tokens: int = 0,
         stop_reason: str | None = None,
+        more_calls: Sequence[dict[str, Any]] = (),
     ) -> None:
         """Queue a Converse response that calls tool `name` with `tool_input`. `None` queues a
         plain-text answer instead: the model ignoring a forced tool. `stop_reason` overrides
-        the one that follows from that, e.g. `max_tokens` for an answer cut short."""
+        the one that follows from that, e.g. `max_tokens` for an answer cut short. `more_calls`
+        are further calls of the same tool in the same reply, with ids `<tool_use_id>_2`, …"""
         if tool_input is None:
             content: list[dict[str, Any]] = [{"text": "stub"}]
         else:
             content = [{"toolUse": {"toolUseId": tool_use_id, "name": name, "input": tool_input}}]
+            content += [
+                {"toolUse": {"toolUseId": f"{tool_use_id}_{n}", "name": name, "input": more}}
+                for n, more in enumerate(more_calls, start=2)
+            ]
         self.converse_stub.add_response(
             "converse",
             {
