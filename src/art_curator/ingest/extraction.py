@@ -19,12 +19,13 @@ Rules the code encodes:
   failed is marked as well: at temperature 0 the same text fails the same way, so it waits for
   one of the three to move.
 - **Listings first, then detail pages**, so a show's own page is written after the listing that
-  named it.
+  named it. A listing records facts only; the summary, themes and media come from the show's own
+  page (`extract.LISTING`).
 - **One show, one row**, on `(venue_id, title_key)`; an event adds its start date. When a show is
   seen again, each field takes the newest value that is not empty, so a date corrected on the
-  listing lands, and a detail page that gives no dates keeps the listing's. The exception is
-  `summary_en`: the longer one stays, so a listing's one-liner does not replace what the show's
-  own page said. Nothing is deleted.
+  listing lands, a detail page that gives no dates keeps the listing's, and a listing's empty
+  description never erases the detail page's. The exception is `summary_en`: the longer one
+  stays. Nothing is deleted.
 - **A listing that stops yielding is a broken seed**, the third sign after "gone" and "redirects
   home" (`crawl.Broken`): it found items last time and finds none now.
 - **A model endpoint that refuses the call stops the run**, as in `discover`: that is not the
@@ -220,6 +221,7 @@ async def extract_pages(
                 url=page.url,
                 text=page.text,
                 fetched_on=page.fetched_on,
+                listing=page.listing,
                 links=page.links,
             )
         except ExtractionError as exc:

@@ -24,6 +24,7 @@ from typing import Any, Literal, get_args
 import boto3
 from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
 from anthropic.types import Message, TextBlockParam
+from botocore.config import Config as BotoConfig
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -43,6 +44,12 @@ PROVIDER_CONVERSE = "bedrock-converse"
 # Cross-region inference profile prefixes. A model ID carrying one is served by the runtime
 # endpoint; a bare `anthropic.` ID is a Mantle ID.
 PROFILE_PREFIXES = ("global.", "us.", "eu.", "jp.", "apac.", "au.")
+
+# The Converse client. botocore's own retries would resend a request without a row, and a read
+# that timed out has already been generated and billed, so there are none: one attempt, one row.
+# The timeout outlasts the longest answer we ask for: 8192-token answers took 25-39 s on
+# 2026-10-29, so extraction's 16384-token listings may take ~80 s, past botocore's 60 s default.
+RUNTIME_CONFIG = BotoConfig(read_timeout=300, retries={"total_max_attempts": 1, "mode": "standard"})
 
 EPHEMERAL = {"type": "ephemeral"}
 # Top-level automatic caching. Mantle only — InvokeModel rejects it (CLAUDE.md § 6).
@@ -305,6 +312,8 @@ def get_llm_client() -> LlmClient:
     return LlmClient(
         mantle=AsyncAnthropicBedrockMantle(aws_region=settings.aws_region),
         invoke=AsyncAnthropicBedrock(aws_region=settings.aws_region),
-        runtime=boto3.client("bedrock-runtime", region_name=settings.aws_region),
+        runtime=boto3.client(
+            "bedrock-runtime", region_name=settings.aws_region, config=RUNTIME_CONFIG
+        ),
         record=db_recorder(get_sessionmaker()),
     )

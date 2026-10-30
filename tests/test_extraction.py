@@ -202,6 +202,23 @@ def test_a_page_that_fails_does_not_stop_the_rest():
     assert len(stub.calls) == 3
 
 
+def test_a_listing_gives_facts_and_a_show_page_its_description():
+    stub = StubLlm()
+    stub.tool_reply(extract.TOOL, _answer())
+    described = _show_input(summary_en=OUR_SUMMARY, themes=["paper"], media=["drawing"])
+    stub.tool_reply(extract.TOOL, _answer([described]))
+
+    listing, detail = asyncio.run(
+        extraction.extract_pages(stub.client, HAIKU, [page(), page(DETAIL_URL, listing=False)])
+    )
+
+    assert [r.page.listing for r in (listing, detail)] == [True, False]
+    assert [s.summary_en for s in listing.extraction.exhibitions] == [None]
+    assert [s.summary_en for s in detail.extraction.exhibitions] == [OUR_SUMMARY]
+    systems = [request["system"][0]["text"] for request in stub.converse_requests]
+    assert systems == [extract.LISTING_SYSTEM, extract.DETAIL_SYSTEM]
+
+
 # --- real database -------------------------------------------------------------------------------
 
 VENUE_ROWS = f"""
@@ -457,6 +474,7 @@ def test_rolled_back_write_leaves_nothing(db):
 
 
 def _show_input(title: str = "Prova U", **changes: Any) -> dict:
+    """A show as a listing records it: facts only."""
     return {
         "title": title,
         "artists": ["Artista Inventada"],
@@ -464,9 +482,6 @@ def _show_input(title: str = "Prova U", **changes: Any) -> dict:
         "end": {"day": 30, "month": 11, "year": 2026},
         "at_venue": True,
         "link": None,
-        "summary_en": OUR_SUMMARY,
-        "themes": [],
-        "media": ["painting"],
         "confidence": "high",
         **changes,
     }
@@ -525,7 +540,7 @@ def test_extract_writes_and_reports_and_a_second_run_calls_no_model(run, db):
     assert "items       1 exhibitions   1 events" in first.output
     assert f"ok          {LISTING_URL}   1 exhibitions   1 events" in first.output
     assert "written     1 exhibitions   1 events   1 pages marked" in first.output
-    # 3300 in and 600 out on Haiku 4.5 ($1 / $5 per million): PLAN.md § 6's page.
+    # 3300 in and 600 out on Haiku 4.5 ($1 / $5 per million).
     assert "cost        $0.006300   1 model calls   $0.006300 a page" in first.output
     assert [row[4] for row in _shows(db)] == [DETAIL_URL]
 
