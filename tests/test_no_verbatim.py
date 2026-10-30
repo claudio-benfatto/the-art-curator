@@ -47,6 +47,9 @@ SOURCE_TABLES = {"venues", "event_snapshots", "event_occurrences"}  # facts only
 PROSE_CACHE = {"venue_pages": {"raw_text", "links"}}
 # Our data; no third-party text. `venue_seeds` is enums, counts and URLs (tests/test_seeds.py).
 OWN_TABLES = {"llm_calls", "venue_seeds"}
+# Facts read off a page, plus prose that is ours: `summary_en`, and nothing else that could hold
+# a sentence, passed `longest_shared_run` before it was written (`test_extraction_tables_*`).
+OWN_PROSE = {"exhibitions": {"summary_en"}, "art_events": {"summary_en"}}
 
 PROSE = re.compile(r"desc|summary|body|content|excerpt|abstract|prose|blurb|text|html", re.I)
 THIRD_PARTY_TEXT = re.compile(r"raw|html|body|excerpt|page_text", re.I)
@@ -87,8 +90,26 @@ def _violations(columns: dict[str, set[str]]) -> list[str]:
 
 
 def test_every_table_is_classified():
-    classified = SOURCE_TABLES | set(PROSE_CACHE) | OWN_TABLES
+    classified = SOURCE_TABLES | set(PROSE_CACHE) | OWN_TABLES | set(OWN_PROSE)
     assert set(Base.metadata.tables) == classified
+
+
+# Every column that can hold free text the model wrote, beyond `summary_en`, is capped by the
+# extraction schema at a title's length or less (`test_extract.py::test_only_the_summary_*`).
+SHORT_TEXT = {"title", "title_key", "artists", "themes"}
+
+
+@pytest.mark.parametrize("table", sorted(OWN_PROSE))
+def test_extraction_tables_hold_no_sentence_but_our_summary(table):
+    """Adding a column here is a copyright decision (CLAUDE.md § 1), not a refactor."""
+    shared = {
+        "id", "venue_id", "start_date", "end_date", "at_venue", "detail_url", "media",
+        "confidence", "source_url", "content_hash", "model", "extract_version", "first_seen_at",
+        "last_seen_at",
+    }  # fmt: skip
+    event_only = {"kind", "start_time", "exhibition_id"} if table == "art_events" else set()
+    columns = set(Base.metadata.tables[table].columns.keys())
+    assert columns == shared | event_only | SHORT_TEXT | OWN_PROSE[table]
 
 
 def test_models_carry_no_third_party_prose():

@@ -114,6 +114,7 @@ def test_detail_page_keeps_no_links():
 
     assert (detail.status, detail.text) == (PageStatus.OK, LISTING_TEXT)
     assert listing.links and detail.links == ()
+    assert (listing.listing, detail.listing) == (True, False)
 
 
 @pytest.mark.parametrize(
@@ -353,6 +354,56 @@ def test_pin_replaces_the_accepted_seeds_and_a_rejected_url_is_dropped(db):
 
     assert pinned.listings == (f"{HOST}/ca/ara",)
     assert rejected.listings == (AGENDA_URL,)
+
+
+SHOWS = f"""
+INSERT INTO exhibitions (venue_id, title, title_key, start_date, end_date, at_venue, detail_url,
+                         confidence, source_url, content_hash, model, extract_version)
+VALUES
+  (1, 'Sense data', 'sense data', NULL, NULL, true, '{HOST}/ca/exposicions/sense-data',
+   'high', '{LISTING_URL}', 'h', 'm', 1),
+  (1, 'Prova U', 'prova u', current_date - 10, current_date + 10, true,
+   '{HOST}/ca/exposicions/prova-u', 'high', '{LISTING_URL}', 'h', 'm', 1),
+  (1, 'Acabada', 'acabada', current_date - 40, current_date - 1, true,
+   '{HOST}/ca/exposicions/acabada', 'high', '{LISTING_URL}', 'h', 'm', 1),
+  (1, 'Fora', 'fora', NULL, NULL, false, '{HOST}/ca/exposicions/fora',
+   'high', '{LISTING_URL}', 'h', 'm', 1),
+  (1, 'Llistat', 'llistat', NULL, NULL, true, '{HOST}/ca/exposicions',
+   'high', '{LISTING_URL}', 'h', 'm', 1),
+  (2, 'Una altra', 'una altra', NULL, NULL, true, '{MACBA_URL}/una-altra',
+   'high', '{MACBA_URL}/ara', 'h', 'm', 1)
+"""
+
+
+def test_shows_extraction_named_are_crawled_after_the_listings(db):
+    _accept(db, LISTING_URL)
+    run_sql(db, SHOWS)
+
+    target = _targets(db)[VENUE]
+
+    # Earliest start first. Not the show that closed yesterday, not the one held elsewhere, and
+    # not a "show page" that is the listing itself.
+    assert target.listings == (LISTING_URL,)
+    assert target.details == (
+        f"{HOST}/ca/exposicions/prova-u",
+        f"{HOST}/ca/exposicions/sense-data",
+    )
+
+
+def test_a_show_page_is_fetched_once_and_stored_as_a_detail(db):
+    _accept(db, LISTING_URL)
+    run_sql(db, SHOWS)
+    fake = FakeSite({"/ca/exposicions/prova-u": html(LISTING)})
+
+    _crawl_and_write(db, fake)
+
+    [rows] = run_sql(db, "SELECT url, kind, links IS NULL FROM venue_pages ORDER BY id")
+    assert [(url.removeprefix(HOST), kind, no_links) for url, kind, no_links in rows] == [
+        ("/ca/exposicions/", "listing", False),
+        ("/ca/exposicions/prova-u", "detail", True),
+        ("/ca/exposicions/sense-data", "detail", True),  # a 404 here: a row all the same
+    ]
+    assert _targets(db)[VENUE].details == ()
 
 
 def test_page_is_stored_with_its_text_and_hash(db):

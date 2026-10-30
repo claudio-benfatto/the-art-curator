@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. Next: P2, planned as PRs 17–25 (§ 8).
-**Last updated:** 2026-10-03 (rev. 10)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 in progress: PRs 17–22 built, 23–25 next (§ 8).
+**Last updated:** 2026-10-15 (rev. 11)
 
 ---
 
@@ -90,6 +90,7 @@ Each table lands in the phase that first writes it — no speculative schema.
 | Facts (source) | `venues` (`source`, source-scoped ids, name, address, `geom`, website/instagram URL, crawl flags) · `event_snapshots` (one row per event: `source`, source-scoped ids, venue, title, category, free, price range, URLs, first/last seen) · `event_occurrences` (start/end per occurrence, first/last seen) — **no description columns**; `source` is `"graf"` today, other event sources are additive | P0 |
 | Derived (LLM) | `venue_pages` (url, status, `content_hash`, `raw_text`; **7-day TTL**) | P0 |
 | | `venue_pages.links` (a listing's numbered same-site links; same TTL as `raw_text`) | P2 |
+| | `venue_pages.kind` (listing/detail) + extraction markers (status, hash, `EXTRACT_VERSION`, model, item count; no text) | P2 |
 | | `venue_seeds` (venue, listing URL, page type, confidence, dated-item count, language, status, model, `discovered_at`; no free text) | P2 |
 | | `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, `embedding`, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) | P2 (`embedding` P3) |
 | User | `users` · `profile_facts` (append-only, `superseded_by`) · `conversations` · `messages` · `interactions` · `itineraries` | P3 (`itineraries` P4) |
@@ -220,7 +221,7 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | Dates | The model transcribes dates **as written**, `{day, month, year?}`. Code infers a missing year from `fetched_at` (the nearest year where end ≥ start) and expands month-only dates to month bounds | Year inference is arithmetic (constraint 8), and Catalan pages routinely omit the year |
 | Verbatim guard | At runtime, the longest shared word run between `summary_en` and the page text is capped at **20 words** (margin under the prompt's ~25). On a breach, retry once. On a second breach, or a retry that comes back invalid, keep the facts, store `summary_en = NULL` and count it in the report. The extraction half of `test_no_verbatim.py` plants a copied span and checks it is caught | The prompt asks; the guard enforces |
 | Re-extraction | A page is re-extracted when `(content_hash, EXTRACT_VERSION, model)` differs from what it was last extracted with. `EXTRACT_VERSION` is a constant, bumped by hand when the prompt or schema changes; a test pins a hash of both to it | Unchanged pages are the main avoidable cost; a prompt change must still invalidate them |
-| Dedup | Upsert `exhibitions` on `(venue_id, title_key)`, where `title_key` is the normalised title. The same show on an index page and a detail page merges, and the richer record wins. `first_seen_at` / `last_seen_at` as for snapshots; nothing is deleted | Index and detail pages describe the same show |
+| Dedup | Upsert `exhibitions` on `(venue_id, title_key)`, where `title_key` is the normalised title; `art_events` adds the start date (`NULLS NOT DISTINCT`). A show seen again takes each field's newest non-empty value, except `summary_en`: the longer stays. `first_seen_at` / `last_seen_at` as for snapshots; nothing is deleted | Index and detail pages describe the same show. A detail page is fetched once, so a whole-record "richer wins" would let it shadow later corrections on the listing |
 | Test fixtures | Crawl tests use **hand-written synthetic HTML** (`tests/fixtures/crawl/*.html`), never recorded pages. `test_no_verbatim.py` requires a `<!-- synthetic -->` marker and a size cap on every HTML fixture | A recorded page is third-party prose in git (constraint 1) |
 | Gold set | **Labels only, facts only**: url, `content_hash`, and the expected `{kind, title, dates, artists}` per item, in `eval/gold/extraction.yaml`. No page text and no summaries. Eval reads `raw_text` from `venue_pages` or re-crawls; a page whose hash no longer matches its label is **stale**, reported and skipped | The page text cannot be kept past 7 days, so the gold set decays as venues update. That is the price of constraint 1, and re-labelling is part of the job |
 | Summary quality | Not in the gold set. Scored by an optional faithfulness judge (PR 25) and bounded by the verbatim guard | A hand-written reference summary measures wording, not truth |
