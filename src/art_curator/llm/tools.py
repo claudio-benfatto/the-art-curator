@@ -47,10 +47,25 @@ def forced_tool(name: str, description: str, output: type[BaseModel]) -> dict[st
     }
 
 
-def tool_use(response: dict[str, Any]) -> dict[str, Any] | None:
-    """The `toolUse` block of a Converse response, or None if the model answered in text."""
+def tool_calls(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every `toolUse` block of a Converse response; none if the model answered in text."""
     content = response["output"]["message"]["content"]
-    return next((block["toolUse"] for block in content if "toolUse" in block), None)
+    return [block["toolUse"] for block in content if "toolUse" in block]
+
+
+def merged_input(calls: list[dict[str, Any]]) -> dict[str, Any]:
+    """The input of every call in one reply, read as one answer. A forced tool can still be
+    called more than once in a reply, with the answer split between the calls: exhibitions in
+    one, events in the next (Miró, 2026-10-30). A list given in several calls is joined; any
+    other key repeated keeps its first value."""
+    merged: dict[str, Any] = {}
+    for call in calls:
+        for key, value in call["input"].items():
+            if key not in merged:
+                merged[key] = value
+            elif isinstance(merged[key], list) and isinstance(value, list):
+                merged[key] = merged[key] + value
+    return merged
 
 
 def validation_feedback(exc: ValidationError) -> str:
@@ -62,28 +77,21 @@ def validation_feedback(exc: ValidationError) -> str:
     )
 
 
-# The answer to a second call in the same reply. Only the first is read (`tool_use`).
-NOT_READ = "Not read: only the first call is. Call the tool once, with everything in that call."
-
-
 def with_failed_result(
-    messages: list[dict[str, Any]], response: dict[str, Any], use: dict[str, Any], error: str
+    messages: list[dict[str, Any]], response: dict[str, Any], error: str
 ) -> list[dict[str, Any]]:
-    """`messages` plus the model's reply and `error` as that tool call's failed result: the
-    conversation to send for the retry.
-
-    Converse refuses a conversation in which any tool call goes unanswered, and a forced tool can
-    still be called twice in one reply (seen on the pilots, 2026-10-30). Every call therefore gets
-    a failed result: `use` gets `error`, any other `NOT_READ`."""
-    reply = response["output"]["message"]
+    """`messages` plus the model's reply and `error` as the failed result of its tool calls: the
+    conversation to send for the retry. Every call gets one, since the calls were read as one
+    answer (`merged_input`), and Converse refuses a conversation that leaves any call unanswered
+    (ValidationException, pilot run 2026-10-30)."""
     results = [
         {
             "toolResult": {
                 "toolUseId": call["toolUseId"],
-                "content": [{"text": error if call["toolUseId"] == use["toolUseId"] else NOT_READ}],
+                "content": [{"text": error}],
                 "status": "error",
             }
         }
-        for call in (block["toolUse"] for block in reply["content"] if "toolUse" in block)
+        for call in tool_calls(response)
     ]
-    return [*messages, reply, {"role": "user", "content": results}]
+    return [*messages, response["output"]["message"], {"role": "user", "content": results}]

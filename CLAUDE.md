@@ -78,6 +78,7 @@ Training priors on these are stale — several changed in 2025–26.
 - **No assistant prefill** — 400 on Opus 5. Use tool schemas or system-prompt instructions.
 - **No structured outputs / `strict: true` on Bedrock's Messages endpoint.** Validate every tool input and extraction output with pydantic; on failure return a `tool_result` with `is_error: true` (chat) or retry once (extraction).
 - Parse tool inputs with `json.loads()`. Never string-match the serialized input.
+- **A forced tool is not called exactly once.** Haiku 4.5 sometimes splits one answer over several calls in a reply, sends a list as its JSON text, or leaves an empty list out, and repeats it at temperature 0. `llm/tools.merged_input` reads the calls as one answer, and a retry must answer *every* call or Converse refuses it (`ValidationException`).
 
 ### 6. Cache layout
 

@@ -33,9 +33,11 @@ This module does no I/O of its own. It is handed text and reaches a model only t
 (PR 22), which must re-extract a page whenever `EXTRACT_VERSION` moves.
 """
 
+import json
 import re
 from calendar import monthrange
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import date, time
 from typing import Annotated, Any, Literal, Protocol
@@ -48,10 +50,17 @@ from pydantic import (
     ValidationError,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 
 from art_curator.llm.client import LlmClient
-from art_curator.llm.tools import forced_tool, tool_use, validation_feedback, with_failed_result
+from art_curator.llm.tools import (
+    forced_tool,
+    merged_input,
+    tool_calls,
+    validation_feedback,
+    with_failed_result,
+)
 
 PURPOSE = "extract"
 TOOL = "record_programme"
@@ -200,19 +209,35 @@ class DescribedEvent(_EventFields, DescribedItem):
     pass
 
 
-class ListingDraft(BaseModel):
-    """The tool's input for a listing. Validated with `context={"link_count": n}`."""
-
+class _Programme(BaseModel):
     model_config = _DRAFT
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lists_as_meant(cls, data: Any) -> Any:
+        """Haiku sometimes sends a list as its JSON text, and leaves out a list it has nothing
+        for (Miró, 2026-10-30, twice each at temperature 0). Both are read as meant; any other
+        shape still fails validation."""
+        if not isinstance(data, dict):
+            return data
+        data = {"exhibitions": [], "events": [], **data}
+        for key in ("exhibitions", "events"):
+            if isinstance(data[key], str):
+                # Not JSON: left as it is, for validation to name.
+                with suppress(json.JSONDecodeError):
+                    data[key] = json.loads(data[key])
+        return data
+
+
+class ListingDraft(_Programme):
+    """The tool's input for a listing. Validated with `context={"link_count": n}`."""
 
     exhibitions: list[ListedItem] = Field(max_length=MAX_LISTED_ITEMS)
     events: list[ListedEvent] = Field(max_length=MAX_LISTED_ITEMS)
 
 
-class DetailDraft(BaseModel):
+class DetailDraft(_Programme):
     """The tool's input for a show's own page. Validated with `context={"link_count": n}`."""
-
-    model_config = _DRAFT
 
     exhibitions: list[DescribedItem] = Field(max_length=MAX_ITEMS)
     events: list[DescribedEvent] = Field(max_length=MAX_ITEMS)
@@ -545,12 +570,14 @@ async def extract_page(
             # A truncated tool call. At temperature 0 a second try would be cut at the same place.
             error = f"the answer was cut off at {prompt.max_tokens} output tokens"
             break
-        use = tool_use(response)
-        if use is None:
+        uses = tool_calls(response)
+        if not uses:
             error = "the model did not call the tool"
             continue
         try:
-            draft = prompt.draft.model_validate(use["input"], context={"link_count": len(links)})
+            draft = prompt.draft.model_validate(
+                merged_input(uses), context={"link_count": len(links)}
+            )
         except ValidationError as exc:
             error = validation_feedback(exc)
         else:
@@ -564,7 +591,7 @@ async def extract_page(
                 f"words, or make it null"
                 for _item, where, run in copied
             )
-        messages = with_failed_result(messages, response, use, error)
+        messages = with_failed_result(messages, response, error)
 
     if kept is None:
         after = " after one retry" if calls == 2 else ""

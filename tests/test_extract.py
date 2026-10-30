@@ -248,8 +248,9 @@ def test_bad_answer_is_retried_with_the_reason_and_can_succeed():
 @pytest.mark.parametrize(
     "tool_input",
     [
-        {},
-        {"exhibitions": [exhibition_input()]},  # `events` is required, even when empty
+        {"exhibitions": "none"},  # a string that is not a JSON list
+        {"exhibitions": exhibition_input()},  # one item, not a list of one
+        {"exhibitions": json.dumps({"exhibitions": [exhibition_input()]})},  # the whole answer
         answer([{"title": "Prova U"}]),
         answer([exhibition_input(title="")]),
         answer([exhibition_input(title="t" * (extract.TITLE_CHARS + 1))]),
@@ -275,28 +276,65 @@ def test_answer_invalid_twice_fails_the_page(tool_input):
     assert len(stub.calls) == 2
 
 
-def test_a_second_call_in_the_same_reply_is_answered_too():
-    """Converse refuses a retry that leaves any call unanswered (ValidationException, pilot run
-    2026-10-30). Only the first call is read; the others are told so."""
+def test_an_answer_split_over_two_calls_is_read_as_one():
+    """Miró, 2026-10-30: exhibitions in one call, events in the next, in the same reply."""
     stub = StubLlm()
     stub.tool_reply(
         TOOL,
         {"exhibitions": [exhibition_input()]},
-        tool_use_id="use_1",
-        more_calls=[{"events": [event_input()]}],
+        more_calls=[{"events": [event_input()]}, {"events": [event_input(title="Xerrada")]}],
     )
-    stub.tool_reply(TOOL, answer(events=[event_input()]))
 
     result = run_extract(stub)
 
-    assert (len(result.exhibitions), len(result.events)) == (1, 1)
+    assert [e.title for e in result.exhibitions] == ["Prova U"]
+    assert [e.title for e in result.events] == ["Inauguració: Prova U", "Xerrada"]
+    assert len(stub.calls) == 1
+
+
+def test_a_retry_answers_every_call_in_the_reply():
+    """Converse refuses a conversation that leaves any call unanswered (ValidationException,
+    pilot run 2026-10-30)."""
+    stub = StubLlm()
+    stub.tool_reply(
+        TOOL,
+        {"exhibitions": [exhibition_input(confidence="0.9")]},
+        tool_use_id="use_1",
+        more_calls=[{"events": [event_input()]}],
+    )
+    stub.tool_reply(TOOL, answer())
+
+    run_extract(stub)
+
     results = [block["toolResult"] for block in stub.converse_requests[1]["messages"][2]["content"]]
     assert [(r["toolUseId"], r["status"]) for r in results] == [
         ("use_1", "error"),
         ("use_1_2", "error"),
     ]
-    assert "events: Field required" in results[0]["content"][0]["text"]
-    assert results[1]["content"][0]["text"].startswith("Not read: only the first call is.")
+    assert all("exhibitions.0.confidence" in r["content"][0]["text"] for r in results)
+
+
+@pytest.mark.parametrize("listing", [False, True])
+def test_a_list_sent_as_json_text_or_left_out_is_read_as_meant(listing):
+    """Miró, 2026-10-30: `exhibitions` as a JSON string and no `events`, twice at temperature 0."""
+    item = listed(exhibition_input()) if listing else exhibition_input()
+    stub = StubLlm()
+    stub.tool_reply(TOOL, {"exhibitions": json.dumps([item])})
+
+    result = run_extract(stub, listing=listing)
+
+    assert ([e.title for e in result.exhibitions], result.events) == (["Prova U"], ())
+    assert len(stub.calls) == 1
+
+
+def test_an_empty_answer_is_a_page_that_announces_nothing():
+    stub = StubLlm()
+    stub.tool_reply(TOOL, {})
+
+    result = run_extract(stub)
+
+    assert (result.exhibitions, result.events) == ((), ())
+    assert len(stub.calls) == 1
 
 
 @pytest.mark.parametrize("listing", [False, True])

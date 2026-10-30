@@ -191,8 +191,8 @@ def test_report_lists_each_page_under_its_venue():
 
 def test_a_page_that_fails_does_not_stop_the_rest():
     stub = StubLlm()
-    stub.tool_reply(extract.TOOL, {})
-    stub.tool_reply(extract.TOOL, {})
+    stub.tool_reply(extract.TOOL, {"exhibitions": "none"})
+    stub.tool_reply(extract.TOOL, {"exhibitions": "none"})
     stub.tool_reply(extract.TOOL, {"exhibitions": [], "events": []})
 
     extracted = asyncio.run(
@@ -604,8 +604,8 @@ def test_dry_run_rolls_back_but_keeps_the_spend(run, db):
 
 def test_failed_page_is_marked_reported_and_exits_1_then_waits(run, db):
     _add_page(db, LISTING_URL, LISTING_TEXT)
-    run.stub.tool_reply(extract.TOOL, {})
-    run.stub.tool_reply(extract.TOOL, {})
+    run.stub.tool_reply(extract.TOOL, {"exhibitions": "none"})
+    run.stub.tool_reply(extract.TOOL, {"exhibitions": "none"})
 
     first = run()
 
