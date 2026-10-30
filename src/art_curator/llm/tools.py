@@ -62,14 +62,28 @@ def validation_feedback(exc: ValidationError) -> str:
     )
 
 
+# The answer to a second call in the same reply. Only the first is read (`tool_use`).
+NOT_READ = "Not read: only the first call is. Call the tool once, with everything in that call."
+
+
 def with_failed_result(
     messages: list[dict[str, Any]], response: dict[str, Any], use: dict[str, Any], error: str
 ) -> list[dict[str, Any]]:
     """`messages` plus the model's reply and `error` as that tool call's failed result: the
-    conversation to send for the retry."""
-    failed = {"toolUseId": use["toolUseId"], "content": [{"text": error}], "status": "error"}
-    return [
-        *messages,
-        response["output"]["message"],
-        {"role": "user", "content": [{"toolResult": failed}]},
+    conversation to send for the retry.
+
+    Converse refuses a conversation in which any tool call goes unanswered, and a forced tool can
+    still be called twice in one reply (seen on the pilots, 2026-10-30). Every call therefore gets
+    a failed result: `use` gets `error`, any other `NOT_READ`."""
+    reply = response["output"]["message"]
+    results = [
+        {
+            "toolResult": {
+                "toolUseId": call["toolUseId"],
+                "content": [{"text": error if call["toolUseId"] == use["toolUseId"] else NOT_READ}],
+                "status": "error",
+            }
+        }
+        for call in (block["toolUse"] for block in reply["content"] if "toolUse" in block)
     ]
+    return [*messages, reply, {"role": "user", "content": results}]

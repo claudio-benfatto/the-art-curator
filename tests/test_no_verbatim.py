@@ -291,6 +291,7 @@ def _extract(stub: StubLlm) -> extract.Extraction:
             url="https://www.exemple.cat/ca/exposicions",
             text=PAGE_TEXT,
             fetched_on=date(2026, 10, 10),
+            listing=False,  # only a show's own page is described
         )
     )
 
