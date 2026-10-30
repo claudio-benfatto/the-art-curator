@@ -7,9 +7,14 @@ has to hold, is code:
 **Two kinds of page.** A *listing* names many shows, often years of archive, so it records facts
 only: title, artists, dates, `at_venue`, link. A *detail* page is one show's own page, and only
 it is described: `summary_en`, themes, media. Crawl fetches detail pages only for shows that are
-not over, so the prose costs nothing for the archive. Measured on the pilots (2026-10-29): 82 of
-103 listed exhibitions were over, and describing every one cut four listings off at the token
-limit.
+not over, so the prose costs nothing for the archive.
+
+**A listing keeps its first `MAX_LISTED_ITEMS` items in page order.** Even facts cost ~107
+output tokens an item, and archives run to 80 items and more: Pigment was 77 of 79 past, and
+àngels and Chiquita Room were cut off at 16k tokens (2026-10-30). All ten pilot listings with
+rows ran newest first, so the first items are the current ones. A listing that hits the cap
+with nothing current is reported (`Extraction.capped`), since that is what a page running
+oldest first would look like.
 
 **Dates.** The model writes a date the way the page does, `{day, month, year}` with the day and
 the year nullable. `resolve_dates` infers a missing year from the day the page was fetched and
@@ -68,10 +73,10 @@ TOOL = "record_programme"
 # Bump by hand whenever a prompt or a tool schema changes: a page is re-extracted when
 # `(content_hash, EXTRACT_VERSION, model)` differs from what it was last extracted with.
 # `tests/test_extract.py` pins a fingerprint of all four to this number, so forgetting fails there.
-EXTRACT_VERSION = 2
+EXTRACT_VERSION = 3
 
 MAX_ITEMS = 40  # per list, on a show's own page
-MAX_LISTED_ITEMS = 200  # per list, on a listing: archives included
+MAX_LISTED_ITEMS = 40  # per list, on a listing: the first in page order, newest first
 MAX_ARTISTS = 30
 MAX_THEMES = 5
 MAX_MEDIA = 5
@@ -82,8 +87,9 @@ SUMMARY_CHARS = 600
 LINK_TEXT_CHARS = 80
 LINK_URL_CHARS = 200
 MAX_OUTPUT_TOKENS = 8192  # a show's own page
-# A listed item is ~60 tokens of facts (estimated, not yet measured), so MAX_LISTED_ITEMS fit.
-# An answer this long takes over a minute: `llm/client.py` sets the read timeout to match.
+# A listed item is ~107 output tokens (Pigment, 2026-10-30), so two full lists and the few items
+# the model writes past the cap take ~10k. The rest is margin for a runaway answer, which can
+# take over a minute: `llm/client.py` sets the read timeout to match.
 MAX_LISTING_OUTPUT_TOKENS = 16384
 
 # The prompt allows ~25 words; the guard leaves a margin under that.
@@ -232,8 +238,20 @@ class _Programme(BaseModel):
 class ListingDraft(_Programme):
     """The tool's input for a listing. Validated with `context={"link_count": n}`."""
 
-    exhibitions: list[ListedItem] = Field(max_length=MAX_LISTED_ITEMS)
-    events: list[ListedEvent] = Field(max_length=MAX_LISTED_ITEMS)
+    exhibitions: list[ListedItem] = Field(json_schema_extra={"maxItems": MAX_LISTED_ITEMS})
+    events: list[ListedEvent] = Field(json_schema_extra={"maxItems": MAX_LISTED_ITEMS})
+
+    @field_validator("exhibitions", "events", mode="before")
+    @classmethod
+    def _first_in_page_order(cls, items: Any) -> Any:
+        """The prompt asks for the first `MAX_LISTED_ITEMS`; the model writes a few more (43 and
+        52 against a cap of 40, 2026-10-29). Those are dropped, not failed: the page is right and
+        already paid for. Cut before validation, so nothing past the cap can fail the page."""
+        return items[:MAX_LISTED_ITEMS] if isinstance(items, list) else items
+
+    @property
+    def capped(self) -> bool:
+        return MAX_LISTED_ITEMS in (len(self.exhibitions), len(self.events))
 
 
 class DetailDraft(_Programme):
@@ -281,6 +299,7 @@ class Extraction:
     exhibitions: tuple[Exhibition, ...]
     events: tuple[ArtEvent, ...]
     summaries_dropped: int = 0  # copied from the page twice: stored as NULL, counted in the report
+    capped: bool = False  # a listing that reached `MAX_LISTED_ITEMS`: the rest of it was not read
 
 
 # --- dates ---------------------------------------------------------------------------------------
@@ -637,4 +656,5 @@ def _resolve(
             for event in draft.events
         ),
         summaries_dropped=summaries_dropped,
+        capped=isinstance(draft, ListingDraft) and draft.capped,
     )

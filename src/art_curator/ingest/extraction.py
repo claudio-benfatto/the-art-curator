@@ -19,8 +19,10 @@ Rules the code encodes:
   failed is marked as well: at temperature 0 the same text fails the same way, so it waits for
   one of the three to move.
 - **Listings first, then detail pages**, so a show's own page is written after the listing that
-  named it. A listing records facts only; the summary, themes and media come from the show's own
-  page (`extract.LISTING`).
+  named it. A listing records facts only, for its first `MAX_LISTED_ITEMS` items in page order;
+  the summary, themes and media come from the show's own page (`extract.LISTING`).
+- **A listing cut at the cap with nothing current is reported**, not failed: it is what a page
+  running oldest first would look like, but also a venue between shows.
 - **One show, one row**, on `(venue_id, title_key)`; an event adds its start date. When a show is
   seen again, each field takes the newest value that is not empty, so a date corrected on the
   listing lands, a detail page that gives no dates keeps the listing's, and a listing's empty
@@ -50,7 +52,13 @@ from art_curator.db.models import ArtEvent, Exhibition, Venue, VenuePage
 from art_curator.ingest.crawl import BROKEN_ADVICE
 from art_curator.ingest.matching import normalize_name
 from art_curator.llm.client import LlmClient
-from art_curator.llm.extract import EXTRACT_VERSION, Extraction, ExtractionError, extract_page
+from art_curator.llm.extract import (
+    EXTRACT_VERSION,
+    MAX_LISTED_ITEMS,
+    Extraction,
+    ExtractionError,
+    extract_page,
+)
 
 PAGES = VenuePage.__table__
 VENUES = Venue.__table__
@@ -206,6 +214,20 @@ class PageResult:
             and self.items == 0
             and bool(self.page.previous_items)
         )
+
+    @property
+    def capped_with_nothing_current(self) -> bool:
+        """A listing cut at the cap whose every kept item was over when the page was fetched.
+        The cap keeps the first items in page order, which is right for a page that runs newest
+        first; this is what one running oldest first would look like. A venue between shows
+        looks the same, so it is reported, not failed."""
+        if self.extraction is None or not self.extraction.capped:
+            return False
+        last_days = [
+            item.end_date or item.start_date
+            for item in (*self.extraction.exhibitions, *self.extraction.events)
+        ]
+        return all(day is not None and day < self.page.fetched_on for day in last_days)
 
 
 @dataclass(frozen=True)
@@ -387,6 +409,10 @@ async def _exhibition_ids(
 # --- the report ----------------------------------------------------------------------------------
 
 EXPIRED_ADVICE = "its text was purged before it was extracted: crawl again"
+CAPPED_ADVICE = (
+    f"kept the first {MAX_LISTED_ITEMS} in page order and none is on or coming: if the page runs "
+    "oldest first, its current shows were cut"
+)
 
 
 def report(plan: PagePlan, results: Sequence[PageResult], stopped: str = "") -> list[str]:
@@ -449,6 +475,8 @@ def report(plan: PagePlan, results: Sequence[PageResult], stopped: str = "") -> 
                     url,
                     f"no items, after {result.page.previous_items} last time: {BROKEN_ADVICE}",
                 )
+            if result.capped_with_nothing_current:
+                block("capped", url, CAPPED_ADVICE)
     for page in plan.expired:
         block("expired", page.url, EXPIRED_ADVICE)
     if stopped:

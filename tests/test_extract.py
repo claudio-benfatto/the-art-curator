@@ -197,23 +197,35 @@ def test_a_listing_has_nowhere_to_put_a_description():
         run_extract(stub, listing=True)
 
 
-def test_a_listing_may_name_more_shows_than_a_show_page():
-    """Pigment and RocioSantaCruz list 43 and 52 shows; 40 was a show page's cap."""
-    many = [listed(exhibition_input(title=f"Prova {n}")) for n in range(extract.MAX_ITEMS + 10)]
+def test_a_listing_keeps_its_first_items_in_page_order():
+    """The model writes a few past the cap (43 and 52 against 40, 2026-10-29). They are dropped,
+    not failed, and an invalid one past the cap cannot fail the page."""
+    cap = extract.MAX_LISTED_ITEMS
+    many = [listed(exhibition_input(title=f"Prova {n}")) for n in range(cap + 12)]
+    many[cap + 5] = {"title": "past the cap and invalid"}
     stub = StubLlm()
     stub.tool_reply(TOOL, answer(many))
 
-    assert len(run_extract(stub, listing=True).exhibitions) == extract.MAX_ITEMS + 10
+    result = run_extract(stub, listing=True)
+
+    assert [e.title for e in result.exhibitions] == [f"Prova {n}" for n in range(cap)]
+    assert result.capped
+    assert len(stub.calls) == 1
 
 
-def test_a_listing_longer_than_its_cap_fails():
-    too_many = [listed(exhibition_input())] * (extract.MAX_LISTED_ITEMS + 1)
+def test_a_listing_under_its_cap_and_a_show_page_are_not_capped():
     stub = StubLlm()
-    stub.tool_reply(TOOL, answer(too_many))
-    stub.tool_reply(TOOL, answer(too_many))
+    stub.tool_reply(TOOL, answer([listed(exhibition_input())] * (extract.MAX_LISTED_ITEMS - 1)))
+    stub.tool_reply(TOOL, answer([exhibition_input()] * extract.MAX_ITEMS))
 
-    with pytest.raises(ExtractionError, match="at most 200 items"):
-        run_extract(stub, listing=True)
+    assert not run_extract(stub, listing=True).capped
+    assert not run_extract(stub).capped
+
+
+def test_the_cap_is_in_the_listing_schema_and_prompt():
+    items = flat_schema(ListingDraft)["properties"]
+    assert items["exhibitions"]["maxItems"] == items["events"]["maxItems"] == 40
+    assert "record the first 40 in page order" in extract.LISTING_SYSTEM
 
 
 def test_a_page_that_announces_nothing_is_a_valid_answer():
@@ -634,6 +646,7 @@ def test_only_the_show_page_prompt_asks_for_prose_and_forbids_copying():
 FINGERPRINTS = {
     1: "2bf32fd442dd98c6",
     2: "8c3a8df480dfbd76",
+    3: "4f52779059854f15",
 }
 
 
