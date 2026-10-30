@@ -7,9 +7,14 @@ has to hold, is code:
 **Two kinds of page.** A *listing* names many shows, often years of archive, so it records facts
 only: title, artists, dates, `at_venue`, link. A *detail* page is one show's own page, and only
 it is described: `summary_en`, themes, media. Crawl fetches detail pages only for shows that are
-not over, so the prose costs nothing for the archive. Measured on the pilots (2026-10-29): 82 of
-103 listed exhibitions were over, and describing every one cut four listings off at the token
-limit.
+not over, so the prose costs nothing for the archive.
+
+**A listing keeps its first `MAX_LISTED_ITEMS` items in page order.** Even facts cost ~107
+output tokens an item, and archives run to 80 items and more: Pigment was 77 of 79 past, and
+àngels and Chiquita Room were cut off at 16k tokens (2026-10-30). All ten pilot listings with
+rows ran newest first, so the first items are the current ones. A listing that hits the cap
+with nothing current is reported (`Extraction.capped`), since that is what a page running
+oldest first would look like.
 
 **Dates.** The model writes a date the way the page does, `{day, month, year}` with the day and
 the year nullable. `resolve_dates` infers a missing year from the day the page was fetched and
@@ -33,9 +38,11 @@ This module does no I/O of its own. It is handed text and reaches a model only t
 (PR 22), which must re-extract a page whenever `EXTRACT_VERSION` moves.
 """
 
+import json
 import re
 from calendar import monthrange
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import date, time
 from typing import Annotated, Any, Literal, Protocol
@@ -48,10 +55,17 @@ from pydantic import (
     ValidationError,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 
 from art_curator.llm.client import LlmClient
-from art_curator.llm.tools import forced_tool, tool_use, validation_feedback, with_failed_result
+from art_curator.llm.tools import (
+    forced_tool,
+    merged_input,
+    tool_calls,
+    validation_feedback,
+    with_failed_result,
+)
 
 PURPOSE = "extract"
 TOOL = "record_programme"
@@ -59,10 +73,10 @@ TOOL = "record_programme"
 # Bump by hand whenever a prompt or a tool schema changes: a page is re-extracted when
 # `(content_hash, EXTRACT_VERSION, model)` differs from what it was last extracted with.
 # `tests/test_extract.py` pins a fingerprint of all four to this number, so forgetting fails there.
-EXTRACT_VERSION = 2
+EXTRACT_VERSION = 3
 
 MAX_ITEMS = 40  # per list, on a show's own page
-MAX_LISTED_ITEMS = 200  # per list, on a listing: archives included
+MAX_LISTED_ITEMS = 40  # per list, on a listing: the first in page order, newest first
 MAX_ARTISTS = 30
 MAX_THEMES = 5
 MAX_MEDIA = 5
@@ -73,8 +87,9 @@ SUMMARY_CHARS = 600
 LINK_TEXT_CHARS = 80
 LINK_URL_CHARS = 200
 MAX_OUTPUT_TOKENS = 8192  # a show's own page
-# A listed item is ~60 tokens of facts (estimated, not yet measured), so MAX_LISTED_ITEMS fit.
-# An answer this long takes over a minute: `llm/client.py` sets the read timeout to match.
+# A listed item is ~107 output tokens (Pigment, 2026-10-30), so two full lists and the few items
+# the model writes past the cap take ~10k. The rest is margin for a runaway answer, which can
+# take over a minute: `llm/client.py` sets the read timeout to match.
 MAX_LISTING_OUTPUT_TOKENS = 16384
 
 # The prompt allows ~25 words; the guard leaves a margin under that.
@@ -140,6 +155,15 @@ class ListedItem(BaseModel):
     )
     confidence: Confidence
 
+    @field_validator("start", "end", mode="before")
+    @classmethod
+    def _a_year_alone_is_no_date(cls, value: Any) -> Any:
+        """The prompt makes a year alone ("2027") null. Haiku writes it as a date with a null
+        month instead, and again on the retry (MACBA, 2026-10-30), so it is read as meant."""
+        if isinstance(value, dict) and value.get("month") is None:
+            return None
+        return value
+
     @field_validator("link")
     @classmethod
     def _listed(cls, value: int | None, info: ValidationInfo) -> int | None:
@@ -191,19 +215,47 @@ class DescribedEvent(_EventFields, DescribedItem):
     pass
 
 
-class ListingDraft(BaseModel):
+class _Programme(BaseModel):
+    model_config = _DRAFT
+
+    @model_validator(mode="before")
+    @classmethod
+    def _lists_as_meant(cls, data: Any) -> Any:
+        """Haiku sometimes sends a list as its JSON text, and leaves out a list it has nothing
+        for (Miró, 2026-10-30, twice each at temperature 0). Both are read as meant; any other
+        shape still fails validation."""
+        if not isinstance(data, dict):
+            return data
+        data = {"exhibitions": [], "events": [], **data}
+        for key in ("exhibitions", "events"):
+            if isinstance(data[key], str):
+                # Not JSON: left as it is, for validation to name.
+                with suppress(json.JSONDecodeError):
+                    data[key] = json.loads(data[key])
+        return data
+
+
+class ListingDraft(_Programme):
     """The tool's input for a listing. Validated with `context={"link_count": n}`."""
 
-    model_config = _DRAFT
+    exhibitions: list[ListedItem] = Field(json_schema_extra={"maxItems": MAX_LISTED_ITEMS})
+    events: list[ListedEvent] = Field(json_schema_extra={"maxItems": MAX_LISTED_ITEMS})
 
-    exhibitions: list[ListedItem] = Field(max_length=MAX_LISTED_ITEMS)
-    events: list[ListedEvent] = Field(max_length=MAX_LISTED_ITEMS)
+    @field_validator("exhibitions", "events", mode="before")
+    @classmethod
+    def _first_in_page_order(cls, items: Any) -> Any:
+        """The prompt asks for the first `MAX_LISTED_ITEMS`; the model writes a few more (43 and
+        52 against a cap of 40, 2026-10-29). Those are dropped, not failed: the page is right and
+        already paid for. Cut before validation, so nothing past the cap can fail the page."""
+        return items[:MAX_LISTED_ITEMS] if isinstance(items, list) else items
+
+    @property
+    def capped(self) -> bool:
+        return MAX_LISTED_ITEMS in (len(self.exhibitions), len(self.events))
 
 
-class DetailDraft(BaseModel):
+class DetailDraft(_Programme):
     """The tool's input for a show's own page. Validated with `context={"link_count": n}`."""
-
-    model_config = _DRAFT
 
     exhibitions: list[DescribedItem] = Field(max_length=MAX_ITEMS)
     events: list[DescribedEvent] = Field(max_length=MAX_ITEMS)
@@ -247,6 +299,7 @@ class Extraction:
     exhibitions: tuple[Exhibition, ...]
     events: tuple[ArtEvent, ...]
     summaries_dropped: int = 0  # copied from the page twice: stored as NULL, counted in the report
+    capped: bool = False  # a listing that reached `MAX_LISTED_ITEMS`: the rest of it was not read
 
 
 # --- dates ---------------------------------------------------------------------------------------
@@ -536,12 +589,14 @@ async def extract_page(
             # A truncated tool call. At temperature 0 a second try would be cut at the same place.
             error = f"the answer was cut off at {prompt.max_tokens} output tokens"
             break
-        use = tool_use(response)
-        if use is None:
+        uses = tool_calls(response)
+        if not uses:
             error = "the model did not call the tool"
             continue
         try:
-            draft = prompt.draft.model_validate(use["input"], context={"link_count": len(links)})
+            draft = prompt.draft.model_validate(
+                merged_input(uses), context={"link_count": len(links)}
+            )
         except ValidationError as exc:
             error = validation_feedback(exc)
         else:
@@ -555,7 +610,7 @@ async def extract_page(
                 f"words, or make it null"
                 for _item, where, run in copied
             )
-        messages = with_failed_result(messages, response, use, error)
+        messages = with_failed_result(messages, response, error)
 
     if kept is None:
         after = " after one retry" if calls == 2 else ""
@@ -601,4 +656,5 @@ def _resolve(
             for event in draft.events
         ),
         summaries_dropped=summaries_dropped,
+        capped=isinstance(draft, ListingDraft) and draft.capped,
     )

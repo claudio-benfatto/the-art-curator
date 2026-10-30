@@ -197,23 +197,35 @@ def test_a_listing_has_nowhere_to_put_a_description():
         run_extract(stub, listing=True)
 
 
-def test_a_listing_may_name_more_shows_than_a_show_page():
-    """Pigment and RocioSantaCruz list 43 and 52 shows; 40 was a show page's cap."""
-    many = [listed(exhibition_input(title=f"Prova {n}")) for n in range(extract.MAX_ITEMS + 10)]
+def test_a_listing_keeps_its_first_items_in_page_order():
+    """The model writes a few past the cap (43 and 52 against 40, 2026-10-29). They are dropped,
+    not failed, and an invalid one past the cap cannot fail the page."""
+    cap = extract.MAX_LISTED_ITEMS
+    many = [listed(exhibition_input(title=f"Prova {n}")) for n in range(cap + 12)]
+    many[cap + 5] = {"title": "past the cap and invalid"}
     stub = StubLlm()
     stub.tool_reply(TOOL, answer(many))
 
-    assert len(run_extract(stub, listing=True).exhibitions) == extract.MAX_ITEMS + 10
+    result = run_extract(stub, listing=True)
+
+    assert [e.title for e in result.exhibitions] == [f"Prova {n}" for n in range(cap)]
+    assert result.capped
+    assert len(stub.calls) == 1
 
 
-def test_a_listing_longer_than_its_cap_fails():
-    too_many = [listed(exhibition_input())] * (extract.MAX_LISTED_ITEMS + 1)
+def test_a_listing_under_its_cap_and_a_show_page_are_not_capped():
     stub = StubLlm()
-    stub.tool_reply(TOOL, answer(too_many))
-    stub.tool_reply(TOOL, answer(too_many))
+    stub.tool_reply(TOOL, answer([listed(exhibition_input())] * (extract.MAX_LISTED_ITEMS - 1)))
+    stub.tool_reply(TOOL, answer([exhibition_input()] * extract.MAX_ITEMS))
 
-    with pytest.raises(ExtractionError, match="at most 200 items"):
-        run_extract(stub, listing=True)
+    assert not run_extract(stub, listing=True).capped
+    assert not run_extract(stub).capped
+
+
+def test_the_cap_is_in_the_listing_schema_and_prompt():
+    items = flat_schema(ListingDraft)["properties"]
+    assert items["exhibitions"]["maxItems"] == items["events"]["maxItems"] == 40
+    assert "record the first 40 in page order" in extract.LISTING_SYSTEM
 
 
 def test_a_page_that_announces_nothing_is_a_valid_answer():
@@ -248,8 +260,9 @@ def test_bad_answer_is_retried_with_the_reason_and_can_succeed():
 @pytest.mark.parametrize(
     "tool_input",
     [
-        {},
-        {"exhibitions": [exhibition_input()]},  # `events` is required, even when empty
+        {"exhibitions": "none"},  # a string that is not a JSON list
+        {"exhibitions": exhibition_input()},  # one item, not a list of one
+        {"exhibitions": json.dumps({"exhibitions": [exhibition_input()]})},  # the whole answer
         answer([{"title": "Prova U"}]),
         answer([exhibition_input(title="")]),
         answer([exhibition_input(title="t" * (extract.TITLE_CHARS + 1))]),
@@ -275,28 +288,79 @@ def test_answer_invalid_twice_fails_the_page(tool_input):
     assert len(stub.calls) == 2
 
 
-def test_a_second_call_in_the_same_reply_is_answered_too():
-    """Converse refuses a retry that leaves any call unanswered (ValidationException, pilot run
-    2026-10-30). Only the first call is read; the others are told so."""
+def test_an_answer_split_over_two_calls_is_read_as_one():
+    """Miró, 2026-10-30: exhibitions in one call, events in the next, in the same reply."""
     stub = StubLlm()
     stub.tool_reply(
         TOOL,
         {"exhibitions": [exhibition_input()]},
-        tool_use_id="use_1",
-        more_calls=[{"events": [event_input()]}],
+        more_calls=[{"events": [event_input()]}, {"events": [event_input(title="Xerrada")]}],
     )
-    stub.tool_reply(TOOL, answer(events=[event_input()]))
 
     result = run_extract(stub)
 
-    assert (len(result.exhibitions), len(result.events)) == (1, 1)
+    assert [e.title for e in result.exhibitions] == ["Prova U"]
+    assert [e.title for e in result.events] == ["Inauguració: Prova U", "Xerrada"]
+    assert len(stub.calls) == 1
+
+
+def test_a_retry_answers_every_call_in_the_reply():
+    """Converse refuses a conversation that leaves any call unanswered (ValidationException,
+    pilot run 2026-10-30)."""
+    stub = StubLlm()
+    stub.tool_reply(
+        TOOL,
+        {"exhibitions": [exhibition_input(confidence="0.9")]},
+        tool_use_id="use_1",
+        more_calls=[{"events": [event_input()]}],
+    )
+    stub.tool_reply(TOOL, answer())
+
+    run_extract(stub)
+
     results = [block["toolResult"] for block in stub.converse_requests[1]["messages"][2]["content"]]
     assert [(r["toolUseId"], r["status"]) for r in results] == [
         ("use_1", "error"),
         ("use_1_2", "error"),
     ]
-    assert "events: Field required" in results[0]["content"][0]["text"]
-    assert results[1]["content"][0]["text"].startswith("Not read: only the first call is.")
+    assert all("exhibitions.0.confidence" in r["content"][0]["text"] for r in results)
+
+
+@pytest.mark.parametrize("listing", [False, True])
+def test_a_list_sent_as_json_text_or_left_out_is_read_as_meant(listing):
+    """Miró, 2026-10-30: `exhibitions` as a JSON string and no `events`, twice at temperature 0."""
+    item = listed(exhibition_input()) if listing else exhibition_input()
+    stub = StubLlm()
+    stub.tool_reply(TOOL, {"exhibitions": json.dumps([item])})
+
+    result = run_extract(stub, listing=listing)
+
+    assert ([e.title for e in result.exhibitions], result.events) == (["Prova U"], ())
+    assert len(stub.calls) == 1
+
+
+def test_an_empty_answer_is_a_page_that_announces_nothing():
+    stub = StubLlm()
+    stub.tool_reply(TOOL, {})
+
+    result = run_extract(stub)
+
+    assert (result.exhibitions, result.events) == ((), ())
+    assert len(stub.calls) == 1
+
+
+@pytest.mark.parametrize("listing", [False, True])
+def test_a_year_without_a_month_is_no_date(listing):
+    """What the prompt asks for a year alone, applied when the model writes it as a date."""
+    year_alone = {"day": None, "month": None, "year": 2027}
+    item = exhibition_input(start={"day": 12, "month": 9, "year": 2026}, end=year_alone)
+    stub = StubLlm()
+    stub.tool_reply(TOOL, answer([listed(item) if listing else item]))
+
+    [exhibition] = run_extract(stub, listing=listing).exhibitions
+
+    assert (exhibition.start_date, exhibition.end_date) == (date(2026, 9, 12), None)
+    assert len(stub.calls) == 1
 
 
 def test_validation_feedback_does_not_echo_the_answer():
@@ -582,6 +646,7 @@ def test_only_the_show_page_prompt_asks_for_prose_and_forbids_copying():
 FINGERPRINTS = {
     1: "2bf32fd442dd98c6",
     2: "8c3a8df480dfbd76",
+    3: "4f52779059854f15",
 }
 
 

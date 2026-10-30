@@ -407,7 +407,7 @@ def test_only_the_copied_summary_is_dropped():
 def test_a_copy_after_an_invalid_answer_is_dropped_without_a_third_call():
     """One retry in all: validation and the guard share it."""
     stub = StubLlm()
-    stub.tool_reply(extract.TOOL, {})
+    stub.tool_reply(extract.TOOL, {"exhibitions": "none"})
     stub.tool_reply(extract.TOOL, _answer(PASSAGE))
 
     result = _extract(stub)

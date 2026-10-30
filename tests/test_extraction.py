@@ -161,6 +161,26 @@ def test_page_and_link_text_stay_out_of_repr():
     assert "Enllaç ocult" not in repr(p)
 
 
+def test_a_capped_listing_with_nothing_current_is_reported_not_failed():
+    """The page is fetched on 2026-10-10: shows that ended before are over."""
+    over = show(start_date=date(2025, 1, 10), end_date=date(2025, 3, 1))
+    current = show(end_date=date(2026, 11, 30))
+    undated = show(start_date=None, end_date=None)
+
+    def result(*shows, capped=True, listing=True):
+        return PageResult(page(listing=listing), Extraction(shows, (), capped=capped))
+
+    assert result(over, over).capped_with_nothing_current
+    assert not result(over, current).capped_with_nothing_current
+    assert not result(over, undated).capped_with_nothing_current  # may be on: not flagged
+    assert not result(over, over, capped=False).capped_with_nothing_current
+    lines = extraction.report(PagePlan(to_extract=(page(),)), [result(over, over)])
+    assert lines[-1] == (
+        f"capped      {LISTING_URL}   kept the first 40 in page order and none is on or coming: "
+        "if the page runs oldest first, its current shows were cut"
+    )
+
+
 def test_report_lists_each_page_under_its_venue():
     other = PageToExtract(**{**page().__dict__, "venue_name": "Sala Prova", "url": "https://s.t/a"})
     plan = PagePlan(
@@ -191,8 +211,8 @@ def test_report_lists_each_page_under_its_venue():
 
 def test_a_page_that_fails_does_not_stop_the_rest():
     stub = StubLlm()
-    stub.tool_reply(extract.TOOL, {})
-    stub.tool_reply(extract.TOOL, {})
+    stub.tool_reply(extract.TOOL, {"exhibitions": "none"})
+    stub.tool_reply(extract.TOOL, {"exhibitions": "none"})
     stub.tool_reply(extract.TOOL, {"exhibitions": [], "events": []})
 
     extracted = asyncio.run(
@@ -604,8 +624,8 @@ def test_dry_run_rolls_back_but_keeps_the_spend(run, db):
 
 def test_failed_page_is_marked_reported_and_exits_1_then_waits(run, db):
     _add_page(db, LISTING_URL, LISTING_TEXT)
-    run.stub.tool_reply(extract.TOOL, {})
-    run.stub.tool_reply(extract.TOOL, {})
+    run.stub.tool_reply(extract.TOOL, {"exhibitions": "none"})
+    run.stub.tool_reply(extract.TOOL, {"exhibitions": "none"})
 
     first = run()
 

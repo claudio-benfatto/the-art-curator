@@ -31,7 +31,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationIn
 from trafilatura import load_html
 
 from art_curator.llm.client import LlmClient
-from art_curator.llm.tools import forced_tool, tool_use, validation_feedback, with_failed_result
+from art_curator.llm.tools import (
+    forced_tool,
+    merged_input,
+    tool_calls,
+    validation_feedback,
+    with_failed_result,
+)
 
 PURPOSE = "discover"
 
@@ -398,15 +404,15 @@ async def _forced_tool[T: BaseModel](
             inferenceConfig={"maxTokens": MAX_OUTPUT_TOKENS, "temperature": 0},
             toolConfig=tool_config,
         )
-        use = tool_use(response)
-        if use is None:
+        uses = tool_calls(response)
+        if not uses:
             error = "the model did not call the tool"
             continue
         try:
-            return output.model_validate(use["input"], context=context)
+            return output.model_validate(merged_input(uses), context=context)
         except ValidationError as exc:
             error = validation_feedback(exc)
-        messages = with_failed_result(messages, response, use, error)
+        messages = with_failed_result(messages, response, error)
     name = tool_config["toolChoice"]["tool"]["name"]
     raise DiscoveryError(f"{name}: invalid after one retry ({error})")
 
