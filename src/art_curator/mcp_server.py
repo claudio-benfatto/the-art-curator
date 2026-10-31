@@ -1,0 +1,149 @@
+"""Dev-time MCP server over `queries/events.py`, for interrogating the corpus from Claude Code
+while building the P2 gold set (PLAN.md § 8). **Not on the serving path**, and `mcp` is a dev
+dependency only.
+
+    uv run python -m art_curator.mcp_server        # stdio; `.mcp.json` registers it
+
+It reads the database `DATABASE_URL` names, and every tool runs in a read-only transaction.
+No tool returns page text: what a conversation sees is metadata, facts and our own summaries,
+which keeps third-party prose out of transcripts (CLAUDE.md § 1). To read a page, open it in a
+browser. `tests/test_no_verbatim.py` checks every tool for it.
+"""
+
+from collections.abc import Awaitable, Callable
+from datetime import date
+from typing import Annotated, Any
+
+from mcp.server.mcpserver import MCPServer
+from mcp.types import ToolAnnotations
+from pydantic import Field
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from art_curator.db.session import get_sessionmaker
+from art_curator.queries import events as q
+
+INSTRUCTIONS = """\
+Read-only views of The Art Curator's database: venues, discovery seeds, crawled pages,
+the exhibitions and events extracted from them, GRAF's events, and model cost.
+Tools return ids, facts and metadata, never a page's text: to read a page, open its URL in a
+browser. summary_en is written by our extraction model, not copied from the venue.
+Dates are days in Europe/Madrid. Filter by venue_id from the venues tool."""
+
+READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
+
+Limit = Annotated[int, Field(ge=1, le=500, description="Most rows to return.")]
+VenueId = Annotated[int | None, Field(description="Only this venue (an id from `venues`).")]
+NotOverOn = Annotated[
+    date | None, Field(description="Only items not over on this day (YYYY-MM-DD).")
+]
+
+mcp = MCPServer("art-curator", instructions=INSTRUCTIONS)
+
+
+async def _read[T](query: Callable[..., Awaitable[T]], **kwargs: Any) -> T:
+    """Run one query in its own read-only transaction, which closes (rolls back) on exit."""
+    session: AsyncSession
+    async with get_sessionmaker()() as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        return await query(session, **kwargs)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def venues(
+    pilot_only: Annotated[bool, Field(description="Only the pilot venues.")] = True,
+    name: Annotated[str | None, Field(description="Part of the name, any case.")] = None,
+    limit: Limit = 100,
+) -> list[q.VenueRow]:
+    """Venues with their website, crawl flags, coordinates and how many pages, exhibitions and
+    events are stored for each."""
+    return await _read(q.venues, pilot_only=pilot_only, name=name, limit=limit)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def seeds(venue_id: VenueId = None, limit: Limit = 100) -> list[q.SeedRow]:
+    """What discovery concluded about each candidate listing page: page type, confidence,
+    dated-item count, language and accepted/rejected/ambiguous. Human pins and rejections are
+    in ingest/seeds.yaml, not here."""
+    return await _read(q.seeds, venue_id=venue_id, limit=limit)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def pages(venue_id: VenueId = None, limit: Limit = 100) -> list[q.PageRow]:
+    """Crawled pages by metadata: status, content hash, word and link counts, whether the text
+    is still held (7-day TTL) and the last extraction's status, version, model and item count.
+    Never the text itself."""
+    return await _read(q.pages, venue_id=venue_id, limit=limit)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def exhibitions(
+    venue_id: VenueId = None,
+    source_url: Annotated[
+        str | None, Field(description="Only shows this page wrote last (a `pages` url).")
+    ] = None,
+    title: Annotated[str | None, Field(description="Part of the title, any case.")] = None,
+    not_over_on: NotOverOn = None,
+    limit: Limit = 100,
+) -> list[q.ExhibitionRow]:
+    """Exhibitions extraction stored: title, artists, dates, our summary, themes, media,
+    confidence and the page that wrote each last. An open-ended show counts as not over."""
+    return await _read(
+        q.exhibitions,
+        venue_id=venue_id,
+        source_url=source_url,
+        title=title,
+        not_over_on=not_over_on,
+        limit=limit,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def art_events(
+    venue_id: VenueId = None,
+    source_url: Annotated[
+        str | None, Field(description="Only events this page wrote last (a `pages` url).")
+    ] = None,
+    title: Annotated[str | None, Field(description="Part of the title, any case.")] = None,
+    kind: Annotated[
+        str | None, Field(description="opening, talk, workshop, guided_tour, …")
+    ] = None,
+    not_over_on: NotOverOn = None,
+    limit: Limit = 100,
+) -> list[q.ArtEventRow]:
+    """Openings, talks, workshops, tours… extraction stored, with the exhibition each belongs
+    to when the page said. An event without an end date is over after its start date."""
+    return await _read(
+        q.art_events,
+        venue_id=venue_id,
+        source_url=source_url,
+        title=title,
+        kind=kind,
+        not_over_on=not_over_on,
+        limit=limit,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def graf_events(
+    venue_id: VenueId = None, not_over_on: NotOverOn = None, limit: Limit = 100
+) -> list[q.GrafEventRow]:
+    """GRAF's events, one row per occurrence: title, dates, price, URLs and when a sync last
+    saw it. Facts only; GRAF's descriptions are never stored."""
+    return await _read(q.graf_events, venue_id=venue_id, not_over_on=not_over_on, limit=limit)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def llm_costs(
+    since: Annotated[date | None, Field(description="Only calls on or after this day.")] = None,
+    purpose: Annotated[
+        str | None, Field(description="chat, discover, extract, embed, judge or smoke.")
+    ] = None,
+) -> list[q.CostRow]:
+    """Recorded model calls by purpose and model: calls, errors, tokens (cache included) and
+    cost in USD, costliest first."""
+    return await _read(q.llm_costs, since=since, purpose=purpose)
+
+
+if __name__ == "__main__":
+    mcp.run()

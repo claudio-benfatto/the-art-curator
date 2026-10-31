@@ -27,6 +27,7 @@ art-curator = "art_curator.cli:app"
 
 [dependency-groups]
 dev = [
+    "mcp>=2.3.0",
     "pytest>=8",
     "ruff>=0.6",
 ]

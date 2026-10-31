@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "art-curator": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--quiet", "python", "-m", "art_curator.mcp_server"]
+    }
+  }
+}

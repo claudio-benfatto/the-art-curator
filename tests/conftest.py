@@ -15,6 +15,7 @@ from alembic import command
 from sqlalchemy.engine import URL, make_url
 
 from art_curator.config import Settings
+from tests.corpus import CORPUS
 from tests.db import alembic_config, run_sql
 
 
@@ -51,4 +52,13 @@ def migrated_db(fresh_database: Callable) -> Iterator[URL]:
     """A database at `alembic upgrade head`, shared by read-only schema tests."""
     with fresh_database() as url:
         command.upgrade(alembic_config(url), "head")
+        yield url
+
+
+@pytest.fixture(scope="session")
+def corpus_db(fresh_database: Callable) -> Iterator[URL]:
+    """A migrated database holding `tests/corpus.py`, shared by read-only query tests."""
+    with fresh_database() as url:
+        command.upgrade(alembic_config(url), "head")
+        run_sql(url, *CORPUS)
         yield url
