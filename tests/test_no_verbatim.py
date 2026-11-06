@@ -20,6 +20,11 @@ Extraction half (P2): `summary_en` is the only prose that outlives a venue page,
 ours. The prompt forbids reproducing ~25 consecutive words; `extract.longest_shared_run` enforces
 20. A summary that copies is sent back once, and one that copies twice is dropped while the facts
 are kept. The tests here plant a copied span and check each step.
+
+Dev MCP half (P2): `mcp_server.py` puts query results into a Claude Code conversation, and a
+transcript is one more place prose can be kept. No tool may return `raw_text` or link text: no
+tool's output schema has a field for it, and a page whose text and links carry planted markers
+is fetched through every tool to check that neither marker comes back.
 """
 
 import asyncio
@@ -29,11 +34,13 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from mcp.types import TextContent
 
 from art_curator.db.models import Base
 from art_curator.ingest.graf import DROP_KEYS, DROP_PREFIXES, banned_keys, scrub
 from art_curator.llm import extract
 from art_curator.llm.extract import MAX_SHARED_WORDS, longest_shared_run
+from tests.corpus import LINK_MARKER, LISTING_URL, PAGE_MARKER, call_tools, list_tools
 from tests.db import run_sql
 from tests.llm_stub import StubLlm
 
@@ -414,3 +421,74 @@ def test_a_copy_after_an_invalid_answer_is_dropped_without_a_third_call():
 
     assert result.exhibitions[0].summary_en is None
     assert (result.summaries_dropped, len(stub.calls)) == (1, 2)
+
+
+# --- Dev MCP: page text never reaches a conversation ---------------------------------------------
+
+# Every tool, with arguments that reach the corpus's listing page. A new tool fails
+# `test_every_mcp_tool_is_scanned` until it is added here.
+MCP_CALLS: dict[str, dict] = {
+    "venues": {"pilot_only": False},
+    "seeds": {},
+    "pages": {},
+    "exhibitions": {},
+    "art_events": {},
+    "graf_events": {},
+    "llm_costs": {},
+}
+PAGE_TEXT_FIELDS = PROSE_CACHE["venue_pages"] | {"text"}
+# Whole words of a field name, not substrings: `crawl_enabled` is not raw, `text_held` is a flag.
+PAGE_TEXT_WORDS = {"raw", "html", "body", "excerpt"}
+
+
+def _is_page_text(name: str) -> bool:
+    words = set(name.lower().split("_"))
+    return name in PAGE_TEXT_FIELDS or name.endswith("_text") or bool(words & PAGE_TEXT_WORDS)
+
+
+def _page_text_fields(schema: dict | list) -> set[str]:
+    """Every field name anywhere in a JSON schema that could carry a page's text."""
+    found: set[str] = set()
+    if isinstance(schema, dict):
+        found |= {name for name in schema.get("properties", {}) if _is_page_text(name)}
+        for value in schema.values():
+            found |= _page_text_fields(value)
+    elif isinstance(schema, list):
+        for value in schema:
+            found |= _page_text_fields(value)
+    return found
+
+
+def test_every_mcp_tool_is_scanned():
+    assert {tool.name for tool in list_tools()} == set(MCP_CALLS)
+
+
+@pytest.mark.parametrize("tool", list_tools(), ids=lambda tool: tool.name)
+def test_no_mcp_tool_has_a_field_for_page_text(tool):
+    assert tool.output_schema, f"{tool.name} has no output schema to check"
+    assert not _page_text_fields(tool.output_schema)
+
+
+@pytest.mark.parametrize(
+    "name", ["raw_text", "links", "text", "page_text", "listing_text", "page_html", "body"]
+)
+def test_planted_page_text_field_is_caught(name):
+    schema = {"$defs": {"Row": {"properties": {"url": {}, "text_held": {}, name: {}}}}}
+    assert _page_text_fields(schema) == {name}
+
+
+def test_no_mcp_tool_returns_page_text(corpus_db):
+    results = dict(zip(MCP_CALLS, call_tools(corpus_db, list(MCP_CALLS.items())), strict=True))
+
+    for name, result in results.items():
+        assert not result.is_error, f"{name}: {result.content}"
+        returned = json.dumps(result.structured_content, ensure_ascii=False) + "".join(
+            block.text for block in result.content if isinstance(block, TextContent)
+        )
+        assert PAGE_MARKER not in returned, f"{name} returned a page's text"
+        assert LINK_MARKER not in returned, f"{name} returned a page's link text"
+    # Not vacuous: the page holding both markers was returned, by its metadata.
+    [listing] = [
+        p for p in results["pages"].structured_content["result"] if p["url"] == LISTING_URL
+    ]
+    assert listing["text_held"] and listing["link_count"] == 1

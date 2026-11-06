@@ -2,7 +2,7 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 in progress: PRs 17–22 built, 23–25 next (§ 8).
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 in progress: PRs 17–23 built, 24–25 next (§ 8).
 **Last updated:** 2026-10-15 (rev. 11)
 
 ---
