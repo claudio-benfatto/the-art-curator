@@ -1,0 +1,1801 @@
+# The extraction gold set (PLAN.md § 8, P2): hand-checked labels that `eval-extraction` scores
+# extraction and discovery against.
+#
+# Labels only, facts only. No page text, no summaries, no notes copied from a venue's page: the
+# loader refuses any key not listed here (CLAUDE.md § 1, `tests/test_no_verbatim.py`).
+#
+# listings: per venue (named as in `PILOT_VENUES`, case and accents do not matter), the page(s)
+#   discovery should find: where the site lists its current exhibitions or agenda. An empty list
+#   says the venue has no listing we can use, so anything discovery accepts there is wrong.
+#
+# pages: one entry per labelled page.
+#   url, venue, kind      kind is listing or detail, as in `venue_pages.kind`.
+#   content_hash          `venue_pages.content_hash` of the text the labels were checked against.
+#                         When the venue changes the page, the label is reported stale.
+#   confirmed             true once a person has checked every item against the live page.
+#                         Unconfirmed pages (drafts) are never scored.
+#   partial               true on a listing labelled only as far as its first items of each kind
+#                         (an archive's first 10, say). It counts towards recall and the fields,
+#                         not precision: what extraction finds past those items is not judged.
+#   items                 what the page announces, `[]` when nothing. A listing is labelled as
+#                         extraction reads it: its first 40 exhibitions and first 40 events, in
+#                         page order. A show's own page: that show and the events that belong to
+#                         it, not the rest of the programme it mentions.
+#     kind                exhibition (the default) or event.
+#     title               as written, in the page's language, without dates or the venue's name.
+#     artists             as written, one name per entry; omit when none is named.
+#     start, end          YYYY-MM-DD, with the year the page means even when it does not write
+#                         it. A month alone is its first and last day. Omit what the page omits.
+#     at_venue            false when the page reports something held elsewhere (default true).
+#
+# Drafting: `eval-extraction --draft FILE` writes what extraction finds on the pages not labelled
+# yet, unconfirmed, a long listing as far as its first 10 of each kind (`partial: true`). Check
+# each item against the live page in a browser, then move it here.
+#
+#   pages:
+#     - url: https://www.exemple.cat/ca/exposicions/prova-u
+#       venue: Galeria Exemple
+#       kind: detail
+#       content_hash: 3f0c…   (64 hex characters)
+#       confirmed: true
+#       items:
+#         - title: Prova U
+#           artists: [Maria Exemple]
+#           start: 2026-09-12
+#           end: 2026-11-30
+
+listings:
+  # From the pins in `ingest/seeds.yaml`: human decisions already.
+  Sala Parés:
+    - https://salapares.com/exposiciones-actuales/
+  Galería Alegría:
+    - https://www.galeriaalegria.es/en
+  Espronceda:
+    - https://www.espronceda.net/events/
+  # From the listing pages labelled below.
+  ACVic:
+    - https://www.acvic.org/en/exhibition-projects
+  ADN Galeria:
+    - https://www.adngaleria.com/exhibitions/
+  àngels barcelona:
+    - http://angelsbarcelona.com/en/program
+  CaixaForum Barcelona:
+    - https://caixaforum.org/es/barcelona/exposiciones
+  Chiquita Room:
+    - https://chiquitaroom.com/
+    - https://chiquitaroom.com/programacion/
+  ethall:
+    - http://www.ethall.net/exhibitions.html
+  FUGA Gallery:
+    - https://fuga.gallery/exposiciones/
+    - https://fuga.gallery
+  Fundació Joan Miró:
+    - https://www.fmirobcn.org/ca/exposicions
+    - https://www.fmirobcn.org/ca/exposicions/actuals/
+    - https://www.fmirobcn.org/ca/exposicions/futures/
+  Galeria Marc Domènech:
+    - https://galeriamarcdomenech.com/exhibitions/
+  House of Chappaz:
+    - https://houseofchappaz.com/exhibitions/
+  La Escocesa:
+    - https://laescocesa.org/ca/Agend/Actualitat
+  MACBA:
+    - https://www.macba.cat/ca/exposicions/
+    - https://www.macba.cat/ca/agenda/
+  Pigment Gallery:
+    - https://pigmentgallery.es/exposiciones/
+  RocioSantaCruz:
+    - https://rociosantacruz.com/exposiciones/
+
+pages:
+- url: https://www.acvic.org/en/exhibition-projects
+  venue: ACVIC
+  kind: listing
+  content_hash: d014b4980b308b852261f9aec22ac8edd772666f9b543784cd5f0f1fd87ffe46
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Choosing love
+    artists:
+    - Maria Permanyer
+    - Marc Lloret
+    start: 2026-09-04
+    end: 2026-10-09
+    at_venue: true
+  - kind: exhibition
+    title: X PARTEE – 10 years celebrating the creative process
+    artists:
+    - Partee
+    start: 2026-07-03
+    end: 2026-07-30
+    at_venue: true
+  - kind: exhibition
+    title: ART SCHOOL CONTACT
+    artists: []
+    start: 2026-05-07
+    end: 2026-06-17
+    at_venue: true
+  - kind: exhibition
+    title: PAINS, REMEDIES, AND CURES (DOLORS, REMEIS I CURES)
+    artists:
+    - Xè Canal Calvo
+    start: 2026-01-31
+    end: 2026-03-28
+    at_venue: true
+  - kind: exhibition
+    title: ARRAN DE TERRA
+    artists:
+    - Isabel Banal
+    - Ignasi Aballí
+    - Helena Almeida
+    - Rosa Amorós
+    - Esteve Banal
+    - Ester Baulida
+    - Joan Brossa
+    - Cabello-Carceller
+    - Jordi Canudas
+    - Elena Carbonell
+    - Esther Ferrer
+    - Ramon Guillen-Balmes
+    - Guerrilla Girls
+    - Eva Lootz
+    - Cori Mercadé
+    - Fina Miralles
+    - Pere Noguera
+    - Perejaume
+    - Carme Sanglas
+    - Susana Solano
+    start: 2026-01-31
+    end: 2026-04-11
+    at_venue: true
+  - kind: exhibition
+    title: SWEET WRECKER
+    artists:
+    - Òscar Clarissó_Sepulcrito
+    start: 2025-12-12
+    end: 2026-01-17
+    at_venue: true
+  - kind: exhibition
+    title: ESPAI CAD, ESPAI OBERT (CAD SPACE, OPEN SPACE)
+    artists:
+    - Laia Blasco
+    - Jonathan Chacón
+    - Andrés Costa
+    - Tim Cowlishaw
+    - Enric Mor
+    - Bernat Romagosa
+    - Marta Royo-Llonch
+    - Eugenio Tisselli
+    - Laboratori Crític de creació digital i Intel·ligència Artificial
+    start: 2025-11-07
+    end: 2025-11-29
+    at_venue: true
+  - kind: exhibition
+    title: LA FÀBRICA TRANSPARENT (THE TRANSPARENT FACTORY)
+    artists:
+    - Marta Azparren
+    - Roc Parés
+    - Marc Villanueva
+    - Alán Carrasco
+    - Mónica Rikić
+    - Total Refusal
+    - Ezequiel Soriano
+    - Raquel Friera
+    start: 2025-11-07
+    end: 2026-01-10
+    at_venue: true
+  - kind: exhibition
+    title: PARAULES D'AMOR (WORDS OF LOVE)
+    artists:
+    - Núria Güell
+    start: 2025-09-04
+    end: 2025-10-18
+    at_venue: true
+  - kind: exhibition
+    title: ART + SCHOOL + MAGIC
+    artists: []
+    start: 2025-05-15
+    end: 2025-07-19
+    at_venue: true
+
+- url: https://www.adngaleria.com/exhibitions/
+  venue: ADN Galeria
+  kind: listing
+  content_hash: 181dc9ce2e57ee972da2e69d9f8a85d1428f14402f6837c162afdfed48d72bd0
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: FANTASTIC PLANET. El planeta salvatge
+    artists:
+    - Joan Pallé
+    start: 2026-09-17
+    end: 2026-11-07
+    at_venue: true
+  - kind: exhibition
+    title: Mujeres que cargan animales
+    artists:
+    - Gema Polanco
+    start: 2026-09-17
+    end: 2026-11-07
+    at_venue: true
+  - kind: exhibition
+    title: Lxs Hijxs de Sodoma
+    artists:
+    - Daniel Gasol
+    start: 2026-11-09
+    end: 2026-11-30
+    at_venue: true
+  - kind: exhibition
+    title: MANIFIESTO. 20 años con ADN Galeria
+    artists:
+    - Eugenio Merino
+    start: 2026-09-17
+    end: 2026-09-20
+    at_venue: true
+  - kind: exhibition
+    title: The curtain rises
+    artists:
+    - Elsa Casanova
+    start: 2026-06-25
+    end: 2026-09-05
+    at_venue: true
+  - kind: exhibition
+    title: Always Franco. Spain Brand
+    artists:
+    - Eugenio Merino
+    start: 2026-06-13
+    end: 2026-08-22
+    at_venue: true
+  - kind: exhibition
+    title: CURVATURA
+    artists:
+    - Laura Llaneli
+    start: 2026-06-13
+    end: 2026-08-22
+    at_venue: true
+  - kind: exhibition
+    title: Arqueologías presentes
+    artists: []
+    start: 2026-05-14
+    end: 2026-06-13
+    at_venue: true
+  - kind: event
+    title: 'Soirée #8: Nicolas Daubanes'
+    artists:
+    - Nicolas Daubanes
+    start: 2026-04-11
+    end: null
+    at_venue: true
+  - kind: exhibition
+    title: Ni animal ni tampoco ángel. Anatomía de la imagen
+    artists:
+    - Marina Vargas
+    start: 2026-02-14
+    end: 2026-05-23
+    at_venue: true
+  - kind: exhibition
+    title: Colegiado número 171
+    artists:
+    - Alán Carrasco
+    start: 2026-02-14
+    end: 2026-05-23
+    at_venue: true
+  - kind: exhibition
+    title: Tijeras En Los Ojos
+    artists:
+    - Patricia Gadea
+    start: 2026-02-14
+    end: 2026-04-25
+    at_venue: true
+  - kind: exhibition
+    title: 'Public Hygiene: Society As a sick body'
+    artists:
+    - Daniel Gasol
+    start: 2025-11-29
+    end: 2026-03-18
+    at_venue: true
+  - kind: exhibition
+    title: Travaille Contre Le Travail
+    artists:
+    - Democracia
+    start: 2025-11-29
+    end: 2026-01-24
+    at_venue: true
+  - kind: exhibition
+    title: Virtual Cleaning Service For Museums And Art Institutions
+    artists:
+    - Adrian Melis
+    start: 2025-11-29
+    end: 2026-01-24
+    at_venue: true
+  - kind: event
+    title: 'Soirée #7: María María Acha-Kutscher'
+    artists:
+    - María María Acha-Kutscher
+    start: 2025-11-15
+    end: null
+    at_venue: true
+
+- url: http://angelsbarcelona.com/en/program
+  venue: àngels barcelona
+  kind: listing
+  content_hash: c7c1778b9e44236a7f68a5f5f33647c6f4905fc4927b6f8f395a6235a49682cb
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Saodat Ismailova - Swan Lake, LOOP Fair, Barcelona
+    artists:
+    - Saodat Ismailova
+    start: 2026-11-17
+    end: 2026-11-19
+    at_venue: false
+  - kind: exhibition
+    title: LOOP Festival- City Screen
+    artists:
+    - Paula Bruna
+    - Itziar Barrio
+    - Huaqian Zhang
+    - Enar de Dios Rodríguez
+    start: 2026-11-12
+    end: 2026-11-21
+    at_venue: false
+  - kind: exhibition
+    title: Lúa Coderch - A roof for love, LOOP festival, Barcelona
+    artists:
+    - Lúa Coderch
+    start: 2026-11-10
+    end: 2026-11-21
+    at_venue: false
+  - kind: exhibition
+    title: Viaje al centro de la tierra
+    artists:
+    - Carlos Casas
+    start: 2026-11-06
+    end: 2027-01-16
+    at_venue: true
+  - kind: exhibition
+    title: Teoría del fuego (⚡︎ Programa Flash - BGW)
+    artists:
+    - Lúa Coderch
+    start: 2026-09-17
+    end: 2026-09-20
+    at_venue: true
+  - kind: exhibition
+    title: Anima mundi. Pensamiento gráfico
+    artists:
+    - Eulàlia Valldosera
+    start: 2026-09-17
+    end: 2026-10-31
+    at_venue: true
+  - kind: exhibition
+    title: la de Salva i Helena (Art Nou 2026)
+    artists:
+    - Salva G. Ojeda
+    - Helena Laguna Bastante
+    start: 2026-06-25
+    end: 2026-09-05
+    at_venue: true
+  - kind: exhibition
+    title: La Biennale di Venezia 2026
+    artists:
+    - Saodat Ismailova
+    - Oriol Vilanova
+    - Claudia Pagès
+    start: 2026-05-09
+    end: 2026-11-22
+    at_venue: false
+  - kind: exhibition
+    title: Fondàries
+    artists:
+    - Xavier Ristol
+    - Sofía Montenegro
+    start: 2026-04-25
+    end: 2026-06-20
+    at_venue: true
+  - kind: exhibition
+    title: Loop + Busan, South Korea, 2026
+    artists:
+    - Harun Farocki
+    start: 2026-04-23
+    end: 2026-04-26
+    at_venue: false
+
+- url: https://www.espronceda.net/events/
+  venue: Espronceda
+  kind: listing
+  content_hash: 9d2b5559b8db7c1c73a96c0a06adddd2baa0d9dd1d2906e315f626dba58add5d
+  confirmed: true
+  items: []
+
+- url: http://www.ethall.net/exhibitions.html
+  venue: ethall
+  kind: listing
+  content_hash: 4b5d33f919a8cf3d3d6ac0c408c1a8991a3a1288af4d542c6a6bcbd894f0b4f0
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Clin.
+    artists:
+    - Eulàlia Rovira
+    start: 2026-09-17
+    end: 2026-10-31
+    at_venue: true
+  - kind: exhibition
+    title: Overflow
+    artists:
+    - Sergio Prego
+    start: 2026-09-17
+    end: 2026-10-31
+    at_venue: true
+  - kind: exhibition
+    title: Roen Plastic
+    artists:
+    - Marga Estelrich
+    start: 2026-06-26
+    end: 2026-09-05
+    at_venue: true
+  - kind: exhibition
+    title: Una redondez exacta.
+    artists:
+    - Jabulani
+    start: 2026-05-16
+    end: 2026-06-20
+    at_venue: true
+  - kind: exhibition
+    title: Un solo dos solos
+    artists:
+    - Violeta Mayoral
+    start: 2026-02-21
+    end: 2026-04-18
+    at_venue: true
+  - kind: exhibition
+    title: Hypopressive
+    artists:
+    - Leo Burge
+    start: 2025-12-13
+    end: 2026-02-14
+    at_venue: true
+  - kind: exhibition
+    title: El vuelto
+    artists:
+    - Julia Spínola
+    start: 2025-09-18
+    end: 2025-11-22
+    at_venue: true
+  - kind: exhibition
+    title: Vuelta adelante con piernas recogidas
+    artists:
+    - Idoia Leache
+    - Helena Ripoll
+    start: 2025-06-26
+    end: 2025-09-04
+    at_venue: true
+  - kind: exhibition
+    title: Encender una vela en el santuario de la amnesia
+    artists:
+    - Diego Paonessa
+    start: 2025-05-10
+    end: 2025-06-19
+    at_venue: true
+  - kind: exhibition
+    title: Hablar en potencial
+    artists:
+    - Itziar Okariz
+    start: 2025-03-22
+    end: 2025-05-03
+    at_venue: true
+  - kind: event
+    title: ARCOmadrid 2025
+    artists:
+    - Itziar Okariz
+    - Violeta Mayoral
+    start: null
+    end: null
+    at_venue: false
+  - kind: exhibition
+    title: Es como un animal enorme dormido profundamente.
+    artists:
+    - David Martinez Suárez
+    start: 2025-01-25
+    end: 2025-02-22
+    at_venue: true
+  - kind: exhibition
+    title: Brazo y mano
+    artists:
+    - Manu Uranga
+    start: 2024-11-23
+    end: 2025-01-18
+    at_venue: true
+
+
+
+- url: https://fuga.gallery/exposiciones/
+  venue: FUGA Gallery
+  kind: listing
+  content_hash: 07f5ebb70365a3452f74ae963cd1987f76ff7c7ea3c731515b2300d6d6f4a183
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Frente por la Emancipación y el Delirio Col·lectivo
+    artists:
+    - Gabriel Ventura
+    start: 2026-09-17
+    end: 2026-11-14
+    at_venue: true
+  - kind: exhibition
+    title: CCX221270-7.5
+    artists:
+    - Caterina Miralles
+    start: 2026-06-25
+    end: 2026-09-05
+    at_venue: true
+  - kind: exhibition
+    title: Bauen wir uns Wörter wie Nüsse. Construimos palabras como nueces.
+    artists:
+    - Lena Laguna Diel
+    start: 2026-04-25
+    end: 2026-06-12
+    at_venue: true
+  - kind: exhibition
+    title: 'ENTREACTO #2: Y si adentro'
+    artists:
+    - Krystel Liliana
+    start: 2026-03-11
+    end: 2026-04-11
+    at_venue: true
+  - kind: exhibition
+    title: Vacilaciones. Estados de Visibilidad
+    artists:
+    - Iván Candeo
+    start: 2026-01-21
+    end: 2026-03-07
+    at_venue: true
+  - kind: exhibition
+    title: no termina de aorillarse
+    artists:
+    - Valentina Alvarado Matos
+    start: 2025-11-19
+    end: 2026-01-10
+    at_venue: true
+  - kind: exhibition
+    title: Mc City
+    artists:
+    - Rosell Meseguer
+    start: 2025-09-18
+    end: 2025-10-25
+    at_venue: true
+  - kind: exhibition
+    title: Cruzando la línea
+    artists:
+    - Agustina Fioretti
+    start: 2025-06-25
+    end: 2025-07-30
+    at_venue: true
+  - kind: exhibition
+    title: Back to Black; Chapter II
+    artists:
+    - Enric Ansesa
+    start: 2025-04-26
+    end: 2025-06-14
+    at_venue: true
+  - kind: exhibition
+    title: La Preñada
+    artists:
+    - Stella Rahola Matutes
+    - Roger Paez
+    start: 2025-01-22
+    end: 2025-03-15
+    at_venue: true
+
+- url: https://fuga.gallery
+  venue: FUGA Gallery
+  kind: listing
+  content_hash: 1587362803def23e3c5dce9d5703ebd6409f953c4496e73f926ca56a8e75ea0c
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Frente por la Emancipación y el Delirio Col·lectivo (FEDC)
+    artists:
+    - Gabriel Ventura
+    start: 2026-09-17
+    end: 2026-11-14
+    at_venue: true
+  - kind: exhibition
+    title: CCX221270-7.5
+    artists:
+    - Caterina Miralles
+    start: 2026-06-25
+    end: 2026-09-05
+    at_venue: true
+  - kind: exhibition
+    title: Bauen wir uns Wörter wie Nüsse. Construimos palabras como nueces.
+    artists:
+    - Lena Laguna Diel
+    start: 2026-04-25
+    end: 2026-06-13
+    at_venue: true
+  - kind: exhibition
+    title: 'ENTREACTO #2: Y si adentro'
+    artists:
+    - Krystel Liliana
+    start: 2026-03-11
+    end: 2026-04-11
+    at_venue: true
+  - kind: exhibition
+    title: no termina de aorillarse
+    artists:
+    - Valentina Alvarado Matos
+    start: 2025-11-19
+    end: 2026-01-10
+    at_venue: true
+
+- url: https://www.fmirobcn.org/ca/exposicions
+  venue: Fundació Joan Miró
+  kind: listing
+  content_hash: 5f58e6e9080fd0b894c192509b41d05ac8f12b1c82c85ab01de1e6574a318211
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Charlotte Perriand. La llibertat de repensar el món
+    artists:
+    - Charlotte Perriand
+    start: 2026-10-09
+    end: 2027-02-28
+    at_venue: true
+  - kind: exhibition
+    title: Divided
+    artists:
+    - Camilla Wills
+    start: 2026-07-14
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: Obrir l'arxiu 08. Le gros orteil
+    artists: []
+    start: 2026-06-18
+    end: 2027-02-07
+    at_venue: true
+  - kind: exhibition
+    title: Llars en moviment
+    artists: []
+    start: 2026-06-11
+    end: 2026-09-06
+    at_venue: true
+  - kind: exhibition
+    title: Aquí hi pinto molt. Origen i destí
+    artists: []
+    start: 2026-05-07
+    end: 2026-06-07
+    at_venue: true
+  - kind: exhibition
+    title: Kapwani Kiwanga. Estats canviants
+    artists:
+    - Kapwani Kiwanga
+    start: 2026-04-30
+    end: 2026-09-13
+    at_venue: true
+  - kind: exhibition
+    title: Joan Miró. Cercles
+    artists:
+    - Joan Miró
+    start: 2026-03-13
+    end: 2028-03-12
+    at_venue: true
+  - kind: exhibition
+    title: Gomis transatlàntic
+    artists: []
+    start: 2026-02-10
+    end: 2026-07-12
+    at_venue: true
+  - kind: exhibition
+    title: de les 18.12 a les 17.48
+    artists: []
+    start: 2026-02-06
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: Retrats sentimentals de Nova York
+    artists:
+    - Joan Casellas
+    start: 2025-11-11
+    end: 2026-02-08
+    at_venue: true
+
+- url: https://www.fmirobcn.org/ca/exposicions/actuals/
+  venue: Fundació Joan Miró
+  kind: listing
+  content_hash: 63593bdf5a441e29a4c83f1ead25b19301dd716de7dba3abd4fe78142beabe44
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Obrir l'arxiu 08. Le gros orteil
+    artists:
+    - Joan Miró
+    start: 2026-06-18
+    end: 2027-02-07
+    at_venue: true
+  - kind: exhibition
+    title: Charlotte Perriand. La llibertat de repensar el món
+    artists:
+    - Charlotte Perriand
+    start: 2026-10-09
+    end: 2027-02-28
+    at_venue: true
+  - kind: exhibition
+    title: Divided
+    artists:
+    - Camilla Wills
+    start: 2026-07-14
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: Joan Miró. Cercles
+    artists:
+    - Joan Miró
+    start: 2026-03-13
+    end: 2028-03-12
+    at_venue: true
+
+- url: https://www.fmirobcn.org/ca/exposicions/futures/
+  venue: Fundació Joan Miró
+  kind: listing
+  content_hash: 1b73cdf925d8e4553870fdc508840e067da2e0adc0df2afa64d67d49a5b492cc
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: LLUM LED
+    artists: []
+    start: 2026-11-14
+    end: 2027-01-24
+    at_venue: true
+
+- url: https://galeriamarcdomenech.com/exhibitions/
+  venue: Galeria Marc Domènech
+  kind: listing
+  content_hash: a385a40ee23c2e8338d54222793ee0ec2ad455b69e3f4d2d2aec22c2ee52f12b
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Santi Moix. The abduction of Europe
+    artists:
+    - Santi Moix
+    start: 2026-11-12
+    end: 2026-12-30
+    at_venue: true
+  - kind: exhibition
+    title: 1960-1965. Joan Claret. Paintings
+    artists:
+    - Joan Claret
+    start: 2026-09-23
+    end: 2026-10-23
+    at_venue: true
+  - kind: exhibition
+    title: 1959. Joan Claret. Paintings
+    artists:
+    - Joan Claret
+    start: 2026-09-17
+    end: 2026-09-20
+    at_venue: true
+  - kind: exhibition
+    title: Abstraction-Création. Art non-figuratif (1932-1936)
+    artists: []
+    start: 2026-06-18
+    end: 2026-07-31
+    at_venue: true
+  - kind: exhibition
+    title: Expressionismes figuratius II
+    artists: []
+    start: 2026-06-04
+    end: 2026-07-31
+    at_venue: true
+  - kind: exhibition
+    title: Charo Pradas. 1980s
+    artists:
+    - Charo Pradas
+    start: 2026-04-16
+    end: 2026-05-29
+    at_venue: true
+  - kind: exhibition
+    title: Eugene J. Martin (1938-2005)
+    artists:
+    - Eugene J. Martin
+    start: 2026-02-10
+    end: 2026-03-27
+    at_venue: true
+  - kind: exhibition
+    title: Éternité des gestes
+    artists:
+    - Henri Michaux
+    - Hessie
+    start: 2025-11-27
+    end: 2026-01-30
+    at_venue: true
+  - kind: exhibition
+    title: Preludio de una III Escuela de Vallecas
+    artists:
+    - Benjamín Palencia
+    - José Luis Serzo
+    start: 2025-09-18
+    end: 2025-10-31
+    at_venue: true
+  - kind: exhibition
+    title: Sara Bonache. The Needful Night
+    artists:
+    - Sara Bonache
+    start: 2025-06-25
+    end: 2025-09-04
+    at_venue: true
+
+- url: https://houseofchappaz.com/exhibitions/
+  venue: House of Chappaz
+  kind: listing
+  content_hash: e11e5aa662c3cd20016c5982433535781de995baf932e5bbdc3f30dc0d93ade5
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Front Running y Trampa
+    artists:
+    - Momu & No Es
+    start: 2026-09-17
+    end: 2026-12-18
+    at_venue: true
+  - kind: exhibition
+    title: Latencia del Pliegue
+    artists:
+    - Antonio Fernández Alvira
+    start: 2026-06-26
+    end: 2026-09-04
+    at_venue: true
+  - kind: exhibition
+    title: Hefesto
+    artists:
+    - Vicky Uslé
+    start: 2026-04-17
+    end: 2026-06-12
+    at_venue: true
+  - kind: exhibition
+    title: If It Walks Like A Duck...
+    artists:
+    - Eli Cortiñas
+    start: 2026-01-23
+    end: 2026-03-27
+    at_venue: true
+  - kind: exhibition
+    title: A Spiralling Ascent. Looking back from the End
+    artists:
+    - Raisa Maudit
+    start: 2025-09-18
+    end: 2025-12-19
+    at_venue: true
+  - kind: exhibition
+    title: Articulations of Desire, Vol. 2
+    artists:
+    - Various Artists
+    start: 2025-05-23
+    end: 2025-08-08
+    at_venue: true
+  - kind: exhibition
+    title: W.O.R.M. / 2022
+    artists:
+    - Christto & Andrew
+    - Sarah & Charles
+    start: 2025-03-21
+    end: 2025-05-16
+    at_venue: true
+  - kind: exhibition
+    title: Fluctus Lacus
+    artists:
+    - Carmen Ortiz Blanco
+    start: 2025-01-24
+    end: 2025-03-07
+    at_venue: true
+
+- url: https://laescocesa.org/ca/Agend/Actualitat
+  venue: La Escocesa
+  kind: listing
+  content_hash: 2e612f5c24c12f9822f2a1bb9c103d55bd0b60c44124677ddc5cb230fa6c9c35
+  confirmed: true
+  partial: true
+  items:
+  - kind: event
+    title: cicle d'espiritisme popular
+    artists: []
+    start: 2026-11-05
+    end: null
+  - kind: event
+    title: cicle d'espiritisme popular
+    artists: []
+    start: 2026-11-15
+    end: null
+  - kind: event
+    title: cicle d'espiritisme popular
+    artists: []
+    start: 2026-12-01
+    end: null
+    at_venue: true
+  - kind: event
+    title: congrés diputadis 2026
+    artists: []
+    start: 2026-11-12
+    end: null
+    at_venue: true
+  - kind: event
+    title: alto el foc
+    artists: []
+    start: 2026-11-13
+    end: null
+    at_venue: true
+  - kind: event
+    title: curs flash pasta egípcia
+    artists: []
+    start: 2026-11-13
+    end: null
+    at_venue: true
+  - kind: event
+    title: curs flash pasta egípcia
+    artists: []
+    start: 2026-11-16
+    end: null
+    at_venue: true
+  - kind: event
+    title: esto también pasará
+    artists: []
+    start: 2026-11-20
+    end: null
+    at_venue: true
+  - kind: event
+    title: 'sessions d''escolta col·lectiva #2: Chica Acosta'
+    artists:
+    - Chica Acosta
+    start: 2026-11-25
+    end: null
+    at_venue: true
+  - kind: event
+    title: polinaires
+    artists: []
+    start: 2026-11-26
+    end: null
+    at_venue: true
+  - kind: event
+    title: justícia climàtica des dels marges
+    artists: []
+    start: 2026-11-26
+    end: null
+    at_venue: true
+  - kind: event
+    title: torn a llom
+    artists: []
+    start: 2026-11-28
+    end: null
+    at_venue: true
+  - kind: event
+    title: taller de llibretes!
+    artists: []
+    start: 2026-12-01
+    end: 2026-12-03
+    at_venue: true
+
+- url: https://www.macba.cat/ca/exposicions/
+  venue: MACBA
+  kind: listing
+  content_hash: 44fa23720bf87bcd2f5288a79e0fba25e6479d39e930016caf7e17e4b8ee9c1f
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Aurèlia Muñoz. Ens
+    artists:
+    - Aurèlia Muñoz
+    start: 2026-11-05
+    end: 2027-05-02
+    at_venue: true
+  - kind: exhibition
+    title: Espiral del temps – Plaça dels Àngels – MACBA
+    artists: []
+    start: null
+    end: null
+    at_venue: true
+  - kind: exhibition
+    title: Anna Moreno. La tercera torsió
+    artists:
+    - Anna Moreno
+    start: 2025-07-10
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: Basel Abbas i Ruanne Abou-Rahme. Presoners de l'amor. Fins al sol de la llibertat
+    artists:
+    - Basel Abbas
+    - Ruanne Abou-Rahme
+    start: 2026-02-05
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: Un museu fora del museu. La Col·lecció MACBA en llocs insospitats. Un projecte dels Centres
+      d'Arts Visuals de Catalunya
+    artists: []
+    start: 2026-02-14
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: 'Contrainformació: Video-Nou / Servei de Vídeo Comunitari. El gest de filmar. El vídeo a la
+      Col·lecció MACBA'
+    artists: []
+    start: 2026-06-19
+    end: 2026-11-30
+    at_venue: true
+  - kind: exhibition
+    title: Ecos. Vídeos de la donació de la Fundació Han Nefkens. El gest de filmar. El vídeo a la Col·lecció
+      MACBA
+    artists: []
+    start: 2026-07-09
+    end: 2027-06-30
+    at_venue: true
+  - kind: exhibition
+    title: 'Pere Portabella: la mirada compromesa. El gest de filmar. El vídeo a la Col·lecció MACBA'
+    artists:
+    - Pere Portabella
+    start: 2026-07-09
+    end: 2027-06-30
+    at_venue: true
+  - kind: exhibition
+    title: Stan Douglas
+    artists:
+    - Stan Douglas
+    start: 2026-07-09
+    end: 2027-06-30
+    at_venue: true
+  - kind: exhibition
+    title: 'Com una dansa d''estornells. Col·lecció MACBA: trenta anys i infinites formes de ser'
+    artists: []
+    start: 2027-07-22
+    end: 2028-02-27
+    at_venue: true
+
+- url: https://www.macba.cat/ca/agenda/
+  venue: MACBA
+  kind: listing
+  content_hash: 2bad272984795457872102d2b007bf7ca11fb9f53bf6a83d4fc52309ef1bd6c7
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Aurèlia Muñoz. Ens
+    artists:
+    - Aurèlia Muñoz
+    start: null
+    end: 2027-05-02
+    at_venue: true
+  - kind: exhibition
+    title: Un museu fora del museu
+    artists: []
+    start: null
+    end: 2026-11-30
+    at_venue: true
+  - kind: exhibition
+    title: Espiral del temps – Plaça dels Àngels – MACBA
+    artists: []
+    start: null
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: Anna Moreno. La tercera torsió
+    artists:
+    - Anna Moreno
+    start: null
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: Basel Abbas i Ruanne Abou-Rahme
+    artists:
+    - Basel Abbas
+    - Ruanne Abou-Rahme
+    start: null
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: 'Contrainformació: Video-Nou / Servei de Vídeo Comunitari'
+    artists: []
+    start: null
+    end: 2027-01-17
+    at_venue: true
+  - kind: exhibition
+    title: Ecos. Vídeos de la donació de la Fundació Han Nefkens
+    artists: []
+    start: null
+    end: 2027-06-07
+    at_venue: true
+  - kind: exhibition
+    title: 'Pere Portabella: la mirada compromesa'
+    artists:
+    - Pere Portabella
+    start: null
+    end: 2027-06-07
+    at_venue: true
+  - kind: event
+    title: Afinitats radicals
+    artists:
+    - Margherita Isola
+    start: 2026-10-30
+    end: 2026-12-11
+    at_venue: true
+  - kind: event
+    title: Aurèlia Muñoz. Ressonància i confluència
+    artists: []
+    start: 2026-11-05
+    end: 2026-11-06
+    at_venue: true
+  - kind: event
+    title: Entrellaçar i nuar amb Aurèlia Muñoz
+    artists: []
+    start: 2026-11-05
+    end: 2027-03-29
+    at_venue: true
+  - kind: event
+    title: Sopa de llenties gaziana inspirada en la recepta Shorabit Adas
+    artists: []
+    start: 2026-11-07
+    end: null
+    at_venue: true
+  - kind: event
+    title: Visites comentades a El gest de filmar. El vídeo a la Col·lecció MACBA
+    artists:
+    - Avalancha
+    start: 2026-11-07
+    end: null
+    at_venue: true
+  - kind: event
+    title: 'Visites comentades a Contrainformació: Video-Nou / Servei de Vídeo Comunitari'
+    artists:
+    - Albert Gironès
+    - Ana Gnagui
+    - Eva Paià
+    start: 2026-11-08
+    end: null
+    at_venue: true
+  - kind: event
+    title: Visites comentades a Basel Abbas i Ruanne Abou-Rahme. Presoners de l'amor i a Anna Moreno.
+      La tercera torsió
+    artists:
+    - Albert Gironès
+    - Ana Gnagui
+    - Eva Paià
+    start: 2026-11-08
+    end: null
+    at_venue: true
+  - kind: event
+    title: Visita d'Amics a Aurèlia Muñoz. Ens
+    artists: []
+    start: 2026-11-12
+    end: null
+    at_venue: true
+  - kind: event
+    title: La Cuina Escola amb Glòria Ribiera
+    artists:
+    - Glòria Ribiera
+    start: 2026-11-13
+    end: null
+    at_venue: true
+  - kind: event
+    title: UNDERGROUND MATTERS. Arquitectures invisibles
+    artists: []
+    start: 2026-11-14
+    end: null
+    at_venue: true
+
+- url: https://pigmentgallery.es/exposiciones/
+  venue: Pigment Gallery
+  kind: listing
+  content_hash: 101b9a66d71fea5a5f0fe99326c68631fc0839b91a0ed59bc2fff8c0bc643378
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Mapas para el olvido – Juan Luque
+    artists:
+    - Juan Luque
+    start: 2026-10-29
+    end: 2026-11-24
+    at_venue: true
+  - kind: exhibition
+    title: Joan Xandri – Intangibles
+    artists:
+    - Joan Xandri
+    start: 2026-10-14
+    end: 2026-11-09
+    at_venue: true
+  - kind: exhibition
+    title: Memento – Rosa Galindo
+    artists:
+    - Rosa Galindo
+    start: 2026-09-10
+    end: 2026-11-10
+    at_venue: true
+  - kind: exhibition
+    title: XVI Premi Setba
+    artists: []
+    start: 2026-10-09
+    end: 2026-10-24
+    at_venue: true
+  - kind: exhibition
+    title: El tiempo que queda – Ignacio Iñigo y Lorenzo Fernández
+    artists:
+    - Ignacio Iñigo
+    - Lorenzo Fernández
+    start: 2026-09-17
+    end: 2026-10-10
+    at_venue: true
+  - kind: exhibition
+    title: Exposición colectiva de verano
+    artists: []
+    start: 2026-07-15
+    end: 2026-09-05
+    at_venue: true
+  - kind: exhibition
+    title: Architectural Drawings – Palou, Peter Märkli, Nuno Melo Sousa, RCR
+    artists:
+    - Palou
+    - Peter Märkli
+    - Nuno Melo Sousa
+    - RCR
+    start: 2026-06-04
+    end: 2026-07-11
+    at_venue: true
+  - kind: exhibition
+    title: Momentos de silencio – Patricio Reig
+    artists:
+    - Patricio Reig
+    start: 2026-04-22
+    end: 2026-05-23
+    at_venue: true
+  - kind: exhibition
+    title: Presagi – Mario Pasqualotto
+    artists:
+    - Mario Pasqualotto
+    start: 2026-04-22
+    end: 2026-05-23
+    at_venue: true
+  - kind: exhibition
+    title: Paisaje Contenido – Fernando Adam
+    artists:
+    - Fernando Adam
+    start: 2026-04-21
+    end: 2026-06-02
+    at_venue: true
+
+
+- url: https://rociosantacruz.com/exposiciones/
+  venue: RocioSantaCruz
+  kind: listing
+  content_hash: 41228edaa076f3d9fbebd213cc9804c6708240029a6d183feb5b23867153163d
+  confirmed: true
+  partial: true
+  items:
+  - kind: exhibition
+    title: Antonio Saura y Fernando Arrabal. L' odeur de la sainteté
+    artists:
+    - Antonio Saura
+    - Fernando Arrabal
+    start: 2026-09-17
+    end: null
+    at_venue: true
+  - kind: exhibition
+    title: Mariaelena Roqué. UnaDonaUna · AutoRetratRetratat
+    artists:
+    - Mariaelena Roqué
+    start: 2026-09-17
+    end: 2026-11-21
+    at_venue: true
+  - kind: exhibition
+    title: Rubén González Bonilla. Una pequeña invitación
+    artists:
+    - Rubén González Bonilla
+    start: 2026-07-09
+    end: 2026-09-09
+    at_venue: true
+  - kind: exhibition
+    title: Ouka Leele. Barcelona 1978 – 1980
+    artists:
+    - Ouka Leele
+    start: 2026-05-15
+    end: 2026-09-09
+    at_venue: true
+  - kind: exhibition
+    title: Marina Núñez. Polvo de estrellas
+    artists:
+    - Marina Núñez
+    start: 2026-03-20
+    end: 2026-05-09
+    at_venue: true
+  - kind: exhibition
+    title: Colita. Inexorable
+    artists:
+    - Colita
+    start: 2025-12-18
+    end: 2026-03-15
+    at_venue: true
+  - kind: exhibition
+    title: Dionis Escorsa. La campana cósmica y el lago que respira
+    artists:
+    - Dionis Escorsa
+    start: 2025-09-18
+    end: 2025-12-12
+    at_venue: true
+  - kind: exhibition
+    title: Gadea Burgaz. Ni de lejos soy yo
+    artists:
+    - Gadea Burgaz
+    start: 2025-07-15
+    end: 2025-09-13
+    at_venue: true
+  - kind: exhibition
+    title: Antón Lamazares. DE LA NIT QUE NO ACABA (E NON ACABA A NOITE)
+    artists:
+    - Antón Lamazares
+    start: 2025-05-09
+    end: 2025-07-18
+    at_venue: true
+  - kind: exhibition
+    title: Javier Inés. BARCELONA UNIVERSAL KGB
+    artists:
+    - Javier Inés
+    start: 2025-01-30
+    end: 2025-04-19
+    at_venue: true
+
+- url: https://www.adngaleria.com/exhibitions/200-soiree-8-nicolas-daubanes/
+  venue: ADN Galeria
+  kind: detail
+  content_hash: 8f31a50de5569db632cc32b34ef23c89beeb0ab5a5ee9749564269ee7dc82666
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: 'Soirée #8: Nicolas Daubanes'
+    artists:
+    - Nicolas Daubanes
+    start: 2026-04-11
+    end: null
+    at_venue: true
+
+- url: https://www.adngaleria.com/exhibitions/205-fantastic-planet.-el-planeta-salvatge-joan-palle/
+  venue: ADN Galeria
+  kind: detail
+  content_hash: 10947409c2cc0711260793e40be41f2980af7177311278123150d3263b90d449
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: FANTASTIC PLANET. El planeta salvatge
+    artists:
+    - Joan Pallé
+    start: 2026-09-17
+    end: 2026-11-07
+    at_venue: true
+
+- url: https://www.adngaleria.com/exhibitions/204-mujeres-que-cargan-animales-gema-polanco/
+  venue: ADN Galeria
+  kind: detail
+  content_hash: 9e133cf484c993f41bce476be41e56ccde70c6bce38dcab18632365d344ee3a0
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Mujeres que cargan animales
+    artists:
+    - Gema Polanco
+    start: 2026-09-17
+    end: 2026-11-07
+    at_venue: true
+
+- url: https://www.adngaleria.com/exhibitions/207-los-hijos-de-sodoma-daniel-gasol/
+  venue: ADN Galeria
+  kind: detail
+  content_hash: f03d57c8078bec0a9cbb28d2c9eaaf4f425d791088a67ed662d52b5b3a536e13
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Lxs Hijxs de Sodoma
+    artists:
+    - Daniel Gasol
+    start: 2026-11-09
+    end: 2026-11-30
+    at_venue: true
+
+- url: https://www.adngaleria.com/exhibitions/13-she-the-eye-the-finger-the-hand-maria-maria-acha-kutscher-margaret-harrison-nuria-guell/
+  venue: ADN Galeria
+  kind: detail
+  content_hash: 5a1d3c05b92d90ced3ddafe1f06ca37ddeb5146112e4c7067cb1f20dae419029
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: She, the eye, the finger, the hand
+    artists:
+    - María María Acha-Kutscher
+    - Margaret Harrison
+    - Núria Güell
+    start: 2020-09-17
+    end: 2020-11-14
+    at_venue: true
+
+
+- url: http://angelsbarcelona.com/en/program/viaje-al-centro-de-la-tierra/349
+  venue: àngels barcelona
+  kind: detail
+  content_hash: c7c1778b9e44236a7f68a5f5f33647c6f4905fc4927b6f8f395a6235a49682cb
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Viaje al centro de la tierra
+    artists:
+    - Carlos Casas
+    start: 2026-11-06
+    end: 2027-01-16
+    at_venue: true
+  - kind: event
+    title: Viaje al centro de la tierra
+    artists:
+    - Carlos Casas
+    start: 2026-11-06
+    end: null
+    at_venue: true
+
+
+- url: https://chiquitaroom.com/event/once-we-existed/
+  venue: Chiquita Room
+  kind: detail
+  content_hash: 6ce038a78fd5b01154cc005ed1fb0ba1437d7d9feb64f47023d22b9cc82ba65a
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Once We Existed
+    artists:
+    - Pieter Laurens Mol
+    - Laía Argüelles Folch
+    start: 2026-09-10
+    end: 2026-11-07
+    at_venue: false
+  - kind: event
+    title: Finissage y lectura con Toni Canyelles Lo que tiene vuelo
+    artists:
+    - Toni Canyelles
+    start: 2026-11-07
+    end: null
+    at_venue: true
+
+- url: https://chiquitaroom.com/event/lo-que-tiene-vuelo/
+  venue: Chiquita Room
+  kind: detail
+  content_hash: 66aafc727e3be428b20334ef8c62c958c980150f8d50bfd481a8146c744af6b5
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Lo que tiene vuelo
+    artists:
+    - Laía Argüelles Folch
+    start: 2026-09-17
+    end: 2026-11-06
+    at_venue: true
+  - kind: event
+    title: Lo que tiene vuelo
+    artists:
+    - Laía Argüelles Folch
+    start: 2026-09-17
+    end: null
+    at_venue: true
+  - kind: event
+    title: Escucha Hinterhof
+    artists: []
+    start: 2026-09-18
+    end: null
+    at_venue: true
+  - kind: event
+    title: Para Laía. La voz proyectada
+    artists: []
+    start: 2026-09-18
+    end: null
+    at_venue: true
+
+- url: https://chiquitaroom.com/event/el-jabon-etcetera/
+  venue: Chiquita Room
+  kind: detail
+  content_hash: ef6a656ef86f504452d45ff3dfca20386381067998fd33fa622c2f362a2ba356
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: El jabón, etcétera
+    artists: []
+    start: 2026-11-18
+    end: 2027-01-30
+    at_venue: true
+  - kind: event
+    title: El jabón, etcétera
+    artists: []
+    start: 2026-11-18
+    end: null
+    at_venue: true
+
+- url: https://chiquitaroom.com/event/le-savon-et-cetera/
+  venue: Chiquita Room
+  kind: detail
+  content_hash: a67e1e7e95b49e1da98cbd2870fdda229c7cb944257eb1fa6ebffd3417e0c54a
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Le Savon, et cetera
+    artists: []
+    start: 2026-11-26
+    end: 2027-01-16
+    at_venue: false
+  - kind: event
+    title: Le Savon, et cetera
+    artists: []
+    start: 2026-11-25
+    end: null
+    at_venue: false
+
+- url: https://fuga.gallery/gabriel-ventura-esp/
+  venue: FUGA Gallery
+  kind: detail
+  content_hash: 6248fb57d47be15aa5581650ac000cab6f53ef33128954d06ae289e19d9d1b92
+  confirmed: true
+  items: []
+
+- url: https://www.fmirobcn.org/ca/exposicions/7363/llum-led
+  venue: Fundació Joan Miró
+  kind: detail
+  content_hash: 99ccc33eca988d4257509421e762ac6a65b568866cb0f53996e283218debc2e3
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: LLUM LED
+    artists:
+    - Victor Ruiz Colomer
+    start: 2026-11-14
+    end: 2027-01-24
+    at_venue: true
+  - kind: event
+    title: Un pensament vertiginós queda suspès, sense estructura. A aquest pensament li farem un balcó
+    artists: []
+    start: 2026-11-20
+    end: 2026-11-22
+    at_venue: true
+
+- url: https://www.macba.cat/ca/exposicions/pere-portabella/
+  venue: MACBA
+  kind: detail
+  content_hash: ae1e5644498b263c3185a45ac4bef8d0a8c139ee955c16df677efdc4dd6099c7
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: 'Pere Portabella: la mirada compromesa'
+    artists:
+    - Pere Portabella
+    start: 2026-07-09
+    end: 2027-06-30
+    at_venue: true
+  - kind: event
+    title: Llançar-se al buit
+    artists: []
+    start: 2026-10-08
+    end: null
+    at_venue: true
+  - kind: event
+    title: Visites comentades a El gest de filmar. El vídeo a la Col·lecció MACBA
+    artists: []
+    start: 2026-11-07
+    end: null
+    at_venue: true
+  - kind: event
+    title: Visites per a grups i centres educatius a El gest de filmar. El vídeo a la Col·lecció MACBA
+    artists: []
+    start: 2026-11-08
+    end: 2027-05-23
+    at_venue: true
+  - kind: event
+    title: Narratives d'una col·lecció
+    artists: []
+    start: 2026-11-04
+    end: 2027-05-28
+    at_venue: true
+  - kind: event
+    title: 'MURMURIS IX: ASIA, Heavy-Metal'
+    artists:
+    - Carles Santos
+    - Pere Portabella
+    start: 2026-07-16
+    end: 2026-07-17
+    at_venue: true
+
+
+- url: https://www.macba.cat/ca/exposicions/aurelia-munoz-ens/
+  venue: MACBA
+  kind: detail
+  content_hash: bee3505ba397cef95c847c90c36eef709a72d519d8832a284efd968ec4c01378
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Aurèlia Muñoz. Ens
+    artists:
+    - Aurèlia Muñoz
+    start: 2026-11-05
+    end: 2027-05-02
+    at_venue: true
+  - kind: event
+    title: Inauguració de l'exposició Aurèlia Muñoz. Ens
+    artists: []
+    start: 2026-11-04
+    end: null
+    at_venue: true
+  - kind: event
+    title: Aurèlia Muñoz. Ressonància i confluència
+    artists: []
+    start: 2026-11-05
+    end: 2026-11-06
+    at_venue: true
+  - kind: event
+    title: Entrellaçar i nuar amb Aurèlia Muñoz
+    artists: []
+    start: 2026-11-05
+    end: 2027-03-29
+    at_venue: true
+  - kind: event
+    title: Visita d'Amics a Aurèlia Muñoz. Ens
+    artists: []
+    start: 2026-11-12
+    end: null
+    at_venue: true
+  - kind: event
+    title: Visites comentades a Aurèlia Muñoz. Ens
+    artists:
+    - Albert Gironès
+    - Ana Gnagui
+    - Eva Paià
+    start: 2026-11-15
+    end: 2027-03-29
+    at_venue: true
+  - kind: event
+    title: Visites per a grups i centres educatius a Aurèlia Muñoz. Ens
+    artists: []
+    start: 2026-11-16
+    end: 2027-03-29
+    at_venue: true
+
+
+- url: https://www.macba.cat/ca/exposicions/stan-douglas/
+  venue: MACBA
+  kind: detail
+  content_hash: 711f17088ac10044038177cc186b25f949bc3827b065a39403442e4b010de90c
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Stan Douglas
+    artists:
+    - Stan Douglas
+    start: 2027-07-22
+    end: 2028-02-27
+    at_venue: true
+
+- url: https://www.macba.cat/ca/exposicions/com-una-dansa-destornells-colleccio-macba-trenta-anys-i-infinites-formes-de-ser/
+  venue: MACBA
+  kind: detail
+  content_hash: db4ddba3ff5bd21d3a9b1aa749cd9a7ed6903b5cb22b4b055743cefe0fce4a0f
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: 'Com una dansa d''estornells. Col·lecció MACBA: trenta anys i infinites formes de ser'
+    artists:
+    - Tonet Amorós
+    - Claudia Andujar
+    - Miquel Arnal
+    - Onofre Bachiller
+    - Jean-Michel Basquiat
+    - Samuel Beckett
+    - Antonio Beneyto
+    - Magda Bolumar
+    - Vera Chaves Barcellos
+    - Luis Claramunt
+    - Francesco Clemente
+    - George Condo
+    - Modest Cuixart
+    - Dau al Set
+    - Dias & Riedweg
+    - Max de Esteban
+    - Evru/Zush
+    - Esther Ferrer
+    - Alicia Fingerhut
+    - Peter Friedl
+    - Sara Gibert
+    - Guillermo Gómez-Peña
+    - Silvia Gubern
+    - Ramon Guillen-Balmes
+    - Richard Hamilton
+    - Joan Jonas
+    - William Kentridge
+    - Joan Miró
+    - Julia Montilla
+    - Matt Mullican
+    start: 2025-11-28
+    end: 2026-09-27
+    at_venue: true
+  - kind: event
+    title: 'Visites comentades a Com una dansa d''estornells. Col·lecció MACBA: trenta anys i infinites
+      formes de ser'
+    artists:
+    - Avalancha
+    start: null
+    end: null
+    at_venue: true
+  - kind: event
+    title: MURMURIS. Dotze accions especulatives per l'Any Trenta
+    artists: []
+    start: 2025-11-27
+    end: 2026-11-27
+    at_venue: true
+  - kind: event
+    title: 'Visitem l''exposició Com una dansa d''estornells. Col·lecció MACBA: trenta anys i infinites
+      formes de ser'
+    artists: []
+    start: 2026-01-22
+    end: null
+    at_venue: true
+  - kind: event
+    title: Infinites formes de mirar. Curs-taller al voltant de la Col·lecció MACBA
+    artists: []
+    start: 2025-11-24
+    end: 2025-12-01
+    at_venue: true
+  - kind: event
+    title: 'Visites per a grups i centres educatius a Com una dansa d''estornells. Col·lecció MACBA: trenta
+      anys i infinites formes de ser'
+    artists: []
+    start: 2025-11-28
+    end: 2026-09-28
+    at_venue: true
+
+
+- url: https://www.macba.cat/ca/exposicions/un-museu-fora-del-museu/
+  venue: MACBA
+  kind: detail
+  content_hash: ac964100074edeeb9a5a9677d8ac2afb50f7e0224f91987e6d8083dd0cfc13a8
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Un museu fora del museu
+    artists: []
+    start: 2026-06-19
+    end: 2026-11-30
+    at_venue: true
+
+
+- url: https://pigmentgallery.es/exposicion/memento-rosa-galindo-2/?back=ago
+  venue: Pigment Gallery
+  kind: detail
+  content_hash: c5982bc8c3593eab3866d8d5788dab1b7517442a93a9f2a7b2f0eccbb148cce2
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Memento – Rosa Galindo
+    artists:
+    - Rosa Galindo
+    start: 2026-09-10
+    end: 2026-11-10
+    at_venue: true
+
+- url: https://pigmentgallery.es/exposicion/joan-xandri-intangible/?back=ago
+  venue: Pigment Gallery
+  kind: detail
+  content_hash: 1c0d57a8adaed3900d6cd5ad47cdc10aa811f1f5badebf2a41eed48b60180588
+  confirmed: true
+  items:
+  - kind: exhibition
+    title: Joan Xandri – Intangibles
+    artists:
+    - Joan Xandri
+    start: 2026-10-14
+    end: 2026-11-09
+    at_venue: true

@@ -16,6 +16,11 @@ Crawl fixtures (P2): tests for discovery and crawling need HTML, and a recorded 
 third-party prose in git. Every HTML fixture is therefore hand-written, says so with a
 `<!-- synthetic -->` marker on its first line, and stays small enough to read in review.
 
+Gold set (P2): the extraction labels are committed (`eval/gold/extraction.yaml`), so they are facts
+only: URLs, a hash, titles, artists, dates and flags. The loader refuses any key it does not know,
+and every field of its schema is listed here, so a field that could hold a sentence fails until
+someone decides it may.
+
 Extraction half (P2): `summary_en` is the only prose that outlives a venue page, so it has to be
 ours. The prompt forbids reproducing ~25 consecutive words; `extract.longest_shared_run` enforces
 20. A summary that copies is sent back once, and one that copies twice is dropped while the facts
@@ -37,6 +42,7 @@ import pytest
 from mcp.types import TextContent
 
 from art_curator.db.models import Base
+from art_curator.eval.extraction import GoldItem, GoldPage, GoldSet, load_gold
 from art_curator.ingest.graf import DROP_KEYS, DROP_PREFIXES, banned_keys, scrub
 from art_curator.llm import extract
 from art_curator.llm.extract import MAX_SHARED_WORDS, longest_shared_run
@@ -247,6 +253,38 @@ def test_html_fixtures_are_synthetic(path: Path):
 )
 def test_planted_html_fixture_is_caught(content):
     assert _html_fixture_problem(content)
+
+
+# --- The gold set: labels are facts ---------------------------------------------------------------
+
+# Every field a label can have. A new one fails `test_gold_set_schema_is_facts_only` until someone
+# decides it holds no sentence.
+GOLD_FIELDS = {
+    GoldSet: {"listings", "pages"},
+    GoldPage: {"url", "venue", "kind", "content_hash", "confirmed", "partial", "items"},
+    GoldItem: {"kind", "title", "artists", "start", "end", "at_venue"},
+}
+
+
+@pytest.mark.parametrize("model", GOLD_FIELDS, ids=lambda model: model.__name__)
+def test_gold_set_schema_is_facts_only(model):
+    assert set(model.model_fields) == GOLD_FIELDS[model]
+    assert model.model_config.get("extra") == "forbid"
+
+
+def test_committed_gold_set_parses_under_that_schema():
+    load_gold()
+
+
+@pytest.mark.parametrize("key", ["summary_en", "description", "notes", "text"])
+def test_planted_prose_in_the_gold_set_is_refused(key):
+    page = (
+        "pages:\n  - url: https://www.exemple.cat/ca/exposicions\n    venue: Galeria Exemple\n"
+        f"    kind: listing\n    content_hash: {'0' * 64}\n    items:\n      - title: Prova U\n"
+        f"        {key}: Una frase copiada de la pàgina.\n"
+    )
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        load_gold(page)
 
 
 # --- Extraction: the summary is ours --------------------------------------------------------------

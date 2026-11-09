@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
@@ -10,10 +11,13 @@ import typer
 from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from art_curator.config import get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_engine, get_sessionmaker
+from art_curator.eval import extraction as evaluation
+from art_curator.eval import runner as eval_runner
 from art_curator.ingest import crawl as crawling
 from art_curator.ingest import extraction, graf, seeds
 from art_curator.ingest.http import RobotsPolicy, open_client
@@ -477,6 +481,168 @@ async def _extract(venue: str | None, limit: int | None, *, dry_run: bool) -> _E
     finally:
         telemetry.setup_telemetry().force_flush()
         await get_engine().dispose()
+
+
+@app.command("eval-extraction")
+def eval_extraction(
+    venue: Annotated[
+        str | None,
+        typer.Option(help="Only this venue, by name. Case and accents do not matter."),
+    ] = None,
+    draft: Annotated[
+        Path | None,
+        typer.Option(
+            metavar="FILE",
+            help="Instead of scoring, extract every crawled page the gold set does not label yet "
+            "and write what was found to FILE as unconfirmed labels, for a person to check "
+            "against the live page.",
+        ),
+    ] = None,
+) -> None:
+    """Score extraction against the hand-checked gold set, and discovery against its labelled
+    listings. Calls a model: about two cents a labelled page (PLAN.md § 6).
+
+    A page is scored only if its text is still the one it was labelled against, stored or fetched
+    again; otherwise it is reported stale. Text older than 7 days is purged first, as in `crawl`;
+    beyond that nothing is written but the cost of the calls. The scores are a baseline, not a
+    gate: the run exits 1 only if the gold set is invalid or the endpoint refused a call.
+    """
+    try:
+        everything = evaluation.load_gold()
+    except ValidationError as exc:
+        typer.echo(f"FAIL: eval/gold/extraction.yaml is invalid.\n{exc}")
+        raise typer.Exit(1) from exc
+    gold = everything.for_venue(venue)
+
+    if draft is not None:
+        _eval_draft(gold, venue, draft)
+        return
+
+    if not gold.pages and not gold.listings:
+        known = ", ".join(everything.venues) or "none"
+        typer.echo(f"FAIL: the gold set labels nothing for {venue or 'any venue'}. Known: {known}")
+        raise typer.Exit(1)
+    run = asyncio.run(_eval(gold))
+
+    typer.echo("Eval extraction")
+    for line in evaluation.report(
+        gold, run.today, run.scores, run.skipped, run.discovery, run.stopped
+    ):
+        typer.echo(f"  {line}")
+    typer.echo(f"  {'cost':<11} ${run.cost_usd}   {run.calls} model calls")
+    if run.stopped:
+        raise typer.Exit(1)
+
+
+@dataclass(frozen=True)
+class _EvalRun:
+    today: date
+    scores: list[evaluation.PageScore]
+    skipped: list[evaluation.Skipped]
+    discovery: evaluation.DiscoveryScore
+    calls: int = 0
+    cost_usd: Decimal = Decimal(0)
+    stopped: str = ""
+
+
+async def _eval(gold: evaluation.GoldSet) -> _EvalRun:
+    model = get_settings().extract_model
+    llm = get_llm_client()
+    try:
+        async with get_sessionmaker()() as session:
+            await crawling.purge_pages(session)
+            await session.commit()
+            today = await eval_runner.today(session)
+            stored = await eval_runner.load_stored(session)
+            verdicts = await eval_runner.load_verdicts(session)
+
+        with llm.tracer.start_as_current_span("eval-extraction") as span:
+            trace_id, _ = telemetry.span_ids(span)
+            async with open_client() as client:
+                ready, skipped = await eval_runner.find_texts(
+                    client, RobotsPolicy(client), gold.pages, stored, today
+                )
+            extracted = await eval_runner.extract_all(llm, model, [text for _, text in ready])
+
+        # `zip` stops where the run did: the pages after a refused call are not scored.
+        scores = [
+            evaluation.score_page(page, result.extraction, result.error)
+            for (page, _), result in zip(ready, extracted.results, strict=False)
+        ]
+        discovery = evaluation.score_discovery(gold.listings, verdicts)
+        async with get_sessionmaker()() as session:
+            calls, cost = await _spend(session, trace_id)
+        return _EvalRun(today, scores, skipped, discovery, calls, cost, extracted.stopped)
+    finally:
+        telemetry.setup_telemetry().force_flush()
+        await get_engine().dispose()
+
+
+def _eval_draft(gold: evaluation.GoldSet, venue: str | None, path: Path) -> None:
+    if path.exists():
+        typer.echo(f"FAIL: {path} exists. Draft to a new file: a half-checked draft is work.")
+        raise typer.Exit(1)
+    model = get_settings().extract_model
+    run = asyncio.run(_draft(gold, venue, model))
+    if not run.results and not run.stopped:
+        typer.echo("FAIL: no crawled page with text is left to label. Run crawl --pilot first.")
+        raise typer.Exit(1)
+
+    path.write_text(eval_runner.draft_yaml(run.results, model, run.today), encoding="utf-8")
+    drafted = [r for r in run.results if r.extraction is not None]
+    typer.echo("Eval extraction (draft)")
+    typer.echo(f"  {'drafted':<11} {len(drafted)} pages to {path}, every one unconfirmed")
+    for result in run.results:
+        if result.extraction is None:
+            typer.echo(f"  {'failed':<11} {result.page.url}   {result.error}")
+    if run.stopped:
+        typer.echo(f"  {'stopped':<11} the endpoint refused a call: {run.stopped}")
+    typer.echo(f"  {'cost':<11} ${run.cost_usd}   {run.calls} model calls")
+    if run.stopped:
+        raise typer.Exit(1)
+
+
+@dataclass(frozen=True)
+class _DraftRun:
+    today: date
+    results: list[eval_runner.Result]
+    calls: int = 0
+    cost_usd: Decimal = Decimal(0)
+    stopped: str = ""
+
+
+async def _draft(gold: evaluation.GoldSet, venue: str | None, model: str) -> _DraftRun:
+    llm = get_llm_client()
+    try:
+        async with get_sessionmaker()() as session:
+            await crawling.purge_pages(session)
+            await session.commit()
+            today = await eval_runner.today(session)
+            pages = eval_runner.draft_pages(await eval_runner.load_stored(session), gold, venue)
+        if not pages:
+            return _DraftRun(today, [])
+
+        with llm.tracer.start_as_current_span("eval-extraction") as span:
+            trace_id, _ = telemetry.span_ids(span)
+            extracted = await eval_runner.extract_all(llm, model, pages)
+        async with get_sessionmaker()() as session:
+            calls, cost = await _spend(session, trace_id)
+        return _DraftRun(today, extracted.results, calls, cost, extracted.stopped)
+    finally:
+        telemetry.setup_telemetry().force_flush()
+        await get_engine().dispose()
+
+
+async def _spend(session: AsyncSession, trace_id: str | None) -> tuple[int, Decimal]:
+    """Model calls made under `trace_id`, and what they cost."""
+    calls, cost = (
+        await session.execute(
+            select(func.count(), func.coalesce(func.sum(LlmCall.cost_usd), 0)).where(
+                LlmCall.trace_id == trace_id
+            )
+        )
+    ).one()
+    return calls, cost
 
 
 @app.command("purge-pages")

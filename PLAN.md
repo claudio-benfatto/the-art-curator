@@ -2,7 +2,7 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 in progress: PRs 17–23 built, 24–25 next (§ 8).
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 in progress: PRs 17–24 built (24's baseline 2026-11-09), then 25 (§ 8).
 **Last updated:** 2026-10-15 (rev. 11)
 
 ---
@@ -229,7 +229,7 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | Re-extraction | A page is re-extracted when `(content_hash, EXTRACT_VERSION, model)` differs from what it was last extracted with. `EXTRACT_VERSION` is a constant, bumped by hand when the prompt or schema changes; a test pins a hash of both to it | Unchanged pages are the main avoidable cost; a prompt change must still invalidate them |
 | Dedup | Upsert `exhibitions` on `(venue_id, title_key)`, where `title_key` is the normalised title; `art_events` adds the start date (`NULLS NOT DISTINCT`). A show seen again takes each field's newest non-empty value, except `summary_en`: the longer stays. `first_seen_at` / `last_seen_at` as for snapshots; nothing is deleted | Index and detail pages describe the same show. A detail page is fetched once, so a whole-record "richer wins" would let it shadow later corrections on the listing |
 | Test fixtures | Crawl tests use **hand-written synthetic HTML** (`tests/fixtures/crawl/*.html`), never recorded pages. `test_no_verbatim.py` requires a `<!-- synthetic -->` marker and a size cap on every HTML fixture | A recorded page is third-party prose in git (constraint 1) |
-| Gold set | **Labels only, facts only**: url, `content_hash`, and the expected `{kind, title, dates, artists}` per item, in `eval/gold/extraction.yaml`. No page text and no summaries. Eval reads `raw_text` from `venue_pages` or re-crawls; a page whose hash no longer matches its label is **stale**, reported and skipped | The page text cannot be kept past 7 days, so the gold set decays as venues update. That is the price of constraint 1, and re-labelling is part of the job |
+| Gold set | **Labels only, facts only**: url, `content_hash`, and the expected `{kind, title, dates, artists, at_venue}` per item, in `eval/gold/extraction.yaml`; `confirmed` once a person checked it, and `--draft` writes unconfirmed ones. An archive-like listing may be `partial` (its first 10 of each kind): recall and fields, not precision. No page text and no summaries. Eval reads `raw_text` from `venue_pages` or re-crawls; a page whose hash no longer matches its label is **stale**, reported and skipped | The page text cannot be kept past 7 days, so the gold set decays as venues update. That is the price of constraint 1, and re-labelling is part of the job |
 | Summary quality | Not in the gold set. Scored by an optional faithfulness judge (PR 25) and bounded by the verbatim guard | A hand-written reference summary measures wording, not truth |
 | Dev MCP | `queries/events.py` + `mcp_server.py` expose venues, page **metadata** (status, hash, word count, extraction state), exhibitions, events and `llm_calls` cost. **Never `raw_text`.** Labelling reads the live page in a browser | Keeps third-party text out of conversation transcripts |
 
@@ -249,14 +249,30 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | 21a | Migration 0006: `venue_pages.links`. `crawl` stores an `ok` listing's numbered links; `purge-pages` NULLs them with the text | Links are stored for listings only, never without `raw_text` (CHECK), and are gone after 7 days |
 | 22 | Migration 0007: `exhibitions`, `art_events`, extraction markers on `venue_pages`; classified in `test_no_verbatim.py`. `cli extract` (skip unchanged, `--venue`, `--limit`, `--dry-run`, report with cost from `llm_calls`). `extract` passes a listing's stored links; crawl follows `detail_url` | Second run on unchanged pages makes zero model calls (met 2026-10-29). Version 3 on the pilots: no listing cut off, a listing costs less than v1's measured $0.038, and the cost is recorded in § 6 (met 2026-10-30: ~$0.022 a listing) |
 | 23 | `queries/events.py` (read-only, async, no agent/transport concerns) + `mcp_server.py` (`mcp` in the dev group) | Usable from Claude Code; no tool returns `raw_text` (tested) |
-| 24 | `eval/extraction.py` (pure scorer) + `cli eval-extraction` + labelling ~30 pages and the correct listing URL per venue | Done-when above. Reports item recall and precision (title match), date and artist accuracy on matched items, false positives on negative pages, stale count and cost. For discovery: accuracy vs the human-labelled listings, the ambiguous rate (human load), and **accepted-but-wrong** (the dangerous case) |
+| 24 | `eval/extraction.py` (pure scorer) + `cli eval-extraction` + labelling ~30 pages and the correct listing URL per venue | Done-when above. Reports item recall and precision (title match), date and artist accuracy on matched items, false positives on negative pages, stale count and cost. For discovery: accuracy vs the human-labelled listings, the ambiguous rate (human load), and **accepted-but-wrong** (the dangerous case) | Met 2026-11-09: 36 pages, 14 venues, 10 with no current show; runs agree except on one page (baseline below) |
 | 25 | *(optional)* Summary faithfulness judge, `purpose=judge`, `JUDGE_MODEL` defaulting to the chat model (already in IAM and `pricing.yaml`) | Per-summary supported/unsupported in the eval report |
 
 PR 21 depends only on the client and can run in parallel with 17–20. `discover` runs by hand in P2; P6 schedules it monthly alongside the nightly crawl. PR 24 is mostly human work: Claude Code can draft labels through the MCP server and the live page, but "hand-checked" means a person confirms every item.
 
 **Provisional quality bar** (an input to the P3 decision, not a gate): item recall ≥ 0.8, precision ≥ 0.9, date accuracy ≥ 0.9 on matched items, zero items invented on negative pages.
 
-**Cost:** discovery ~$0.02 per site per month (≈5k tokens for pass 1, ≈4k per candidate for pass 2), so ~$0.40/month for the pilots and ~$3/month at 158 venues. First pilot extraction: $0.72 for 19 listings on version 1 (§ 6). Each eval run ~$0.2, plus ~$1 with the Opus judge. Crawling is free.
+**Baseline, 2026-11-09** (`EXTRACT_VERSION` 3, Haiku 4.5; gold set: 36 pages, 14 venues, 200 items, 12 listings `partial`, 2 empty):
+
+| Metric | Score | Bar |
+|---|---|---|
+| Recall | 0.98 (197/200) | met |
+| Precision (24 non-partial pages) | 1.00 (60/60) or 0.78 (60/77) | met in 2 of 3 runs |
+| Dates / artists / at_venue / kind, on matched | 0.98 / 0.99 / 0.99 / 1.00 | met |
+| Invented on empty pages | 0 on 2 | met |
+| Discovery | 14 of 16 correct, 2 ambiguous, **0 accepted-but-wrong** | — |
+| Cost | $0.61 a run (36 pages, 39–40 calls) | — |
+
+- **Run-to-run noise is one page.** Three runs scored every page alike except MACBA's `un-museu-fora-del-museu`, one show of 17 works shown around the city: 1 item in two runs, 18 in the third (and in the draft). At temperature 0. Those 17 extras are the whole precision swing.
+- **Repeated dates are merged:** La Escocesa's events on separate days come back as one run (11-05 → 12-01), so 3 misses and 2 date errors. The prompt's "record each one once" is the likely cause; fixing it bumps `EXTRACT_VERSION`.
+- Smaller: a year typo on the page drops a run's dates (FUGA, `resolve_dates` refuses end < start), an artist named only in the title is left out (Miró), one `at_venue` (Chiquita Room).
+- Discovery calibration is too thin to retune: `agenda medium` 0 of 1, `other high` 1 of 2 were listings; `current_listing high` 16 of 16.
+
+**Cost:** discovery ~$0.02 per site per month (≈5k tokens for pass 1, ≈4k per candidate for pass 2), so ~$0.40/month for the pilots and ~$3/month at 158 venues. First pilot extraction: $0.72 for 19 listings on version 1 (§ 6). Each eval run $0.61 over the 36-page gold set (measured), plus ~$1 with the Opus judge. Crawling is free.
 
 ---
 
