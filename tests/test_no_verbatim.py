@@ -26,6 +26,10 @@ ours. The prompt forbids reproducing ~25 consecutive words; `extract.longest_sha
 20. A summary that copies is sent back once, and one that copies twice is dropped while the facts
 are kept. The tests here plant a copied span and check each step.
 
+Judge half (P2): the faithfulness judge reads the page and answers with claims the report prints,
+so a claim must be a passage of *our* summary. One quoted from the page is refused, the retry is
+told so without the quote, and a second one fails the page with nothing of it in the error.
+
 Dev MCP half (P2): `mcp_server.py` puts query results into a Claude Code conversation, and a
 transcript is one more place prose can be kept. No tool may return `raw_text` or link text: no
 tool's output schema has a field for it, and a page whose text and links carry planted markers
@@ -44,7 +48,7 @@ from mcp.types import TextContent
 from art_curator.db.models import Base
 from art_curator.eval.extraction import GoldItem, GoldPage, GoldSet, load_gold
 from art_curator.ingest.graf import DROP_KEYS, DROP_PREFIXES, banned_keys, scrub
-from art_curator.llm import extract
+from art_curator.llm import extract, judge
 from art_curator.llm.extract import MAX_SHARED_WORDS, longest_shared_run
 from tests.corpus import LINK_MARKER, LISTING_URL, PAGE_MARKER, call_tools, list_tools
 from tests.db import run_sql
@@ -459,6 +463,52 @@ def test_a_copy_after_an_invalid_answer_is_dropped_without_a_third_call():
 
     assert result.exhibitions[0].summary_en is None
     assert (result.summaries_dropped, len(stub.calls)) == (1, 2)
+
+
+# --- Judge: a verdict carries no page text --------------------------------------------------------
+
+
+def _verdicts(claim: str) -> dict:
+    return {"verdicts": [{"summary": 1, "verdict": "unsupported", "unsupported_claims": [claim]}]}
+
+
+def _judge(stub: StubLlm) -> list[judge.Judgement]:
+    return asyncio.run(
+        judge.judge_summaries(
+            stub.client,
+            "global.anthropic.claude-opus-4-6-v1",
+            venue_name="Galeria Exemple",
+            url="https://www.exemple.cat/ca/exposicions/prova-u",
+            text=PAGE_TEXT,
+            summaries=[judge.Summary("Prova U", OWN_SUMMARY)],
+        )
+    )
+
+
+def test_a_claim_quoted_from_the_page_is_sent_back_without_the_quote():
+    own_claim = "hang alongside her weather diaries"
+    stub = StubLlm()
+    stub.tool_reply(judge.TOOL, _verdicts(_span(12)), tool_use_id="use_1")
+    stub.tool_reply(judge.TOOL, _verdicts(own_claim))
+
+    [judgement] = _judge(stub)
+
+    assert judgement.claims == (own_claim,)
+    feedback = json.dumps(stub.converse_requests[1]["messages"][2])
+    assert "not copied from summary 1" in feedback
+    assert _span(4) not in feedback
+
+
+def test_a_page_quoted_twice_fails_with_nothing_of_it_in_the_error():
+    stub = StubLlm()
+    stub.tool_reply(judge.TOOL, _verdicts(_span(12)))
+    stub.tool_reply(judge.TOOL, _verdicts(_span(12)))
+
+    with pytest.raises(judge.JudgeError) as failed:
+        _judge(stub)
+
+    assert "not copied from summary 1" in str(failed.value)
+    assert _span(4) not in str(failed.value)
 
 
 # --- Dev MCP: page text never reaches a conversation ---------------------------------------------

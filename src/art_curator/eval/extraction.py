@@ -43,6 +43,11 @@ Discovery, per labelled venue, from what `discover` left in `venue_seeds`:
 
 Then, per `(page_type, confidence)`, how many candidates were labelled listings. That is what the
 routing thresholds in `ingest/discover.py` are tuned against.
+
+Summaries, with `--judge`: the gold set has none to compare against, so `llm/judge.py` reads each
+scored page's `summary_en`s against the page and says whether every statement is supported. The
+share supported is reported, with each unsupported summary's claims: passages of our summary,
+never of the page.
 """
 
 from collections import Counter
@@ -75,6 +80,7 @@ from art_curator.llm.extract import (
     Exhibition,
     Extraction,
 )
+from art_curator.llm.judge import Judgement, Summary
 
 GOLD_FILE = "gold/extraction.yaml"
 
@@ -499,6 +505,45 @@ def score_discovery(
     return DiscoveryScore(tuple(venues), tuple(calibration), tuple(unlabelled))
 
 
+# --- summaries -----------------------------------------------------------------------------------
+
+
+def summaries(extraction: Extraction) -> list[Summary]:
+    """Every summary extraction wrote, exhibitions then events, each in page order. A listing
+    has none: only a show's own page is described."""
+    return [
+        Summary(item.title, item.summary_en)
+        for item in (*extraction.exhibitions, *extraction.events)
+        if item.summary_en
+    ]
+
+
+@dataclass(frozen=True)
+class JudgedPage:
+    """One page's summaries and the judge's verdict on each, in the same order."""
+
+    url: str
+    summaries: tuple[Summary, ...]
+    judgements: tuple[Judgement, ...] = ()
+    error: str = ""  # the judge gave no usable answer, and the page's summaries are unjudged
+
+    @property
+    def unsupported(self) -> list[tuple[Summary, Judgement]]:
+        if self.error:  # nothing was judged, so nothing was found unsupported
+            return []
+        return [
+            (summary, judgement)
+            for summary, judgement in zip(self.summaries, self.judgements, strict=True)
+            if not judgement.supported
+        ]
+
+
+def supported(pages: Sequence[JudgedPage]) -> Ratio:
+    """Summaries the judge found supported, out of those it judged."""
+    judgements = [judgement for page in pages for judgement in page.judgements]
+    return Ratio(sum(judgement.supported for judgement in judgements), len(judgements))
+
+
 # --- the report ----------------------------------------------------------------------------------
 
 
@@ -526,13 +571,15 @@ def report(
     scores: Sequence[PageScore],
     skipped: Sequence[Skipped],
     discovery: DiscoveryScore,
+    judged: Sequence[JudgedPage] | None = None,
     stopped: str = "",
 ) -> list[str]:
     """What `eval-extraction` prints: what the gold set covers, the scores, every scored page
-    with what it got wrong, the pages that were not scored, then discovery.
+    with what it got wrong, the pages that were not scored, discovery, then the judge's verdict
+    on the summaries when it ran (`judged` is None when it did not).
 
-    Titles, artists and dates are printed: they are facts, and in the gold file already. Page
-    text never is."""
+    Titles, artists and dates are printed: they are facts, and in the gold file already. So are
+    the judge's unsupported claims: they are passages of our summaries. Page text never is."""
     lines: list[str] = []
 
     def block(label: str, *parts: str) -> None:
@@ -625,6 +672,21 @@ def report(
             )
         for name in discovery.unlabelled:
             block("unlabelled", name, "discovery has verdicts for it, but no listing is labelled")
+
+    if judged is not None:
+        unjudged = [page for page in judged if page.error]
+        block(
+            "summaries",
+            f"{supported(judged)} supported, by the judge",
+            f"{len(unjudged)} pages unjudged" if unjudged else "",
+        )
+        for page in judged:
+            for summary, judgement in page.unsupported:
+                block("unsupported", page.url, repr(summary.title))
+                for claim in judgement.claims:
+                    detail("claim", repr(claim))
+        for page in unjudged:
+            block("unjudged", page.url, page.error)
 
     if stopped:
         block("stopped", f"the endpoint refused a call: {stopped}")

@@ -1,6 +1,6 @@
 """`eval/extraction.py`, `eval/runner.py` and `cli eval-extraction`: the gold set, how items are
 matched and scored, discovery against the labelled listings, where a labelled page's text comes
-from, and the drafts.
+from, the drafts, and the judge's verdict on the summaries.
 
 No model is called: `StubLlm` fakes the wire. Every page and label here is invented; the listing
 is the synthetic fixture `tests/fixtures/crawl/listing.html`.
@@ -45,14 +45,16 @@ from art_curator.ingest.crawl import text_hash
 from art_curator.ingest.discover import url_key
 from art_curator.ingest.extraction import StoredLink
 from art_curator.ingest.http import RobotsPolicy, open_client
-from art_curator.llm import extract
+from art_curator.llm import extract, judge
 from art_curator.llm.client import db_recorder
 from art_curator.llm.extract import MAX_LISTED_ITEMS, Extraction
+from art_curator.llm.judge import Judgement, Summary
 from tests.db import alembic_config, run_sql
 from tests.llm_stub import StubLlm
 from tests.site_stub import HOST, LISTING, POLICY, FakeSite, html, no_sleep
 
 HAIKU = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+OPUS = "global.anthropic.claude-opus-4-6-v1"
 VENUE = "Galeria Exemple"
 LISTING_URL = f"{HOST}/ca/exposicions/"
 DETAIL_URL = f"{HOST}/ca/exposicions/prova-u"
@@ -451,6 +453,46 @@ def test_the_report_does_not_call_what_a_partial_listing_found_past_its_labels_e
     assert not any("extra " in line for line in lines)
 
 
+OWN_SUMMARY = "Paintings on reclaimed wood recall a village lost to a reservoir."
+TRAVELS = "It travels to Madrid next spring."
+
+
+def test_only_items_with_a_summary_are_judged_exhibitions_first():
+    found = Extraction(
+        (show(summary_en=OWN_SUMMARY), show("Segona mostra")),
+        (event("Inauguració", summary_en="An opening with the artist."),),
+    )
+
+    assert evaluation.summaries(found) == [
+        Summary("Prova U", OWN_SUMMARY),
+        Summary("Inauguració", "An opening with the artist."),
+    ]
+
+
+def test_the_report_gives_the_share_supported_and_each_unsupported_claim():
+    invented = Summary("Prova U", f"{OWN_SUMMARY} {TRAVELS}")
+    judged = [
+        evaluation.JudgedPage(
+            DETAIL_URL,
+            (invented, Summary("Inauguració", "An opening.")),
+            (Judgement(False, (TRAVELS,)), Judgement(True)),
+        ),
+        evaluation.JudgedPage(f"{HOST}/b", (invented,), error="record_verdicts: no usable answer"),
+    ]
+    nothing = evaluation.DiscoveryScore()
+
+    lines = evaluation.report(GoldSet(), FETCHED_ON, [], [], nothing, judged=judged)
+    without = evaluation.report(GoldSet(), FETCHED_ON, [], [], nothing)
+
+    assert lines[-4:] == [
+        "summaries   0.50 (1/2) supported, by the judge   1 pages unjudged",
+        f"unsupported {DETAIL_URL}   'Prova U'",
+        f"            claim     '{TRAVELS}'",
+        f"unjudged    {HOST}/b   record_verdicts: no usable answer",
+    ]
+    assert not any(line.startswith("summaries") for line in without)
+
+
 # --- the labelled pages' text --------------------------------------------------------------------
 
 
@@ -610,6 +652,62 @@ def test_drafts_are_for_pages_not_labelled_yet_that_still_hold_text():
     assert runner.draft_pages(rows, GoldSet(), "MACBA") == []
 
 
+def _verdict(number: int = 1, *claims: str) -> dict:
+    return {
+        "summary": number,
+        "verdict": "unsupported" if claims else "supported",
+        "unsupported_claims": list(claims),
+    }
+
+
+def test_every_page_with_summaries_is_judged_against_its_own_text():
+    stub = StubLlm()
+    stub.tool_reply(judge.TOOL, {"verdicts": [_verdict()]})
+    stub.tool_reply(judge.TOOL, {"verdicts": []})
+    stub.tool_reply(judge.TOOL, {"verdicts": []})
+    described = Extraction((show(summary_en=OWN_SUMMARY),), ())
+    results = [
+        runner.Result(_text(), Extraction((show(),), ())),  # a listing: nothing to judge
+        runner.Result(_text(DETAIL_URL), described),
+        runner.Result(_text(f"{HOST}/fallida"), error="no usable answer"),
+        runner.Result(_text(f"{HOST}/b"), described),
+    ]
+
+    done = asyncio.run(runner.judge_all(stub.client, OPUS, results))
+
+    ok, unjudged = done.pages
+    assert (ok.url, ok.judgements) == (DETAIL_URL, (Judgement(True),))
+    assert (unjudged.url, unjudged.judgements) == (f"{HOST}/b", ())
+    assert "not judged: [1]" in unjudged.error
+    assert done.stopped == ""
+    assert LISTING_TEXT in stub.converse_requests[0]["messages"][0]["content"][0]["text"]
+    assert [row.purpose for row in stub.calls] == ["judge"] * 3
+
+
+def test_a_refused_judge_call_stops_the_judging_but_keeps_what_was_judged():
+    stub = StubLlm()
+    stub.tool_reply(judge.TOOL, {"verdicts": [_verdict()]})
+    stub.converse_stub.add_client_error(
+        "converse", service_error_code="ThrottlingException", service_message="Too many requests"
+    )
+    described = Extraction((show(summary_en=OWN_SUMMARY),), ())
+    results = [runner.Result(_text(url), described) for url in (DETAIL_URL, f"{HOST}/b", HOST)]
+
+    done = asyncio.run(runner.judge_all(stub.client, OPUS, results))
+
+    assert [page.url for page in done.pages] == [DETAIL_URL]
+    assert done.stopped.startswith("ThrottlingException")
+
+
+def test_judge_and_draft_are_not_run_together(tmp_path):
+    result = CliRunner().invoke(
+        cli.app, ["eval-extraction", "--judge", "--draft", str(tmp_path / "d.yaml")]
+    )
+
+    assert result.exit_code == 1
+    assert "use one or the other" in result.output
+
+
 # --- cli (database) ------------------------------------------------------------------------------
 
 VENUE_ROWS = f"""
@@ -626,6 +724,13 @@ SEED_ROW = f"""
 INSERT INTO venue_seeds (venue_id, url, page_type, confidence, dated_items, language, status,
                          model)
 VALUES (1, '{LISTING_URL}', 'current_listing', 'high', 3, 'ca', 'accepted', '{HAIKU}')
+"""
+DETAIL_TEXT = "Prova U. Artista Inventada. Pintures sobre fusta recuperada. 12.09 – 30.11"
+DETAIL_ROW = f"""
+INSERT INTO venue_pages (venue_id, url, kind, status, http_status, content_hash, raw_text,
+                         fetched_at)
+VALUES (1, '{DETAIL_URL}', 'detail', 'ok', 200, '{text_hash(DETAIL_TEXT)}', $${DETAIL_TEXT}$$,
+        now())
 """
 UNTOUCHED = (
     "SELECT (SELECT count(*) FROM exhibitions) + (SELECT count(*) FROM art_events), "
@@ -656,7 +761,7 @@ def run(db, monkeypatch) -> Iterator[Callable[..., Any]]:
     """`run(*args, gold=GoldSet)` invokes `eval-extraction` against `db` with that gold set.
     `run.stub` is the model stub, `run.site` the fake venue site."""
     monkeypatch.setenv("DATABASE_URL", db.render_as_string(hide_password=False))
-    for var in ("EXTRACT_MODEL", "LANGFUSE_ENABLED"):
+    for var in ("EXTRACT_MODEL", "CHAT_MODEL", "JUDGE_MODEL", "LANGFUSE_ENABLED"):
         monkeypatch.delenv(var, raising=False)
     _clear_caches()
     stub = StubLlm(record=db_recorder(get_sessionmaker()))
@@ -702,6 +807,27 @@ def test_eval_scores_the_stored_text_and_discovery_and_writes_nothing(run, db):
     assert "Fictici" not in result.output  # page text is never printed
 
 
+def test_eval_of_one_venue_scores_only_its_discovery(run, db):
+    other_venue = f"""
+    INSERT INTO venues (id, source_venue_id, name, slug, website_url, crawl_enabled, is_pilot)
+    OVERRIDING SYSTEM VALUE VALUES (2, 102, 'MACBA', 'macba', 'https://macba.test/', true, true);
+    INSERT INTO venue_seeds (venue_id, url, page_type, confidence, dated_items, language, status,
+                             model)
+    VALUES (2, 'https://macba.test/ara', 'current_listing', 'high', 3, 'ca', 'accepted',
+            '{HAIKU}')
+    """
+    run_sql(db, SEED_ROW, other_venue)
+    gold = GoldSet(listings={VENUE: (LISTING_URL,), "MACBA": ("https://macba.test/ara",)})
+
+    everyone = run(gold=gold)
+    one = run("--venue", "galeria exemple", gold=gold)
+
+    assert "discovery   2 labelled venues   2 correct" in everyone.output
+    assert one.exit_code == 0, one.output
+    assert "discovery   1 labelled venues   1 correct" in one.output
+    assert "unlabelled" not in one.output  # MACBA's verdicts are not this venue's
+
+
 def test_eval_of_a_venue_the_gold_set_does_not_label_names_the_known(run):
     result = run("--venue", "MACBA", gold=GoldSet(pages=(gold_page(),)))
 
@@ -727,4 +853,28 @@ def test_draft_writes_unconfirmed_labels_and_never_overwrites(run, db, tmp_path)
     )
     assert again.exit_code == 1
     assert "exists" in again.output
+    assert run_sql(db, UNTOUCHED) == [[(0, 0)]]
+
+
+def test_judge_checks_the_summaries_with_the_chat_model_and_counts_its_cost(run, db):
+    run_sql(db, DETAIL_ROW)
+    page = gold_page(DETAIL_URL, label(), kind="detail", content_hash=text_hash(DETAIL_TEXT))
+    detail_show = _show_input(link=None, summary_en=OWN_SUMMARY, themes=[], media=["painting"])
+    run.stub.tool_reply(extract.TOOL, {"exhibitions": [detail_show], "events": []})
+    run.stub.tool_reply(
+        judge.TOOL,
+        {"verdicts": [_verdict(1, "a village lost to a reservoir")]},
+        input_tokens=4000,
+        output_tokens=100,
+    )
+
+    result = run("--judge", gold=GoldSet(pages=(page,)))
+
+    assert result.exit_code == 0, result.output
+    assert "summaries   0.00 (0/1) supported, by the judge" in result.output
+    assert f"unsupported {DETAIL_URL}   'Prova U'" in result.output
+    assert "claim     'a village lost to a reservoir'" in result.output
+    assert "cost        $0.022500   2 model calls   judge $0.022500 in 1" in result.output
+    assert run.stub.converse_requests[1]["modelId"] == OPUS  # JUDGE_MODEL unset: the chat model
+    assert "fusta recuperada" not in result.output  # page text is never printed
     assert run_sql(db, UNTOUCHED) == [[(0, 0)]]

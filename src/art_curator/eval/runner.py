@@ -10,6 +10,8 @@ runs:
    stale. Network, no database.
 4. `extract_all()`: model only. Each page goes through `llm/extract.extract_page`, the call
    `cli extract` makes, with the same prompt by page kind.
+5. `judge_all()`, with `--judge`: model only. Each page extraction wrote summaries for goes to
+   `llm/judge.judge_summaries` with the text they were written from.
 
 **The eval reads the corpus and never changes it.** A page it fetches is held in memory and
 dropped; what extraction finds is scored and dropped. The only rows it writes are the `llm_calls`
@@ -39,9 +41,11 @@ from art_curator.db.models import Venue, VenuePage, VenueSeed
 from art_curator.eval.extraction import (
     GoldPage,
     GoldSet,
+    JudgedPage,
     SeedVerdict,
     Skipped,
     SkipReason,
+    summaries,
 )
 from art_curator.ingest.crawl import text_hash
 from art_curator.ingest.discover import collect_links, url_key
@@ -51,6 +55,7 @@ from art_curator.ingest.matching import normalize_name
 from art_curator.ingest.pages import PageStatus, fetch_page
 from art_curator.llm.client import LlmClient
 from art_curator.llm.extract import Extraction, ExtractionError, PageLink, extract_page
+from art_curator.llm.judge import JudgeError, judge_summaries
 
 PAGES = VenuePage.__table__
 VENUES = Venue.__table__
@@ -120,8 +125,11 @@ async def load_stored(session: AsyncSession) -> dict[str, StoredPage]:
     return stored
 
 
-async def load_verdicts(session: AsyncSession) -> list[SeedVerdict]:
-    return [
+async def load_verdicts(session: AsyncSession, venue: str | None = None) -> list[SeedVerdict]:
+    """What `discover` left in `venue_seeds`. `venue` keeps only that venue's, compared as
+    `normalize_name`, as `GoldSet.for_venue` keeps its listings: otherwise every other venue's
+    verdicts would be reported as unlabelled."""
+    verdicts = [
         SeedVerdict(**row._mapping)
         for row in await session.execute(
             select(
@@ -135,6 +143,9 @@ async def load_verdicts(session: AsyncSession) -> list[SeedVerdict]:
             .order_by(SEEDS.c.id)
         )
     ]
+    if venue is None:
+        return verdicts
+    return [v for v in verdicts if normalize_name(v.venue_name) == normalize_name(venue)]
 
 
 # --- the labelled pages' text --------------------------------------------------------------------
@@ -223,6 +234,39 @@ async def extract_all(llm: LlmClient, model: str, pages: Sequence[PageText]) -> 
         else:
             results.append(Result(page, extraction))
     return Extracted(results)
+
+
+@dataclass(frozen=True)
+class Judged:
+    pages: list[JudgedPage]
+    stopped: str = ""  # as in `Extracted`
+
+
+async def judge_all(llm: LlmClient, model: str, results: Sequence[Result]) -> Judged:
+    """Judge the summaries on every page that has some, against the text they were written
+    from. A page the judge gives no usable answer for is kept, unjudged; a call the endpoint
+    refuses stops the run there."""
+    pages = []
+    for result in results:
+        if result.extraction is None or not (written := summaries(result.extraction)):
+            continue
+        page = result.page
+        try:
+            judgements = await judge_summaries(
+                llm,
+                model,
+                venue_name=page.venue_name,
+                url=page.url,
+                text=page.text,
+                summaries=written,
+            )
+        except JudgeError as exc:
+            pages.append(JudgedPage(page.url, tuple(written), error=str(exc)))
+        except (BotoCoreError, ClientError) as exc:
+            return Judged(pages, stopped=f"{type(exc).__name__}: {exc}")
+        else:
+            pages.append(JudgedPage(page.url, tuple(written), tuple(judgements)))
+    return Judged(pages)
 
 
 # --- drafting labels -----------------------------------------------------------------------------

@@ -498,6 +498,14 @@ def eval_extraction(
             "against the live page.",
         ),
     ] = None,
+    judge: Annotated[
+        bool,
+        typer.Option(
+            "--judge",
+            help="Also have JUDGE_MODEL check every summary extraction wrote against its page: "
+            "supported or not. About five cents a show's own page on Opus.",
+        ),
+    ] = False,
 ) -> None:
     """Score extraction against the hand-checked gold set, and discovery against its labelled
     listings. Calls a model: about two cents a labelled page (PLAN.md § 6).
@@ -507,6 +515,9 @@ def eval_extraction(
     beyond that nothing is written but the cost of the calls. The scores are a baseline, not a
     gate: the run exits 1 only if the gold set is invalid or the endpoint refused a call.
     """
+    if draft is not None and judge:
+        typer.echo("FAIL: --judge scores a run, and --draft does not score: use one or the other.")
+        raise typer.Exit(1)
     try:
         everything = evaluation.load_gold()
     except ValidationError as exc:
@@ -522,14 +533,23 @@ def eval_extraction(
         known = ", ".join(everything.venues) or "none"
         typer.echo(f"FAIL: the gold set labels nothing for {venue or 'any venue'}. Known: {known}")
         raise typer.Exit(1)
-    run = asyncio.run(_eval(gold))
+    run = asyncio.run(_eval(gold, venue, judge))
 
     typer.echo("Eval extraction")
     for line in evaluation.report(
-        gold, run.today, run.scores, run.skipped, run.discovery, run.stopped
+        gold,
+        run.today,
+        run.scores,
+        run.skipped,
+        run.discovery,
+        judged=run.judged,
+        stopped=run.stopped,
     ):
         typer.echo(f"  {line}")
-    typer.echo(f"  {'cost':<11} ${run.cost_usd}   {run.calls} model calls")
+    cost = f"  {'cost':<11} ${run.cost_usd}   {run.calls} model calls"
+    if run.judged is not None:
+        cost += f"   judge ${run.judge_cost_usd} in {run.judge_calls}"
+    typer.echo(cost)
     if run.stopped:
         raise typer.Exit(1)
 
@@ -540,13 +560,16 @@ class _EvalRun:
     scores: list[evaluation.PageScore]
     skipped: list[evaluation.Skipped]
     discovery: evaluation.DiscoveryScore
+    judged: list[evaluation.JudgedPage] | None = None  # None when the judge was not asked
     calls: int = 0
     cost_usd: Decimal = Decimal(0)
+    judge_calls: int = 0
+    judge_cost_usd: Decimal = Decimal(0)
     stopped: str = ""
 
 
-async def _eval(gold: evaluation.GoldSet) -> _EvalRun:
-    model = get_settings().extract_model
+async def _eval(gold: evaluation.GoldSet, venue: str | None, judge: bool) -> _EvalRun:
+    settings = get_settings()
     llm = get_llm_client()
     try:
         async with get_sessionmaker()() as session:
@@ -554,7 +577,7 @@ async def _eval(gold: evaluation.GoldSet) -> _EvalRun:
             await session.commit()
             today = await eval_runner.today(session)
             stored = await eval_runner.load_stored(session)
-            verdicts = await eval_runner.load_verdicts(session)
+            verdicts = await eval_runner.load_verdicts(session, venue)
 
         with llm.tracer.start_as_current_span("eval-extraction") as span:
             trace_id, _ = telemetry.span_ids(span)
@@ -562,7 +585,16 @@ async def _eval(gold: evaluation.GoldSet) -> _EvalRun:
                 ready, skipped = await eval_runner.find_texts(
                     client, RobotsPolicy(client), gold.pages, stored, today
                 )
-            extracted = await eval_runner.extract_all(llm, model, [text for _, text in ready])
+            extracted = await eval_runner.extract_all(
+                llm, settings.extract_model, [text for _, text in ready]
+            )
+            stopped = extracted.stopped
+            judged = None
+            # A run the endpoint stopped is run again anyway: judging half of it is money spent
+            # twice.
+            if judge and not stopped:
+                judging = await eval_runner.judge_all(llm, settings.judge_model, extracted.results)
+                judged, stopped = judging.pages, judging.stopped
 
         # `zip` stops where the run did: the pages after a refused call are not scored.
         scores = [
@@ -572,7 +604,19 @@ async def _eval(gold: evaluation.GoldSet) -> _EvalRun:
         discovery = evaluation.score_discovery(gold.listings, verdicts)
         async with get_sessionmaker()() as session:
             calls, cost = await _spend(session, trace_id)
-        return _EvalRun(today, scores, skipped, discovery, calls, cost, extracted.stopped)
+            judge_calls, judge_cost = await _spend(session, trace_id, purpose="judge")
+        return _EvalRun(
+            today,
+            scores,
+            skipped,
+            discovery,
+            judged=judged,
+            calls=calls,
+            cost_usd=cost,
+            judge_calls=judge_calls,
+            judge_cost_usd=judge_cost,
+            stopped=stopped,
+        )
     finally:
         telemetry.setup_telemetry().force_flush()
         await get_engine().dispose()
@@ -633,15 +677,16 @@ async def _draft(gold: evaluation.GoldSet, venue: str | None, model: str) -> _Dr
         await get_engine().dispose()
 
 
-async def _spend(session: AsyncSession, trace_id: str | None) -> tuple[int, Decimal]:
-    """Model calls made under `trace_id`, and what they cost."""
-    calls, cost = (
-        await session.execute(
-            select(func.count(), func.coalesce(func.sum(LlmCall.cost_usd), 0)).where(
-                LlmCall.trace_id == trace_id
-            )
-        )
-    ).one()
+async def _spend(
+    session: AsyncSession, trace_id: str | None, purpose: str | None = None
+) -> tuple[int, Decimal]:
+    """Model calls made under `trace_id`, for `purpose` if given, and what they cost."""
+    query = select(func.count(), func.coalesce(func.sum(LlmCall.cost_usd), 0)).where(
+        LlmCall.trace_id == trace_id
+    )
+    if purpose is not None:
+        query = query.where(LlmCall.purpose == purpose)
+    calls, cost = (await session.execute(query)).one()
     return calls, cost
 
 
