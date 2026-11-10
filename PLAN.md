@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 planned: PRs 26–36 (§ 8).
-**Last updated:** 2026-11-10 (rev. 12)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PR 26 built (§ 8).
+**Last updated:** 2026-11-10 (rev. 13)
 
 ---
 
@@ -107,7 +107,7 @@ Each table lands in the phase that first writes it — no speculative schema.
 
 | Tool | Returns |
 |---|---|
-| `search_events(date_from, date_to, near? \| lat+lon?, radius_km?, kinds?, free_only?, query?, limit)` | Compact rows (~50 tok): prefixed id, kind, title, venue, start/end, `ends_in_days`, `distance_km`, artists/media/themes; plus `total` matched |
+| `search_events(date_from, date_to, near? \| lat+lon?, radius_km?, kinds?, free_only?, query?, limit)` | Compact rows (~50 tok): prefixed id, kind, title, venue, start/end, `ends_in_days`, `distance_km`, `at_venue`, `is_free`, artists/media/themes; plus `total` matched. `near` lands in PR 27, `query` in 35 |
 | `get_events(ids ≤ 10)` | `summary_en`, all facts, venue name/address/website, source/detail URL, price |
 | `remember(topic, fact, replaces?)` | Profile fact id |
 | `build_itinerary(event_ids, start_time, start_lat, start_lon)` | Order + maps link — P4 |
@@ -288,8 +288,11 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 | Search surface | One `search_events` over `exhibitions`, `art_events` and GRAF occurrences, one row shape, ids prefixed by source (`x:12`, `a:7`, `g:301`) | The model ranks one list; `get_events` must know which table an id names |
 | Compact rows | id, kind, title, venue, start/end, `ends_in_days`, `distance_km`, artists, media, themes. **No summary.** Plus `total` matched, so truncation shows | ~50 tokens a row; the summary is what hydrating is for |
 | Hydrate | `get_events(ids ≤ 10)`: `summary_en`, all facts, venue name/address/website, `detail_url`/`source_url`, GRAF price and free flag. **`get_venue` folds into it** | A separate venue tool costs a round and repeats what hydrate carries; there are no opening hours to return |
-| GRAF ↔ extracted | A GRAF event is hidden when an extracted item at a venue of the same profile has the same `title_key` and overlapping dates. Fuzzy `resolve` (§ 7) stays deferred until traces show duplicates | One exact rule in SQL; the fuzzy one is guesswork without traces |
-| Kinds | One vocabulary: `exhibition` + `EVENT_KINDS`; GRAF `event_category` ids mapped in code | The filter means the same thing on every source |
+| GRAF ↔ extracted | A GRAF event is hidden when an extracted item at a venue of the same profile has the same normalised title (GRAF's or its `title_en`) and overlapping dates. Fuzzy `resolve` (§ 7) stays deferred until traces show duplicates | One exact rule in SQL; the fuzzy one is guesswork without traces |
+| GRAF window | Search only occurrences the latest sync saw: a superseded occurrence or an event that left the window early is not listed | Both are what `last_seen_at` is for (CLAUDE.md § The GRAF API) |
+| Runs and place | Exhibition: open start and end when missing. Event: no end = its start day; no date = never searched. Off-venue or online: no distance, never in a radius | The same rules as the `not_over_on` queries; a venue's point is not where an off-site show is |
+| Price | `free_only` drops only what is *known* paid; extracted rows have `is_free` NULL | Venue pages give no price; dropping unknowns would empty the pilots |
+| Kinds | One vocabulary: `exhibition` + `EVENT_KINDS`; GRAF `event_category` ids mapped in code (`graf.CATEGORY_KINDS`, 10 ids read off `class_list` 2026-11-10; unknown → `other`) | The filter means the same thing on every source; GRAF serves no category taxonomy over REST |
 | Location | `near: <place>` resolved in SQL against `places` (Barcelona barris and districts, Catalan municipalities) and venue names, or `lat`/`lon` when the client sends a location (P5). Unknown or ambiguous → `is_error` with candidates | Geocoding from model memory is distance estimation (CLAUDE.md § 8) |
 | Dates | Tools take ISO dates only. Each conversation opens with today and a 14-day calendar (weekday → date) in `SITE_TIMEZONE`. A conversation ends after 6 h idle or at local midnight | "Saturday" is a lookup, not arithmetic; a calendar cannot outlive its day |
 | Prompt layout | System prompt fully static. Per-conversation context (calendar, profile snapshot, client location) is the first user turn, frozen | The static prefix stays shareable across users if chat moves to a 512-token-minimum model (CLAUDE.md § 6) |

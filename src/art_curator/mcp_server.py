@@ -12,7 +12,7 @@ browser. `tests/test_no_verbatim.py` checks every tool for it.
 
 from collections.abc import Awaitable, Callable
 from datetime import date
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
@@ -26,6 +26,8 @@ from art_curator.queries import events as q
 INSTRUCTIONS = """\
 Read-only views of The Art Curator's database: venues, discovery seeds, crawled pages,
 the exhibitions and events extracted from them, GRAF's events, and model cost.
+search_events and get_events are the curator's own tools: all three sources as one list, then
+the details of a shortlist by its prefixed ids (x: exhibition, a: art event, g: GRAF).
 Tools return ids, facts and metadata, never a page's text: to read a page, open its URL in a
 browser. summary_en is written by our extraction model, not copied from the venue.
 Dates are days in Europe/Madrid. Filter by venue_id from the venues tool."""
@@ -37,6 +39,8 @@ VenueId = Annotated[int | None, Field(description="Only this venue (an id from `
 NotOverOn = Annotated[
     date | None, Field(description="Only items not over on this day (YYYY-MM-DD).")
 ]
+Kind = Literal[q.KINDS]
+EventId = Annotated[str, Field(pattern=q.EVENT_ID_PATTERN)]
 
 mcp = MCPServer("art-curator", instructions=INSTRUCTIONS)
 
@@ -131,6 +135,57 @@ async def graf_events(
     """GRAF's events, one row per occurrence: title, dates, price, URLs and when a sync last
     saw it. Facts only; GRAF's descriptions are never stored."""
     return await _read(q.graf_events, venue_id=venue_id, not_over_on=not_over_on, limit=limit)
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def search_events(
+    date_from: Annotated[date, Field(description="First day of the visit (YYYY-MM-DD).")],
+    date_to: Annotated[date, Field(description="Last day; date_from again for a single day.")],
+    lat: Annotated[
+        float | None, Field(ge=-90, le=90, description="Latitude to measure from.")
+    ] = None,
+    lon: Annotated[
+        float | None, Field(ge=-180, le=180, description="Longitude to measure from.")
+    ] = None,
+    radius_km: Annotated[
+        float | None, Field(gt=0, le=200, description="Only within this distance of lat/lon.")
+    ] = None,
+    kinds: Annotated[list[Kind] | None, Field(description="Only these kinds.")] = None,
+    free_only: Annotated[
+        bool, Field(description="Drop what is known to cost money; unknown prices stay.")
+    ] = False,
+    limit: Annotated[int, Field(ge=1, le=100, description="Most rows to return.")] = 40,
+) -> q.SearchResult:
+    """Exhibitions, art events and GRAF events on at some point in the dates, as one list:
+    id, kind, title, venue, start/end, ends_in_days, distance_km, artists, media, themes, and
+    `total` matched. A GRAF event extraction also found is listed once, under its x:/a: id."""
+    return await _read(
+        q.search_events,
+        date_from=date_from,
+        date_to=date_to,
+        lat=lat,
+        lon=lon,
+        radius_km=radius_km,
+        kinds=kinds,
+        free_only=free_only,
+        limit=limit,
+    )
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_events(
+    ids: Annotated[
+        list[EventId],
+        Field(
+            min_length=1,
+            max_length=q.MAX_HYDRATE,
+            description="Ids from search_events: x:12, a:7, g:301.",
+        ),
+    ],
+) -> list[q.EventDetail]:
+    """Everything held on each id: our summary, all facts, price (GRAF only), the item's own
+    page and the venue's name, address and website. Unknown ids are left out."""
+    return await _read(q.get_events, ids=ids)
 
 
 @mcp.tool(annotations=READ_ONLY)

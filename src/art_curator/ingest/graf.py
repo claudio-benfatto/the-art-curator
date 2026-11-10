@@ -57,6 +57,23 @@ DROP_KEYS = frozenset(
 )
 DROP_PREFIXES = ("desc_",)
 
+# `acf.event_category` onto the curator's kinds (`queries.events.KINDS`), so a `kinds` filter
+# means the same on every source. GRAF does not serve the category taxonomy over REST: each id
+# here is paired with the `event-category-<slug>` class its posts carry, read off the live window
+# and the homepage on 2026-11-10. An id not listed is `other`.
+CATEGORY_KINDS: dict[int, str] = {
+    103: "exhibition",  # exposicio
+    189: "opening",  # inauguracio
+    191: "other",  # altres
+    197: "performance",  # performance
+    204: "talk",  # presentacio
+    219: "screening",  # screening
+    244: "talk",  # seminari
+    305: "talk",  # xerrada
+    306: "other",  # trobada
+    481: "other",  # festival: a programme, not an art fair
+}
+
 # A term at exactly the null island is a missing coordinate, not a location in the Gulf of Guinea.
 NULL_ISLAND = (0.0, 0.0)
 

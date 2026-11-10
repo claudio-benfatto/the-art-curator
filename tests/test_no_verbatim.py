@@ -522,6 +522,9 @@ MCP_CALLS: dict[str, dict] = {
     "exhibitions": {},
     "art_events": {},
     "graf_events": {},
+    # Everything the listing wrote, searched and then hydrated.
+    "search_events": {"date_from": "2026-01-01", "date_to": "2026-12-31", "limit": 100},
+    "get_events": {"ids": ["x:2", "x:3", "a:1", "a:2", "a:3"]},
     "llm_costs": {},
 }
 PAGE_TEXT_FIELDS = PROSE_CACHE["venue_pages"] | {"text"}
