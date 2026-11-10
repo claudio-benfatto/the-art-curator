@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 in progress: PRs 17–25 built (24's baseline 2026-11-09; 25 not run live yet) (§ 8).
-**Last updated:** 2026-10-15 (rev. 11)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 planned: PRs 26–36 (§ 8).
+**Last updated:** 2026-11-10 (rev. 12)
 
 ---
 
@@ -24,7 +24,7 @@ Answer *"I have Saturday afternoon in Barcelona, I like video art and installati
 | Copyright | Facts from GRAF, prose from nobody — enforced in the schema | See CLAUDE.md § 1 | Display-layer filtering |
 | Crawl scope | ~20 pilot venues | Measure extraction accuracy before scaling | All 158 up front |
 | Retrieval | SQL hard filters (date, PostGIS radius) → compact rows → hydrate shortlist | Exact filtering; shortlisting legible in traces | Stuffing 30–60 full records |
-| Semantic ranking | pgvector over our own summaries, optional `query` on `search_events` — **P3** | Taste and "more like X" queries; one SQL query with PostGIS | Bedrock Knowledge Bases for events (no geo radius; would persist third-party prose) |
+| Semantic ranking | pgvector over our own summaries, optional `query` on `search_events` — **P3, gated on search truncating** (§ 8) | Taste and "more like X" queries; one SQL query with PostGIS | Bedrock Knowledge Bases for events (no geo radius; would persist third-party prose) |
 | Agent | Manual loop, hard cap 4 tool iterations, `iteration_count` traced | Refinement is the core interaction; cap bounds cost | Fixed workflow; multi-agent |
 | LLM provider | **Amazon Bedrock** | Multi-vendor models (incl. embeddings) under one IAM/bill; managed AWS services later | First-party API (Claude-only, no embeddings); Claude Max (cannot back an app) |
 | Chat model | Claude Opus 4.6 via `AnthropicBedrock` (InvokeModel) — **Claude-only** | Newest Claude this account can call (§ 9); keeps Claude's native API shape | Opus 5 / Mantle (refused); model-agnostic chat via Converse |
@@ -67,16 +67,16 @@ src/art_curator/
   llm/pricing.py           pricing.yaml → cost per call
   llm/extract.py           page → Exhibition[]
   llm/embed.py             summary → vector (via client.py)
-  queries/events.py        shared query module
-  ingest/                  http.py, graf.py, matching.py, sync.py (P1) · crawl.py, resolve.py
-  agent/                   loop.py, tools.py, profile.py
-  routes/itinerary.py
-  obs/                     telemetry.py, metrics.py
-  eval/                    extraction.py, curation.py
-  api/main.py              POST /chat (SSE), GET /events, GET /venues
-  clients/telegram_bot.py
+  queries/events.py        shared query module (incl. search_events, get_events, resolve_place)
+  ingest/                  http.py, graf.py, matching.py, sync.py (P1) · crawl.py, discover.py, extraction.py (P2) · places.py, embedding.py (P3)
+  agent/                   loop.py, tools.py, prompt.py, profile.py, store.py (conversations)
+  routes/itinerary.py      P4
+  obs/                     telemetry.py
+  eval/                    extraction.py, runner.py (P2) · curation.py (P3)
+  api/main.py              POST /chat (SSE), POST /feedback, DELETE /users/{id}/profile
+  clients/telegram_bot.py  P5
   mcp_server.py            dev-time only
-  cli.py                   smoke, sync-graf, crawl, extract, embed, eval-extraction, chat
+  cli.py                   smoke, sync-graf, discover, crawl, extract, eval-extraction · load-places, chat, eval-curation, embed
 ```
 
 ---
@@ -92,10 +92,14 @@ Each table lands in the phase that first writes it — no speculative schema.
 | | `venue_pages.links` (a listing's numbered same-site links; same TTL as `raw_text`) | P2 |
 | | `venue_pages.kind` (listing/detail) + extraction markers (status, hash, `EXTRACT_VERSION`, model, item count; no text) | P2 |
 | | `venue_seeds` (venue, listing URL, page type, confidence, dated-item count, language, status, model, `discovered_at`; no free text) | P2 |
-| | `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, `embedding`, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) | P2 (`embedding` P3) |
-| User | `users` · `profile_facts` (append-only, `superseded_by`) · `conversations` · `messages` · `interactions` · `itineraries` | P3 (`itineraries` P4) |
+| | `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) | P2 |
+| | `embedding` + embed markers on both (model, hash of the embedded text) | P3, gated (§ 8) |
+| Reference | `places` (name, aliases, kind barri/district/municipality, point; open data, CC BY) | P3 |
+| User | `users` (`client`, `external_id`) · `conversations` (context block, `ended_at`) · `messages` (API content blocks as sent, `trace_id`, `iteration_count`) · `profile_facts` (append-only, `superseded_by`) · `feedback` | P3 |
+| | `itineraries` | P4 |
 | Telemetry | `llm_calls` (trace/span, provider, model, purpose `chat/discover/extract/embed/judge/smoke`, tokens incl. cache, cost, latency, stop_reason) | P0 |
-| | `feedback` | P3 |
+
+`interactions` is dropped: `messages` + `feedback` cover what P3 and P5 read.
 
 ---
 
@@ -103,13 +107,12 @@ Each table lands in the phase that first writes it — no speculative schema.
 
 | Tool | Returns |
 |---|---|
-| `search_events(date_from, date_to, lat, lon, radius_km, categories, free_only, query?, limit)` | Compact rows (~50 tok): id, title, venue, date, one-liner, `distance_km` |
-| `get_events(ids)` | Full records |
-| `get_venue(venue_id)` | Detail, hours, website |
-| `remember(key, value, confidence)` | Profile fact |
-| `build_itinerary(event_ids, start_time, start_lat, start_lon)` | Order + maps link |
+| `search_events(date_from, date_to, near? \| lat+lon?, radius_km?, kinds?, free_only?, query?, limit)` | Compact rows (~50 tok): prefixed id, kind, title, venue, start/end, `ends_in_days`, `distance_km`, artists/media/themes; plus `total` matched |
+| `get_events(ids ≤ 10)` | `summary_en`, all facts, venue name/address/website, source/detail URL, price |
+| `remember(topic, fact, replaces?)` | Profile fact id |
+| `build_itinerary(event_ids, start_time, start_lat, start_lon)` | Order + maps link — P4 |
 
-The model does no date/distance arithmetic. `query` (semantic ranking) lands in P3.
+The model does no date/distance arithmetic: dates are ISO strings read off a calendar, places are names resolved in SQL. `get_venue` folded into `get_events` (§ 8, P3). `query` is gated (§ 8, P3).
 
 ---
 
@@ -128,7 +131,7 @@ Assumptions: Bedrock global endpoint at Anthropic list price (verify in P0; regi
 | Extraction, pilot initial | v1 $0.72 (19 listings); v2 $0.76 (listings) + $0.27 (26 detail pages); **v3 $0.69 for all 45 pages** (46 calls, none cut off), so ~$0.41 for the 19 listings at the v2 detail-page rate |
 | Extraction, pilot nightly (~10% changed) | ~$0.07/night, ~$2/mo |
 | Extraction, all 158 venues | ~8× the pilots: ~$5.5 initial, ~$16/mo nightly |
-| Chat, Opus 4.6, compact + hydrate + caching | ~$0.05/exchange (same per-token price as Opus 5; caching starts only past 4096 tokens) |
+| Chat, Opus 4.6, compact + hydrate + caching | ~$0.05/exchange (same per-token price as Opus 5; caching starts only past 4096 tokens) — **likely low**: a first exchange of 3 calls is ~3k + 6k + 9k input tokens with nothing cached under 4096, ≈ $0.07–0.09 in + ~$0.04 out. PR 31 measures it |
 | **PoC total** (300 exchanges + pilot extraction) | **~$18/mo** |
 
 Embeddings are noise. Chat starts on Opus 4.6; measure a cheaper or newer model at P3, whichever the account can call by then.
@@ -155,7 +158,7 @@ All 20 resolve; 18 have a crawlable URL — ProjecteSD (blank profile URL) and #
 | **P0** | Compose (Postgres+PostGIS+pgvector, Langfuse), schema (facts, `venue_pages`, `llm_calls`), config, Terraform (state backend + least-privilege Bedrock IAM + GitHub OIDC role), GitHub Actions CI, instrumented Bedrock client, OTel + `llm_calls` | Smoke call to Haiku 4.5 (runtime Converse) traced with correct cost — Opus 5 / Mantle blocked pending AWS, see § 9 |
 | **P1** | `sync-graf` | ~570 venue terms, ~556 with geometry (`0,0` → NULL); ≥145 joined to a website, ≤2 ambiguous; 20/20 pilots; a second run changes no ids, joins or `first_seen_at` |
 | **P2** | `crawl` + `extract` + gold-set eval + dev MCP server | Extraction scored against ~30 hand-checked pages, re-runnable |
-| **P3** | Agent loop, `/chat`, `cli chat`, feedback, **pgvector ranking** | Sensible curated answers; cache hit >80% on exchanges past Opus 4.6's 4096-token minimum; cost within 2× estimate; `iteration_count` recorded; semantic ranking A/B'd against filters-only |
+| **P3** | Agent loop, `/chat`, `cli chat`, profile, feedback, curation eval, pgvector ranking (gated) | `eval-curation` baseline (§ 8, P3 breakdown); cache hit >80% on calls past Opus 4.6's 4096-token minimum; cost within 2× estimate; `iteration_count` recorded; semantic ranking A/B'd, or skipped on measured evidence |
 | **P4** | `build_itinerary` | Ordered itinerary + working maps link |
 | **P5** | Telegram bot | Streamed replies, location, 👍/👎, `/forget` |
 | **P6** | Nightly scheduler + `venue_pages` purge | Unattended refresh; cache ≤7 days |
@@ -274,6 +277,57 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 
 **Cost:** discovery ~$0.02 per site per month (≈5k tokens for pass 1, ≈4k per candidate for pass 2), so ~$0.40/month for the pilots and ~$3/month at 158 venues. First pilot extraction: $0.72 for 19 listings on version 1 (§ 6). Each eval run $0.61 over the 36-page gold set (measured), plus ~$1 with the Opus judge. Crawling is free.
 
+### P3 breakdown
+
+**Scope:** what P2 stored for the pilots, plus GRAF's live events (region-wide, facts only). The gold set alone holds 36 current exhibitions and 24 current events over 12 venues; GRAF adds 56–104. **Done when:** `eval-curation` runs ~20 scripted conversations and reports: zero recommended items the tools did not return, zero recommended items outside the asked dates, area or price, and a person judges ≥ 16 of 20 sensible; cache reads > 80% of input on calls whose prefix passes 4096 tokens; cost per exchange within 2× § 6; `iteration_count` on every trace, with its distribution; the semantic A/B, or the truncation measurement that skipped it. As in P2, the first numbers are **evidence for P4, not a merge gate**.
+
+**Design decisions:**
+
+| Area | Decision | Why |
+|---|---|---|
+| Search surface | One `search_events` over `exhibitions`, `art_events` and GRAF occurrences, one row shape, ids prefixed by source (`x:12`, `a:7`, `g:301`) | The model ranks one list; `get_events` must know which table an id names |
+| Compact rows | id, kind, title, venue, start/end, `ends_in_days`, `distance_km`, artists, media, themes. **No summary.** Plus `total` matched, so truncation shows | ~50 tokens a row; the summary is what hydrating is for |
+| Hydrate | `get_events(ids ≤ 10)`: `summary_en`, all facts, venue name/address/website, `detail_url`/`source_url`, GRAF price and free flag. **`get_venue` folds into it** | A separate venue tool costs a round and repeats what hydrate carries; there are no opening hours to return |
+| GRAF ↔ extracted | A GRAF event is hidden when an extracted item at a venue of the same profile has the same `title_key` and overlapping dates. Fuzzy `resolve` (§ 7) stays deferred until traces show duplicates | One exact rule in SQL; the fuzzy one is guesswork without traces |
+| Kinds | One vocabulary: `exhibition` + `EVENT_KINDS`; GRAF `event_category` ids mapped in code | The filter means the same thing on every source |
+| Location | `near: <place>` resolved in SQL against `places` (Barcelona barris and districts, Catalan municipalities) and venue names, or `lat`/`lon` when the client sends a location (P5). Unknown or ambiguous → `is_error` with candidates | Geocoding from model memory is distance estimation (CLAUDE.md § 8) |
+| Dates | Tools take ISO dates only. Each conversation opens with today and a 14-day calendar (weekday → date) in `SITE_TIMEZONE`. A conversation ends after 6 h idle or at local midnight | "Saturday" is a lookup, not arithmetic; a calendar cannot outlive its day |
+| Prompt layout | System prompt fully static. Per-conversation context (calendar, profile snapshot, client location) is the first user turn, frozen | The static prefix stays shareable across users if chat moves to a 512-token-minimum model (CLAUDE.md § 6) |
+| History | `messages` keeps the API content blocks exactly as sent and received, thinking blocks and signatures included, and the loop replays them unchanged | Opus 4.5+ keeps prior-turn thinking in context; any edit to history breaks the cache from that point |
+| Loop | Manual, ≤ 4 tool rounds (CLAUDE.md § 7). After the 4th, one last call with `tool_choice: none`, so a reply always comes. `iteration_count` = tool rounds, on the trace and the assistant message | The cap bounds cost without leaving the user unanswered |
+| Thinking / effort | `thinking: adaptive`; effort from `CHAT_EFFORT` (start `medium`), fixed per deployment; the eval sweeps it | A per-request change invalidates the messages cache |
+| SDK | Pin `anthropic[bedrock]<2` | 2.0.0 sends API version `2026-10-21`, which Bedrock accepts only for Claude 4.7+: chat on Opus 4.6 would break on a routine lock upgrade |
+| Profile | `remember(topic, fact, replaces?)` → `profile_facts`, append-only; `topic` from a small enum (media, themes, area, budget, language, access, other). The snapshot, with fact ids, is rendered at conversation start; a mid-conversation `remember` shows through its tool result and is not re-rendered | Re-rendering would edit the prefix |
+| Forget | `DELETE /users/{id}/profile` deletes the user's facts and conversations. Lands in P3 | P5 stays client-only |
+| Identity | `users(client, external_id)` unique, `client` an opaque string; one bearer token per deployment (`API_TOKEN`), API bound to localhost until P7 | The backend never learns what the client is (CLAUDE.md § 3) |
+| Streaming | `LlmClient.stream_message`: one `llm_calls` row when the stream ends or breaks. SSE events: `status` (tool running), `text` deltas, `done` (message id, `iteration_count`). Thinking is not forwarded. Needs `bedrock:InvokeModelWithResponseStream`, which the app role lacks | A row on every path, as for unstreamed calls |
+| Semantic ranking | **Gated:** built only if `eval-curation` shows `search_events` truncating (`total` > returned) in a real share of scenarios. Then: embed `summary_en` + themes + media (GRAF rows have no summary, so none); the model writes `query` in English, so the embedding model need not be multilingual; `query` reorders the filtered set, unembedded rows last | A few dozen current extracted items plus GRAF's window fit in one result; ranking cannot beat "the model sees everything" until they stop fitting |
+| Curation eval | `eval/gold/curation.yaml`: ~20 scripted conversations (persona, turns, constraints, relative dates only), placed where the pilots are. Per exchange: titles in the reply matched to tool results (grounding), hard constraints checked in SQL on the matched ids, a judge (`JUDGE_MODEL`) for taste fit and invented items, and iteration count, cost, cache share and latency. Transcripts go to a file outside the repo for the human read. Runs on the live DB, so arms are compared on the same day | Expected answers rot as shows close; constraints do not |
+
+```
+26 search_events + get_events ─┬─ 28 agent core + cli chat ─ 29 conversations ─ 30 profile ─ 31 curation eval ─┬─ 35 embeddings (gated) ─ 36 sign-off
+27 places ─────────────────────┘                                                                                │
+32 Terraform: streaming + model candidates ─ 33 streamed client ─ 34 /chat API ─────────────────────────────────┘
+```
+
+| # | PR | Done when |
+|---|---|---|
+| 26 | `queries/events.py`: `search_events` + `get_events` (three sources, prefixed ids, dates and distance in SQL, `total`, GRAF overlap rule, kind mapping); both as MCP tools, listed in `test_no_verbatim.py` | DB tests: radius, date overlap, shows with no end date, GRAF suppression, `total` under truncation |
+| 27 | Migration 0008: `places`. `cli load-places` from open data (source and CC BY attribution in the loader), `resolve_place` (case and accents ignored; venue names count) | "Poblenou", "poblenou", "MACBA" and "Vic" resolve; an ambiguous name returns candidates |
+| 28 | `agent/`: tool schemas + pydantic validation, static system prompt, conversation-start context, the loop (cap, final `tool_choice: none`, `cached_tail` on every call, thinking + effort, trace with `iteration_count`). `cli chat` in-process, in memory, `--today`. SDK pin | Stubbed: cap holds; bad input → `is_error`; breakpoint on the last block every call; thinking blocks replayed unchanged. Live: the § 1 question answered over the pilots |
+| 29 | Migration 0009: `users`, `conversations`, `messages`, `feedback`; classified in `test_no_verbatim.py`. Replay from the DB, conversation expiry; `cli chat` resumes, `/new`, `/good`, `/bad` | Turn n+1's request starts with turn n's, byte for byte (tested). Live: a resumed turn within 5 min reads the cache |
+| 30 | Migration 0010: `profile_facts`. `agent/profile.py`: `remember`, snapshot, supersede, forget | A fact remembered in one conversation is in the next one's context; forget leaves no rows |
+| 31 | `eval/curation.py` + `eval/gold/curation.yaml` + `cli eval-curation` (`--effort`, `--model`, `--arm`) | Baseline in § 8; two runs agree within noise; truncation share and cost per exchange reported |
+| 32 | Terraform: `InvokeModelWithResponseStream` on the chat profile; IAM + `pricing.yaml` for two embedding candidates and one cheaper chat candidate; the Smoke workflow calls each | Gated CI apply green (the first one since the 09-23 laptop apply: read the plan); Smoke green through OIDC |
+| 33 | `LlmClient.stream_message` (recorded stream, row on a broken stream) + a recorded-stream stub; the loop yields events | Stubbed: one row per stream, a broken one included; cost equals the unstreamed path's |
+| 34 | `api/`: `POST /chat` (SSE), `POST /feedback`, `DELETE /users/{id}/profile`; bearer token; Compose `api`; `cli chat --api URL` | The same conversation in-process and over HTTP; boundary test covers `api/` |
+| 35 | *(gated)* `LlmClient.embed` (purpose `embed`), migration 0011: `embedding` + markers, `cli embed` (skip unchanged), model chosen by a ~20-query retrieval check, `query` on `search_events` | A/B reported by `eval-curation`; decision recorded |
+| 36 | Sign-off (docs): chat cost, cache share, latency, iteration distribution into § 6 and § 8; decide loop vs workflow, chat model and effort | P3 done-when met |
+
+PR 32 depends on nothing and can go first; 33–34 do not block the eval, which runs in-process. PR 31 is the checkpoint: everything after it is plumbing or optional. Writing the scenarios is human work, like P2's labels.
+
+**Cost:** an eval run ≈ 20 scenarios × ~3 exchanges × ~$0.10 ≈ $6, plus ~$1 of judge; an effort sweep or A/B multiplies it. Embeddings are noise (§ 6).
+
 ---
 
 ## 9. Open risks
@@ -285,6 +339,9 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 - **No structured outputs on Bedrock's Messages endpoint** — tool inputs validated with pydantic, `is_error` + retry on failure.
 - ~~**Langfuse SDK surface unverified**~~ — sidestepped 2026-09-22: no Langfuse SDK; plain OTel exports to its OTLP endpoint (`/api/public/otel/v1/traces`, verified against current docs). Not yet exercised against the running Compose instance.
 - **p95 latency** with three round trips — fallbacks: lower `effort`, then merge search + hydrate.
+- **Coverage bounds the checkpoint** — 5 of 18 sites are facts-only, and the current shows sit at 12 venues. A scenario asking for an area with no pilot venue measures GRAF, not the curator; scenarios are placed where the data is, and that limit is stated with the P3 result.
+- **Venue text reaches chat through our summaries** — `summary_en` is written by Haiku from venue pages, so a page could plant instructions in it. `remember` is the only tool that writes. The system prompt treats tool results as data, and profile facts are listed in the eval transcript for review.
+- **Anthropic SDK 2.x** — sends an API version Bedrock refuses for Opus 4.6 and Haiku 4.5 (Messages path). Pinned below 2 in PR 28; lifted only with a move to a 4.7+ model.
 - **GRAF's live event window** (56–104 events) — long-running shows depend on crawling.
 - **Event history accrues only where `sync-graf` runs against a kept database** — locally, today; the `GRAF` workflow's DB is thrown away. Events that leave the window between runs are lost until P6 schedules it.
 - **GRAF coverage** — 414 of 570 terms join no profile, so have no URL; 23 of 146 URL-bearing profiles join no term (mostly festivals/associations, but also `Galeria N2` ↔ `N2 Galeria`, `Fundació Vila Casas` ↔ `Museu Can Framis`). No pilot affected; an alias table if P2 needs them. Only 1 joined venue is Instagram-only.
