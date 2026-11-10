@@ -157,7 +157,8 @@ async def search_events(
     limit: Annotated[int, Field(ge=1, le=100, description="Most rows to return.")] = 40,
 ) -> q.SearchResult:
     """Exhibitions, art events and GRAF events on at some point in the dates, as one list:
-    id, kind, title, venue, start/end, ends_in_days, distance_km, artists, media, themes, and
+    id, kind (and GRAF's own category), title, venue, start/end, ends_in_days, distance_km,
+    artists, media, themes, and
     `total` matched. A GRAF event extraction also found is listed once, under its x:/a: id."""
     return await _read(
         q.search_events,

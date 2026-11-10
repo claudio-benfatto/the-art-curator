@@ -64,7 +64,7 @@ from art_curator.db.models import (
     VenueSeed,
 )
 from art_curator.ingest.extraction import SITE_TIMEZONE
-from art_curator.ingest.graf import CATEGORY_KINDS
+from art_curator.ingest.graf import CATEGORIES
 
 VENUES = Venue.__table__
 SEEDS = VenueSeed.__table__
@@ -538,8 +538,8 @@ def _overlap(first_a: Any, last_a: Any, first_b: Any, last_b: Any) -> ColumnElem
 # What every source contributes to a search, in union order. `place_venue_id` is the venue whose
 # point locates the item, NULL when it is not at its venue.
 _CANDIDATE = (
-    "id", "kind", "title", "venue_id", "venue", "first_day", "last_day", "at_venue", "is_free",
-    "artists", "media", "themes", "place_venue_id",
+    "id", "kind", "category", "title", "venue_id", "venue", "first_day", "last_day", "at_venue",
+    "is_free", "artists", "media", "themes", "place_venue_id",
 )  # fmt: skip
 
 
@@ -551,6 +551,7 @@ def _exhibition_candidates() -> Select:
     return _candidate(
         id=_prefixed("x", EXHIBITIONS.c.id),
         kind=literal("exhibition"),
+        category=cast(null(), Text),  # GRAF's label; extraction answers with a kind only
         title=EXHIBITIONS.c.title,
         venue_id=EXHIBITIONS.c.venue_id,
         venue=VENUES.c.name,
@@ -570,6 +571,7 @@ def _event_candidates() -> Select:
         _candidate(
             id=_prefixed("a", EVENTS.c.id),
             kind=EVENTS.c.kind,
+            category=cast(null(), Text),
             title=EVENTS.c.title,
             venue_id=EVENTS.c.venue_id,
             venue=VENUES.c.name,
@@ -588,7 +590,14 @@ def _event_candidates() -> Select:
 
 
 def _graf_kind() -> ColumnElement[str]:
-    return case(CATEGORY_KINDS, value=SNAPSHOTS.c.source_category_id, else_=literal("other"))
+    kinds = {category_id: category.kind for category_id, category in CATEGORIES.items()}
+    return case(kinds, value=SNAPSHOTS.c.source_category_id, else_=literal("other"))
+
+
+def _graf_category() -> ColumnElement[str | None]:
+    """GRAF's own label (`seminari`, `festival`…); NULL for an id `CATEGORIES` does not know."""
+    slugs = {category_id: category.slug for category_id, category in CATEGORIES.items()}
+    return case(slugs, value=SNAPSHOTS.c.source_category_id)
 
 
 def _graf_first_day() -> ColumnElement[date]:
@@ -643,6 +652,7 @@ def _graf_candidates() -> Select:
         _candidate(
             id=_prefixed("g", OCCURRENCES.c.id),
             kind=_graf_kind(),
+            category=_graf_category(),
             title=SNAPSHOTS.c.title,
             venue_id=SNAPSHOTS.c.venue_id,
             venue=VENUES.c.name,
@@ -670,7 +680,8 @@ class EventRow:
     Never a summary: hydrating the shortlist with `get_events` is what that is for."""
 
     id: str  # x:12, a:7 or g:301
-    kind: str  # one of KINDS
+    kind: str  # one of KINDS: what `kinds` filters on
+    category: str | None  # GRAF's own label (seminari, festival…), finer than `kind`; NULL off GRAF
     title: str
     venue: str | None  # NULL for a GRAF event with no venue
     start: date | None  # NULL: no start given; an exhibition without one may already be on
@@ -747,6 +758,7 @@ async def search_events(
         select(
             c.id,
             c.kind,
+            c.category,
             c.title,
             c.venue,
             c.first_day.label("start"),
@@ -785,6 +797,7 @@ class EventDetail:
 
     id: str
     kind: str
+    category: str | None  # GRAF's own label, as in EventRow
     title: str
     title_en: str | None  # GRAF's English title, when it has one
     artists: list[str]
@@ -828,6 +841,7 @@ def _exhibition_details(ids: list[int]) -> Select:
         _detail(
             id=_prefixed("x", EXHIBITIONS.c.id),
             kind=literal("exhibition"),
+            category=cast(null(), Text),
             title=EXHIBITIONS.c.title,
             title_en=cast(null(), Text),
             artists=EXHIBITIONS.c.artists,
@@ -855,6 +869,7 @@ def _event_details(ids: list[int]) -> Select:
         _detail(
             id=_prefixed("a", EVENTS.c.id),
             kind=EVENTS.c.kind,
+            category=cast(null(), Text),
             title=EVENTS.c.title,
             title_en=cast(null(), Text),
             artists=EVENTS.c.artists,
@@ -882,6 +897,7 @@ def _graf_details(ids: list[int]) -> Select:
         _detail(
             id=_prefixed("g", OCCURRENCES.c.id),
             kind=_graf_kind(),
+            category=_graf_category(),
             title=SNAPSHOTS.c.title,
             title_en=SNAPSHOTS.c.title_en,
             artists=_NO_ARRAY,

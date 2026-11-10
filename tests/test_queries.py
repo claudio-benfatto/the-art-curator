@@ -19,7 +19,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from art_curator import mcp_server
-from art_curator.ingest.graf import CATEGORY_KINDS
+from art_curator.ingest.graf import CATEGORIES
 from art_curator.queries import events as q
 from tests.corpus import (
     CHANGED_URL,
@@ -240,13 +240,16 @@ def test_search_rows_carry_facts_and_no_summary(corpus_db):
         date(2026, 11, 30),
         ["Artista Inventada"],
     )
-    assert (show.distance_km, show.is_free, show.at_venue) == (None, None, True)
-    assert not hasattr(show, "summary_en")
-    assert (rows["g:4"].venue, rows["g:4"].is_free, rows["g:4"].artists) == (
-        "Annex Exemple",
+    assert (show.distance_km, show.is_free, show.at_venue, show.category) == (
+        None,
+        None,
         True,
-        [],
+        None,
     )
+    assert not hasattr(show, "summary_en")
+    opening = rows["g:4"]
+    assert (opening.venue, opening.is_free, opening.artists) == ("Annex Exemple", True, [])
+    assert (opening.kind, opening.category) == ("opening", "inauguracio")
 
 
 def test_an_item_matches_when_its_run_overlaps_the_dates(corpus_db):
@@ -326,7 +329,7 @@ def test_search_by_kind_means_the_same_on_every_source(corpus_db):
 
     assert _ids(exhibitions) == ["x:4", "g:7", "x:1", "x:3"]
     assert _ids(openings) == ["g:4"]
-    assert _ids(other) == ["g:2"]
+    assert [(row.id, row.category) for row in other.events] == [("g:2", None)]
 
 
 def test_free_only_drops_what_is_known_to_cost_money(corpus_db):
@@ -358,8 +361,11 @@ def test_search_refuses_what_it_cannot_answer(kwargs):
         asyncio.run(q.search_events(None, **kwargs))  # type: ignore[arg-type]
 
 
-def test_every_graf_category_maps_to_a_known_kind():
-    assert set(CATEGORY_KINDS.values()) <= set(q.KINDS)
+def test_every_graf_category_maps_to_a_known_kind_under_its_own_label():
+    assert {category.kind for category in CATEGORIES.values()} <= set(q.KINDS)
+    # The labels stay one per id even where kinds merge: that is what `category` is for.
+    slugs = [category.slug for category in CATEGORIES.values()]
+    assert len(set(slugs)) == len(slugs)
 
 
 def test_get_events_hydrates_each_source_in_the_order_asked(corpus_db):
@@ -384,9 +390,10 @@ def test_get_events_hydrates_each_source_in_the_order_asked(corpus_db):
         time(19, 0),
         "x:1",
     )
-    assert (opening.id, opening.kind, opening.start, opening.start_time) == (
+    assert (opening.id, opening.kind, opening.category, opening.start, opening.start_time) == (
         "g:4",
         "opening",
+        "inauguracio",
         date(2026, 11, 7),
         time(19, 0),  # 18:00 UTC, on the venue's clock
     )

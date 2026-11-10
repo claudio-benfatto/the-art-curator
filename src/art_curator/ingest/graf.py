@@ -57,21 +57,29 @@ DROP_KEYS = frozenset(
 )
 DROP_PREFIXES = ("desc_",)
 
-# `acf.event_category` onto the curator's kinds (`queries.events.KINDS`), so a `kinds` filter
-# means the same on every source. GRAF does not serve the category taxonomy over REST: each id
-# here is paired with the `event-category-<slug>` class its posts carry, read off the live window
-# and the homepage on 2026-11-10. An id not listed is `other`.
-CATEGORY_KINDS: dict[int, str] = {
-    103: "exhibition",  # exposicio
-    189: "opening",  # inauguracio
-    191: "other",  # altres
-    197: "performance",  # performance
-    204: "talk",  # presentacio
-    219: "screening",  # screening
-    244: "talk",  # seminari
-    305: "talk",  # xerrada
-    306: "other",  # trobada
-    481: "other",  # festival: a programme, not an art fair
+
+class Category(NamedTuple):
+    slug: str  # GRAF's own label: its posts carry the class `event-category-<slug>`
+    kind: str  # the curator kind it counts as, one of `queries.events.KINDS`
+
+
+# `acf.event_category`, two ways. The kind is what a `kinds` filter matches, so the filter means
+# the same on every source; several labels share one kind (seminari, xerrada and presentacio are
+# all talks). The slug keeps GRAF's own distinction, and search rows carry it as `category`.
+# GRAF does not serve the category taxonomy over REST: each id is paired with the class its posts
+# carry, read off the live window and the homepage on 2026-11-10. An id not listed has no slug
+# and is `other`.
+CATEGORIES: dict[int, Category] = {
+    103: Category("exposicio", "exhibition"),
+    189: Category("inauguracio", "opening"),
+    191: Category("altres", "other"),
+    197: Category("performance", "performance"),
+    204: Category("presentacio", "talk"),
+    219: Category("screening", "screening"),
+    244: Category("seminari", "talk"),
+    305: Category("xerrada", "talk"),
+    306: Category("trobada", "other"),
+    481: Category("festival", "other"),  # a programme, not an art fair
 }
 
 # A term at exactly the null island is a missing coordinate, not a location in the Gulf of Guinea.
