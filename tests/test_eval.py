@@ -808,15 +808,18 @@ def test_eval_scores_the_stored_text_and_discovery_and_writes_nothing(run, db):
 
 
 def test_eval_of_one_venue_scores_only_its_discovery(run, db):
-    other_venue = f"""
+    # One statement each: asyncpg prepares every statement, and a prepared one holds one command.
+    other_venue = """
     INSERT INTO venues (id, source_venue_id, name, slug, website_url, crawl_enabled, is_pilot)
-    OVERRIDING SYSTEM VALUE VALUES (2, 102, 'MACBA', 'macba', 'https://macba.test/', true, true);
+    OVERRIDING SYSTEM VALUE VALUES (2, 102, 'MACBA', 'macba', 'https://macba.test/', true, true)
+    """
+    other_seed = f"""
     INSERT INTO venue_seeds (venue_id, url, page_type, confidence, dated_items, language, status,
                              model)
     VALUES (2, 'https://macba.test/ara', 'current_listing', 'high', 3, 'ca', 'accepted',
             '{HAIKU}')
     """
-    run_sql(db, SEED_ROW, other_venue)
+    run_sql(db, SEED_ROW, other_venue, other_seed)
     gold = GoldSet(listings={VENUE: (LISTING_URL,), "MACBA": ("https://macba.test/ara",)})
 
     everyone = run(gold=gold)

@@ -1,6 +1,10 @@
 """A small invented corpus with one of everything `queries/events.py` reads, for
 `tests/test_queries.py` and the MCP half of `tests/test_no_verbatim.py`.
 
+The GRAF events cover each rule `search_events` applies to them: a twin of an extracted show at
+the same venue, one at another space of the same organisation under its English title, a
+namesake whose dates do not overlap, a superseded occurrence and an event that left the window.
+
 The listing's text and its link text carry markers that stand for third-party prose. No query may
 return either (CLAUDE.md § 1).
 """
@@ -33,12 +37,15 @@ _MARKS = "'ok', '{h}', 3, 'haiku', {items}, '2026-10-30 10:00+00'"
 
 CORPUS = [
     """
-    INSERT INTO venues (id, source_venue_id, name, slug, city, geom, website_url, crawl_enabled,
-                        is_pilot)
+    INSERT INTO venues (id, source_venue_id, source_profile_id, name, slug, address, city, geom,
+                        website_url, crawl_enabled, is_pilot)
     OVERRIDING SYSTEM VALUE VALUES
-      (1, 101, 'Galeria Exemple', 'galeria-exemple', 'Barcelona',
+      (1, 101, 501, 'Galeria Exemple', 'galeria-exemple', 'Carrer Inventat 1', 'Barcelona',
        ST_GeogFromText('POINT(2.1700 41.3800)'), 'https://galeria-exemple.test/', true, true),
-      (2, 102, 'Sala 100% Lluny', 'sala-lluny', 'Girona', NULL, NULL, false, false)
+      (2, 102, NULL, 'Sala 100% Lluny', 'sala-lluny', NULL, 'Girona', NULL, NULL, false, false),
+      -- A second space of the same organisation, ~3.35 km from the first.
+      (3, 103, 501, 'Annex Exemple', 'annex-exemple', NULL, 'Barcelona',
+       ST_GeogFromText('POINT(2.2000 41.4000)'), 'https://galeria-exemple.test/', false, false)
     """,
     f"""
     INSERT INTO venue_seeds (venue_id, url, page_type, confidence, dated_items, language, status,
@@ -61,7 +68,8 @@ CORPUS = [
       (4, 1, '{THIN_URL}', 'listing', 'thin', 200, NULL, NULL, NULL, '2026-10-30 09:00+00',
        NULL, NULL, NULL, NULL, NULL, NULL)
     """,
-    # On 2026-10-31: Prova U is on, Arxiu is over, Col·lecció has no end date.
+    # On 2026-10-31: Prova U is on, Arxiu is over, Col·lecció has no end date. The stand is the
+    # gallery's at a fair, not at the gallery.
     f"""
     INSERT INTO exhibitions (id, venue_id, title, title_key, artists, start_date, end_date,
                              at_venue, detail_url, summary_en, confidence, source_url,
@@ -73,7 +81,9 @@ CORPUS = [
       (2, 1, 'Arxiu', 'arxiu', '{{}}', '2026-06-01', '2026-09-01', true, NULL, NULL, 'high',
        '{LISTING_URL}', '{HASH}', 'haiku', 3),
       (3, 1, 'Col·lecció', 'colleccio', '{{}}', '2026-01-01', NULL, true, NULL, NULL, 'medium',
-       '{LISTING_URL}', '{HASH}', 'haiku', 3)
+       '{LISTING_URL}', '{HASH}', 'haiku', 3),
+      (4, 1, 'Stand a la fira', 'stand a la fira', '{{}}', '2026-11-06', '2026-11-08', false,
+       NULL, NULL, 'high', '{CHANGED_URL}', '{"c" * 64}', 'haiku', 3)
     """,
     f"""
     INSERT INTO art_events (id, venue_id, title, title_key, start_date, start_time, at_venue,
@@ -87,18 +97,38 @@ CORPUS = [
       (3, 1, 'Taller', 'taller', NULL, NULL, true, 'low', '{LISTING_URL}', '{HASH}', 'haiku',
        3, 'workshop', NULL)
     """,
-    # 23:30 UTC on 31 October is 1 November in Barcelona.
+    # The latest sync ran at 03:00 UTC on 30 October; Retirat and one Nit Oberta occurrence were
+    # last seen by the one before. Category 103 is an exhibition, 189 an opening, NULL other.
     """
-    INSERT INTO event_snapshots (id, source_event_id, venue_id, title, is_free, price_min,
-                                 source_url, last_seen_at)
+    INSERT INTO event_snapshots (id, source_event_id, venue_id, title, title_en,
+                                 source_category_id, is_free, price_min, source_url, web_url_ca,
+                                 last_seen_at)
     OVERRIDING SYSTEM VALUE VALUES
-      (1, 9001, 1, 'Prova U', true, NULL, 'https://graf.test/e/9001', '2026-10-30 03:00+00'),
-      (2, 9002, NULL, 'Fira', false, 12.50, 'https://graf.test/e/9002', '2026-10-30 03:00+00')
+      (1, 9001, 1, 'Prova U', NULL, 103, true, NULL, 'https://graf.test/e/9001', NULL,
+       '2026-10-30 03:00+00'),
+      (2, 9002, NULL, 'Fira', NULL, NULL, false, 12.50, 'https://graf.test/e/9002', NULL,
+       '2026-10-30 03:00+00'),
+      (3, 9003, 3, 'Assaig U', 'PROVA Ú.', 103, NULL, NULL, 'https://graf.test/e/9003', NULL,
+       '2026-10-30 03:00+00'),
+      (4, 9004, 3, 'Nit Oberta', NULL, 189, true, NULL, 'https://graf.test/e/9004',
+       'https://annex-exemple.test/nit', '2026-10-30 03:00+00'),
+      (5, 9005, 1, 'Retirat', NULL, 103, NULL, NULL, 'https://graf.test/e/9005', NULL,
+       '2026-10-20 03:00+00'),
+      (6, 9006, 1, 'Arxiu', NULL, 103, false, NULL, 'https://graf.test/e/9006', NULL,
+       '2026-10-30 03:00+00')
     """,
+    # 23:30 UTC on 31 October is 1 November in Barcelona; 18:00 UTC in November is 19:00 there.
     """
-    INSERT INTO event_occurrences (event_id, source_occurrence_id, starts_at, ends_at)
-    VALUES (1, 1, '2026-09-12 10:00+00', '2026-10-31 23:30+00'),
-           (2, 2, '2026-10-01 10:00+00', NULL)
+    INSERT INTO event_occurrences (id, event_id, source_occurrence_id, starts_at, ends_at,
+                                   last_seen_at)
+    OVERRIDING SYSTEM VALUE VALUES
+      (1, 1, 1, '2026-09-12 10:00+00', '2026-10-31 23:30+00', '2026-10-30 03:00+00'),
+      (2, 2, 2, '2026-10-01 10:00+00', NULL, '2026-10-30 03:00+00'),
+      (3, 3, 3, '2026-10-15 09:00+00', '2026-11-30 18:00+00', '2026-10-30 03:00+00'),
+      (4, 4, 4, '2026-11-07 18:00+00', '2026-11-07 21:00+00', '2026-10-30 03:00+00'),
+      (5, 4, 5, '2026-11-06 18:00+00', '2026-11-06 21:00+00', '2026-10-20 03:00+00'),
+      (6, 5, 6, '2026-11-01 10:00+00', '2026-11-30 18:00+00', '2026-10-20 03:00+00'),
+      (7, 6, 7, '2026-11-03 10:00+00', '2026-11-20 18:00+00', '2026-10-30 03:00+00')
     """,
     """
     INSERT INTO llm_calls (created_at, provider, model, purpose, input_tokens, output_tokens,

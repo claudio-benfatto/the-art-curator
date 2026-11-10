@@ -1,5 +1,6 @@
 """The shared query module (PLAN.md § 3): venues, their pages, what extraction found, GRAF's
-events and what the model calls cost.
+events and what the model calls cost, plus `search_events` and `get_events`, the curator's view
+of all three sources at once.
 
 Every function takes an `AsyncSession`, only reads, and returns frozen dataclasses. Whoever calls
 them owns the session and its transaction; `mcp_server.py` makes it a read-only one.
@@ -18,17 +19,41 @@ Rules the code encodes:
   that could return hundreds takes one.
 """
 
+import re
+from collections.abc import Collection
 from dataclasses import dataclass, fields
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
 
-from geoalchemy2 import Geometry
-from sqlalchemy import Date, Select, cast, func, select
+from geoalchemy2 import Geography, Geometry
+from sqlalchemy import (
+    Boolean,
+    Date,
+    Float,
+    Numeric,
+    Select,
+    Text,
+    Time,
+    and_,
+    case,
+    cast,
+    exists,
+    func,
+    literal,
+    literal_column,
+    null,
+    or_,
+    select,
+    union_all,
+)
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.sql.selectable import CompoundSelect
 
 from art_curator.db.models import (
+    EVENT_KINDS,
     ArtEvent,
     EventOccurrence,
     EventSnapshot,
@@ -39,6 +64,7 @@ from art_curator.db.models import (
     VenueSeed,
 )
 from art_curator.ingest.extraction import SITE_TIMEZONE
+from art_curator.ingest.graf import CATEGORIES
 
 VENUES = Venue.__table__
 SEEDS = VenueSeed.__table__
@@ -55,7 +81,14 @@ def _local_day(column: Any) -> ColumnElement[date]:
     return cast(func.timezone(SITE_TIMEZONE, column), Date)
 
 
-async def _rows[T](session: AsyncSession, row_type: type[T], query: Select) -> list[T]:
+def _local_time(column: Any) -> ColumnElement[time]:
+    """The time a timestamp shows on a clock at the venues."""
+    return cast(func.timezone(SITE_TIMEZONE, column), Time)
+
+
+async def _rows[T](
+    session: AsyncSession, row_type: type[T], query: Select | CompoundSelect
+) -> list[T]:
     return [row_type(**row._mapping) for row in await session.execute(query)]
 
 
@@ -435,6 +468,484 @@ async def graf_events(
         last_day = _local_day(func.coalesce(OCCURRENCES.c.ends_at, OCCURRENCES.c.starts_at))
         query = query.where(last_day >= not_over_on)
     return await _rows(session, GrafEventRow, query)
+
+
+# --- search and hydrate: the curator's tools -----------------------------------------------------
+#
+# Exhibitions, art events and GRAF occurrences as one list in one row shape (PLAN.md § 8, P3).
+# An id names its table by a prefix, so `get_events` knows where to look:
+#
+#   x:12   exhibitions.id         a:7   art_events.id         g:301   event_occurrences.id
+#
+# Each source becomes a *run* of local days, the same rules as the `not_over_on` filters above:
+#
+# - an exhibition runs from `start_date` to `end_date`. A missing start may have passed, and a
+#   missing end may still be to come: both are open.
+# - an art event without an end lasts its start day. One with no date at all cannot be placed
+#   in any window, so it is never searched.
+# - a GRAF occurrence runs from the day it starts to the day it ends at the venues. Only the
+#   ones the latest sync saw are searched (`_graf_live`).
+#
+# A GRAF event that extraction also found is hidden (`_has_extracted_twin`), so one show is not
+# listed twice. Distance is to the venue's point; an item shown elsewhere (`at_venue` false) or
+# online has no place, so it has no distance and never falls inside a radius.
+
+KINDS = ("exhibition", *EVENT_KINDS)
+MAX_HYDRATE = 10  # ids per `get_events` call (PLAN.md § 5)
+
+EVENT_ID_PATTERN = r"^([xag]):([0-9]+)$"  # plain groups: tool schemas take it as is
+_EVENT_ID = re.compile(EVENT_ID_PATTERN)
+_NO_ARRAY = literal_column("ARRAY[]::text[]", ARRAY(Text))
+
+
+def parse_event_id(event_id: str) -> tuple[str, int]:
+    """`"x:12"` -> `("x", 12)`. Raises ValueError for anything that is not a prefixed id."""
+    match = _EVENT_ID.match(event_id)
+    if match is None:
+        raise ValueError(f"{event_id!r} is not an id from search_events (x:12, a:7 or g:301)")
+    prefix, number = match.groups()
+    return prefix, int(number)
+
+
+def _prefixed(prefix: str, column: Any) -> ColumnElement[str]:
+    """`x:` || id. NULL stays NULL, so an event with no exhibition has no `x:` id."""
+    return literal(f"{prefix}:").concat(cast(column, Text))
+
+
+def _match_key(column: Any) -> ColumnElement[str]:
+    """A title made comparable in SQL: decomposed (NFKD) with its accents dropped, lower case, `&`
+    as ` and `, every other run of non-alphanumerics one space.
+
+    It follows `extraction.title_key`, but it is not the stored `title_key` column: GRAF titles
+    have none. Both titles of a comparison go through this one expression, so the two sides can
+    never disagree about how a title is normalised.
+    """
+    decomposed = func.normalize(column, literal_column("NFKD"))
+    unaccented = func.lower(func.regexp_replace(decomposed, "[\u0300-\u036f]", "", "g"))
+    spaced = func.regexp_replace(func.replace(unaccented, "&", " and "), "[^[:alnum:]]+", " ", "g")
+    return func.btrim(spaced)
+
+
+def _overlap(first_a: Any, last_a: Any, first_b: Any, last_b: Any) -> ColumnElement[bool]:
+    """Two runs of days share at least one. A NULL first day is open towards the past and a NULL
+    last day towards the future."""
+    return and_(
+        or_(first_a.is_(None), last_b.is_(None), first_a <= last_b),
+        or_(last_a.is_(None), first_b.is_(None), last_a >= first_b),
+    )
+
+
+# What every source contributes to a search, in union order. `place_venue_id` is the venue whose
+# point locates the item, NULL when it is not at its venue.
+_CANDIDATE = (
+    "id", "kind", "category", "title", "venue_id", "venue", "first_day", "last_day", "at_venue",
+    "is_free", "artists", "media", "themes", "place_venue_id",
+)  # fmt: skip
+
+
+def _candidate(**columns: Any) -> Select:
+    return select(*(columns[name].label(name) for name in _CANDIDATE))
+
+
+def _exhibition_candidates() -> Select:
+    return _candidate(
+        id=_prefixed("x", EXHIBITIONS.c.id),
+        kind=literal("exhibition"),
+        category=cast(null(), Text),  # GRAF's label; extraction answers with a kind only
+        title=EXHIBITIONS.c.title,
+        venue_id=EXHIBITIONS.c.venue_id,
+        venue=VENUES.c.name,
+        first_day=EXHIBITIONS.c.start_date,
+        last_day=EXHIBITIONS.c.end_date,
+        at_venue=EXHIBITIONS.c.at_venue,
+        is_free=cast(null(), Boolean),  # venue pages give no price
+        artists=EXHIBITIONS.c.artists,
+        media=EXHIBITIONS.c.media,
+        themes=EXHIBITIONS.c.themes,
+        place_venue_id=case((EXHIBITIONS.c.at_venue, EXHIBITIONS.c.venue_id)),
+    ).join_from(EXHIBITIONS, VENUES, VENUES.c.id == EXHIBITIONS.c.venue_id)
+
+
+def _event_candidates() -> Select:
+    return (
+        _candidate(
+            id=_prefixed("a", EVENTS.c.id),
+            kind=EVENTS.c.kind,
+            category=cast(null(), Text),
+            title=EVENTS.c.title,
+            venue_id=EVENTS.c.venue_id,
+            venue=VENUES.c.name,
+            first_day=EVENTS.c.start_date,
+            last_day=func.coalesce(EVENTS.c.end_date, EVENTS.c.start_date),
+            at_venue=EVENTS.c.at_venue,
+            is_free=cast(null(), Boolean),
+            artists=EVENTS.c.artists,
+            media=EVENTS.c.media,
+            themes=EVENTS.c.themes,
+            place_venue_id=case((EVENTS.c.at_venue, EVENTS.c.venue_id)),
+        )
+        .join_from(EVENTS, VENUES, VENUES.c.id == EVENTS.c.venue_id)
+        .where(or_(EVENTS.c.start_date.is_not(None), EVENTS.c.end_date.is_not(None)))
+    )
+
+
+def _graf_kind() -> ColumnElement[str]:
+    kinds = {category_id: category.kind for category_id, category in CATEGORIES.items()}
+    return case(kinds, value=SNAPSHOTS.c.source_category_id, else_=literal("other"))
+
+
+def _graf_category() -> ColumnElement[str | None]:
+    """GRAF's own label (`seminari`, `festival`…); NULL for an id `CATEGORIES` does not know."""
+    slugs = {category_id: category.slug for category_id, category in CATEGORIES.items()}
+    return case(slugs, value=SNAPSHOTS.c.source_category_id)
+
+
+def _graf_first_day() -> ColumnElement[date]:
+    return _local_day(OCCURRENCES.c.starts_at)
+
+
+def _graf_last_day() -> ColumnElement[date]:
+    return _local_day(func.coalesce(OCCURRENCES.c.ends_at, OCCURRENCES.c.starts_at))
+
+
+def _graf_at_venue() -> ColumnElement[bool]:
+    return func.coalesce(SNAPSHOTS.c.is_online, False).is_(False)
+
+
+def _graf_live() -> list[ColumnElement[bool]]:
+    """The occurrences GRAF still serves. The sync that last saw the event also saw this
+    occurrence: one GRAF regenerated is left behind with stale dates (`models.EventOccurrence`).
+    And that sync is the latest: an event that left the live window before it ended was taken
+    down. Every row one sync touches has the same `last_seen_at`, so both are equalities."""
+    latest_sync = select(func.max(SNAPSHOTS.c.last_seen_at)).scalar_subquery()
+    return [
+        OCCURRENCES.c.last_seen_at == SNAPSHOTS.c.last_seen_at,
+        SNAPSHOTS.c.last_seen_at == latest_sync,
+    ]
+
+
+def _has_extracted_twin() -> ColumnElement[bool]:
+    """The GRAF overlap rule (PLAN.md § 8, P3): extraction found the same show at a venue of the
+    same organisation (the same venue, or one sharing its `source_profile_id`), under the same
+    title (GRAF's own or its English one) and with dates that overlap. Exact, in SQL; a fuzzy
+    match waits for traces that show duplicates."""
+    twins = union_all(_exhibition_candidates(), _event_candidates()).subquery("twins")
+    twin_venue = VENUES.alias("twin_venue")
+    return (
+        exists()
+        .select_from(twins.join(twin_venue, twin_venue.c.id == twins.c.venue_id))
+        .where(
+            or_(
+                twin_venue.c.id == SNAPSHOTS.c.venue_id,
+                twin_venue.c.source_profile_id == VENUES.c.source_profile_id,
+            ),
+            _match_key(twins.c.title).in_(
+                [_match_key(SNAPSHOTS.c.title), _match_key(SNAPSHOTS.c.title_en)]
+            ),
+            _overlap(twins.c.first_day, twins.c.last_day, _graf_first_day(), _graf_last_day()),
+        )
+    )
+
+
+def _graf_candidates() -> Select:
+    return (
+        _candidate(
+            id=_prefixed("g", OCCURRENCES.c.id),
+            kind=_graf_kind(),
+            category=_graf_category(),
+            title=SNAPSHOTS.c.title,
+            venue_id=SNAPSHOTS.c.venue_id,
+            venue=VENUES.c.name,
+            first_day=_graf_first_day(),
+            last_day=_graf_last_day(),
+            at_venue=_graf_at_venue(),
+            is_free=SNAPSHOTS.c.is_free,
+            artists=_NO_ARRAY,
+            media=_NO_ARRAY,
+            themes=_NO_ARRAY,
+            place_venue_id=case((_graf_at_venue(), SNAPSHOTS.c.venue_id)),
+        )
+        .select_from(
+            OCCURRENCES.join(SNAPSHOTS, SNAPSHOTS.c.id == OCCURRENCES.c.event_id).outerjoin(
+                VENUES, VENUES.c.id == SNAPSHOTS.c.venue_id
+            )
+        )
+        .where(*_graf_live(), ~_has_extracted_twin())
+    )
+
+
+@dataclass(frozen=True)
+class EventRow:
+    """One thing to see, as `search_events` lists it: what the model ranks by, ~50 tokens.
+    Never a summary: hydrating the shortlist with `get_events` is what that is for."""
+
+    id: str  # x:12, a:7 or g:301
+    kind: str  # one of KINDS: what `kinds` filters on
+    category: str | None  # GRAF's own label (seminari, festival…), finer than `kind`; NULL off GRAF
+    title: str
+    venue: str | None  # NULL for a GRAF event with no venue
+    start: date | None  # NULL: no start given; an exhibition without one may already be on
+    end: date | None  # NULL: an exhibition with no end date, which may still be on
+    ends_in_days: int | None  # from date_from to `end`: 0 means it ends on date_from
+    distance_km: float | None  # from the point asked about; NULL with no point or no place
+    at_venue: bool  # False: shown elsewhere (a fair, another space) or online
+    is_free: bool | None  # known only for GRAF events; NULL is unknown, not paid
+    artists: list[str]
+    media: list[str]
+    themes: list[str]
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    total: int  # rows that matched; more than len(events) when `limit` cut the list
+    events: list[EventRow]
+
+
+async def search_events(
+    session: AsyncSession,
+    *,
+    date_from: date,
+    date_to: date,
+    lat: float | None = None,
+    lon: float | None = None,
+    radius_km: float | None = None,
+    kinds: Collection[str] | None = None,
+    free_only: bool = False,
+    limit: int = 40,
+) -> SearchResult:
+    """Everything on at some point from `date_from` to `date_to` (days at the venues), from all
+    three sources. Dates and distances are worked out here, never by the model (CLAUDE.md § 8).
+
+    `lat`/`lon` give each row its distance and put the nearest first; `radius_km` then keeps only
+    the rows inside it. `kinds` keeps those of the listed KINDS. `free_only` drops what is known
+    to cost money: only GRAF knows prices, so an extracted item stays, with `is_free` NULL.
+
+    Rows come nearest first when there is a point, then the soonest to end, open-ended last: if
+    `limit` cuts the list, what goes is what is furthest away and on longest. `total` says how
+    many matched, so a cut shows.
+    """
+    if date_from > date_to:
+        raise ValueError(f"date_from {date_from} is after date_to {date_to}")
+    if (lat is None) != (lon is None):
+        raise ValueError("lat and lon come together")
+    if radius_km is not None and lat is None:
+        raise ValueError("radius_km needs lat and lon")
+    if kinds is not None and (unknown := set(kinds) - set(KINDS)):
+        raise ValueError(f"unknown kinds {sorted(unknown)}; known: {', '.join(KINDS)}")
+
+    candidates = union_all(
+        _exhibition_candidates(), _event_candidates(), _graf_candidates()
+    ).subquery("candidates")
+    c = candidates.c
+    place = VENUES.alias("place")
+
+    distance_km: ColumnElement[float | None] = cast(null(), Float)
+    within: list[ColumnElement[bool]] = []
+    order: list[Any] = [c.last_day.nulls_last(), c.first_day.nulls_first(), c.id]
+    if lat is not None:
+        point = cast(
+            func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326), Geography("POINT", srid=4326)
+        )
+        # Geography: metres on the spheroid, rounded to 100 m.
+        distance_km = cast(
+            func.round(cast(func.ST_Distance(place.c.geom, point) / 1000, Numeric), 1), Float
+        )
+        order.insert(0, distance_km.nulls_last())
+        if radius_km is not None:
+            within.append(func.ST_DWithin(place.c.geom, point, radius_km * 1000))
+
+    query = (
+        select(
+            c.id,
+            c.kind,
+            c.category,
+            c.title,
+            c.venue,
+            c.first_day.label("start"),
+            c.last_day.label("end"),
+            (c.last_day - date_from).label("ends_in_days"),
+            distance_km.label("distance_km"),
+            c.at_venue,
+            c.is_free,
+            c.artists,
+            c.media,
+            c.themes,
+            func.count().over().label("total"),  # before LIMIT: every row that matched
+        )
+        .select_from(candidates.outerjoin(place, place.c.id == c.place_venue_id))
+        .where(
+            or_(c.first_day.is_(None), c.first_day <= date_to),
+            or_(c.last_day.is_(None), c.last_day >= date_from),
+            *within,
+        )
+        .order_by(*order)
+        .limit(limit)
+    )
+    if kinds is not None:
+        query = query.where(c.kind.in_(list(kinds)))
+    if free_only:
+        query = query.where(c.is_free.is_not(False))
+
+    rows = (await session.execute(query)).mappings().all()
+    events = [EventRow(**{k: v for k, v in row.items() if k != "total"}) for row in rows]
+    return SearchResult(total=rows[0]["total"] if rows else 0, events=events)
+
+
+@dataclass(frozen=True)
+class EventDetail:
+    """One item hydrated: every fact we hold, our summary, and where it is."""
+
+    id: str
+    kind: str
+    category: str | None  # GRAF's own label, as in EventRow
+    title: str
+    title_en: str | None  # GRAF's English title, when it has one
+    artists: list[str]
+    media: list[str]
+    themes: list[str]
+    summary_en: str | None  # ours, never the page's (CLAUDE.md § 1); GRAF events have none
+    start: date | None
+    end: date | None  # an art event without one lasts its start day, as in search_events
+    start_time: time | None  # at the venue's clock; art events and GRAF occurrences only
+    at_venue: bool
+    is_free: bool | None  # GRAF only
+    price_min: Decimal | None  # GRAF only
+    price_max: Decimal | None
+    url: str | None  # its own page: the venue's page for it, or the link GRAF gives
+    source_url: str  # where we read it: a venue page, or GRAF's page for the event
+    exhibition_id: str | None  # an art event's show, as an x: id, when the page said
+    venue_id: int | None
+    venue: str | None
+    address: str | None
+    city: str | None
+    website: str | None
+
+
+_DETAIL = tuple(f.name for f in fields(EventDetail))
+_VENUE_COLUMNS = {
+    "venue_id": VENUES.c.id,
+    "venue": VENUES.c.name,
+    "address": VENUES.c.address,
+    "city": VENUES.c.city,
+    "website": VENUES.c.website_url,
+}
+
+
+def _detail(**columns: Any) -> Select:
+    columns |= _VENUE_COLUMNS
+    return select(*(columns[name].label(name) for name in _DETAIL))
+
+
+def _exhibition_details(ids: list[int]) -> Select:
+    return (
+        _detail(
+            id=_prefixed("x", EXHIBITIONS.c.id),
+            kind=literal("exhibition"),
+            category=cast(null(), Text),
+            title=EXHIBITIONS.c.title,
+            title_en=cast(null(), Text),
+            artists=EXHIBITIONS.c.artists,
+            media=EXHIBITIONS.c.media,
+            themes=EXHIBITIONS.c.themes,
+            summary_en=EXHIBITIONS.c.summary_en,
+            start=EXHIBITIONS.c.start_date,
+            end=EXHIBITIONS.c.end_date,
+            start_time=cast(null(), Time),
+            at_venue=EXHIBITIONS.c.at_venue,
+            is_free=cast(null(), Boolean),
+            price_min=cast(null(), Numeric),
+            price_max=cast(null(), Numeric),
+            url=EXHIBITIONS.c.detail_url,
+            source_url=EXHIBITIONS.c.source_url,
+            exhibition_id=cast(null(), Text),
+        )
+        .join_from(EXHIBITIONS, VENUES, VENUES.c.id == EXHIBITIONS.c.venue_id)
+        .where(EXHIBITIONS.c.id.in_(ids))
+    )
+
+
+def _event_details(ids: list[int]) -> Select:
+    return (
+        _detail(
+            id=_prefixed("a", EVENTS.c.id),
+            kind=EVENTS.c.kind,
+            category=cast(null(), Text),
+            title=EVENTS.c.title,
+            title_en=cast(null(), Text),
+            artists=EVENTS.c.artists,
+            media=EVENTS.c.media,
+            themes=EVENTS.c.themes,
+            summary_en=EVENTS.c.summary_en,
+            start=EVENTS.c.start_date,
+            end=func.coalesce(EVENTS.c.end_date, EVENTS.c.start_date),
+            start_time=EVENTS.c.start_time,
+            at_venue=EVENTS.c.at_venue,
+            is_free=cast(null(), Boolean),
+            price_min=cast(null(), Numeric),
+            price_max=cast(null(), Numeric),
+            url=EVENTS.c.detail_url,
+            source_url=EVENTS.c.source_url,
+            exhibition_id=_prefixed("x", EVENTS.c.exhibition_id),
+        )
+        .join_from(EVENTS, VENUES, VENUES.c.id == EVENTS.c.venue_id)
+        .where(EVENTS.c.id.in_(ids))
+    )
+
+
+def _graf_details(ids: list[int]) -> Select:
+    return (
+        _detail(
+            id=_prefixed("g", OCCURRENCES.c.id),
+            kind=_graf_kind(),
+            category=_graf_category(),
+            title=SNAPSHOTS.c.title,
+            title_en=SNAPSHOTS.c.title_en,
+            artists=_NO_ARRAY,
+            media=_NO_ARRAY,
+            themes=_NO_ARRAY,
+            summary_en=cast(null(), Text),
+            start=_graf_first_day(),
+            end=_graf_last_day(),
+            start_time=_local_time(OCCURRENCES.c.starts_at),
+            at_venue=_graf_at_venue(),
+            is_free=SNAPSHOTS.c.is_free,
+            price_min=SNAPSHOTS.c.price_min,
+            price_max=SNAPSHOTS.c.price_max,
+            url=func.coalesce(
+                SNAPSHOTS.c.web_url_en, SNAPSHOTS.c.web_url_es, SNAPSHOTS.c.web_url_ca
+            ),
+            source_url=SNAPSHOTS.c.source_url,
+            exhibition_id=cast(null(), Text),
+        )
+        .select_from(
+            OCCURRENCES.join(SNAPSHOTS, SNAPSHOTS.c.id == OCCURRENCES.c.event_id).outerjoin(
+                VENUES, VENUES.c.id == SNAPSHOTS.c.venue_id
+            )
+        )
+        .where(OCCURRENCES.c.id.in_(ids))
+    )
+
+
+_DETAILS = {"x": _exhibition_details, "a": _event_details, "g": _graf_details}
+
+
+async def get_events(session: AsyncSession, ids: Collection[str]) -> list[EventDetail]:
+    """The items `ids` name (from `search_events`), in the order asked, at most MAX_HYDRATE.
+    An id that names nothing is left out; one that is not an id at all raises ValueError.
+    Hydrating does not filter: a GRAF event `search_events` hides is still returned by id."""
+    parsed = list(dict.fromkeys(map(parse_event_id, ids)))
+    if len(parsed) > MAX_HYDRATE:
+        raise ValueError(f"{len(parsed)} ids; at most {MAX_HYDRATE} at a time")
+    if not parsed:
+        return []
+    numbers: dict[str, list[int]] = {}
+    for prefix, number in parsed:
+        numbers.setdefault(prefix, []).append(number)
+    wanted = [f"{prefix}:{number}" for prefix, number in parsed]  # x:012 is x:12
+
+    query = union_all(*(_DETAILS[prefix](found) for prefix, found in numbers.items()))
+    found = {row.id: row for row in await _rows(session, EventDetail, query)}
+    return [found[i] for i in wanted if i in found]
 
 
 # --- cost ----------------------------------------------------------------------------------------
