@@ -1,6 +1,8 @@
 """A small invented corpus with one of everything `queries/events.py` reads, for
 `tests/test_queries.py` and the MCP half of `tests/test_no_verbatim.py`.
 
+One place, a barri near the second space, is there for `search_events(near=...)`.
+
 The GRAF events cover each rule `search_events` applies to them: a twin of an extracted show at
 the same venue, one at another space of the same organisation under its English title, a
 namesake whose dates do not overlap, a superseded occurrence and an event that left the window.
@@ -46,6 +48,12 @@ CORPUS = [
       -- A second space of the same organisation, ~3.35 km from the first.
       (3, 103, 501, 'Annex Exemple', 'annex-exemple', NULL, 'Barcelona',
        ST_GeogFromText('POINT(2.2000 41.4000)'), 'https://galeria-exemple.test/', false, false)
+    """,
+    # ~0.2 km from Annex Exemple and ~3.5 km from Galeria Exemple.
+    """
+    INSERT INTO places (kind, code, name, aliases, within, geom)
+    VALUES ('barri', '68', 'el Poblenou', '{Poblenou}', 'Sant Martí',
+            ST_GeogFromText('POINT(2.2024 41.4000)'))
     """,
     f"""
     INSERT INTO venue_seeds (venue_id, url, page_type, confidence, dated_items, language, status,

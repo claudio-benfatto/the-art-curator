@@ -19,8 +19,8 @@ from art_curator.db.session import get_engine, get_sessionmaker
 from art_curator.eval import extraction as evaluation
 from art_curator.eval import runner as eval_runner
 from art_curator.ingest import crawl as crawling
-from art_curator.ingest import extraction, graf, seeds
-from art_curator.ingest.http import RobotsPolicy, open_client
+from art_curator.ingest import extraction, graf, places, seeds
+from art_curator.ingest.http import FetchError, RobotsPolicy, open_client
 from art_curator.ingest.sync import (
     GrafSnapshot,
     SyncPlan,
@@ -204,6 +204,49 @@ async def _write_graf(snapshot: GrafSnapshot, plan: SyncPlan, *, dry_run: bool) 
             result = await write_graf(session, snapshot, plan.venues)
             await (session.rollback() if dry_run else session.commit())
             return result
+    finally:
+        await get_engine().dispose()
+
+
+@app.command("load-places")
+def load_places(
+    dry_run: Annotated[
+        bool, typer.Option(help="Download and write everything, print the report, then roll back.")
+    ] = False,
+) -> None:
+    """Load Barcelona's barris and districts and Catalonia's municipalities into `places`, from
+    open data, so `search_events` can measure from a place name. No model is called.
+
+    The table is replaced whole. A download that is short, broken or not where Catalonia is fails
+    without writing anything.
+    """
+    try:
+        records = asyncio.run(_fetch_places())
+    except (FetchError, places.PlacesError) as exc:
+        typer.echo(f"FAIL: {exc}. Nothing written.")
+        raise typer.Exit(1) from exc
+    if problems := places.problems(records):
+        typer.echo("FAIL: " + "; ".join(problems) + ". Nothing written.")
+        raise typer.Exit(1)
+
+    written = asyncio.run(_write_places(records, dry_run=dry_run))
+    typer.echo("Load places (dry run, rolled back)" if dry_run else "Load places")
+    for line in places.report(records):
+        typer.echo(f"  {line}")
+    typer.echo(f"  {'written':<13} {written} places")
+
+
+async def _fetch_places() -> list[places.PlaceRecord]:
+    async with open_client() as client:
+        return await places.fetch(client)
+
+
+async def _write_places(records: list[places.PlaceRecord], *, dry_run: bool) -> int:
+    try:
+        async with get_sessionmaker()() as session:
+            written = await places.write_places(session, records)
+            await (session.rollback() if dry_run else session.commit())
+            return written
     finally:
         await get_engine().dispose()
 

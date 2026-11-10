@@ -189,6 +189,7 @@ uv run alembic upgrade head
 
 uv run python -m art_curator.cli smoke              # traced test call, verifies cost recording
 uv run python -m art_curator.cli sync-graf          # pull GRAF facts, snapshot events; --dry-run rolls back
+uv run python -m art_curator.cli load-places        # barris, districts, municipalities from open data -> places; --dry-run
 uv run python -m art_curator.cli discover           # find each pilot site's listing page (model calls); --venue, --dry-run
 uv run python -m art_curator.cli crawl --pilot      # fetch pinned/accepted listing pages; purges first; --venue, --dry-run
 uv run python -m art_curator.cli purge-pages        # NULL raw_text + links older than 7 days (crawl also does this)
@@ -208,7 +209,7 @@ docker compose up -d                                # full stack incl. api + bot
 
 ## Current state
 
-**P1 is built (2026-10-02)**: PRs 11–16, breakdown in PLAN.md § 8. It is done when the `GRAF` workflow runs green against live GRAF; the last replayed live fetch (10-02) gave 570 terms, 556 with geometry, 156 joined (149 with a website, 1 ambiguous), 20/20 pilots (18 crawlable), 56 events. **P3 (agent loop, `/chat`, curation eval) is under way: breakdown in PLAN.md § 8, PRs 26–36; PR 26 is built.**
+**P1 is built (2026-10-02)**: PRs 11–16, breakdown in PLAN.md § 8. It is done when the `GRAF` workflow runs green against live GRAF; the last replayed live fetch (10-02) gave 570 terms, 556 with geometry, 156 joined (149 with a website, 1 ambiguous), 20/20 pilots (18 crawlable), 56 events. **P3 (agent loop, `/chat`, curation eval) is under way: breakdown in PLAN.md § 8, PRs 26–36; PRs 26–27 are built.**
 
 **P2 is done**: PRs 17–25 are merged (polite page fetch + robots, two-pass discovery, `venue_seeds` + `cli discover`, `cli crawl` + `cli purge-pages`, extraction core, page links, `cli extract`, queries + dev MCP, gold set + `cli eval-extraction`, summary judge). `discover` reads a page, sends its text to Haiku and keeps only the verdict (enums and a count) in `venue_seeds`. Human decisions go in `ingest/seeds.yaml` (`pin` / `reject` per venue), never in the table. `discover` was run against the live pilots on 2026-10-07 and the sites it could not settle are pinned.
 
@@ -223,6 +224,8 @@ PR 21a (migration 0006) stores what extraction needs for that: `crawl` keeps an 
 PR 23 adds `queries/events.py` and the dev MCP server (above). Its database tests have not run outside CI either: the sandbox blocks the local Postgres socket.
 
 PR 26 adds `search_events` and `get_events` to `queries/events.py`, and as MCP tools: exhibitions, art events and GRAF occurrences as one list, ids prefixed `x:` / `a:` / `g:`, runs, distances and the GRAF overlap rule all in SQL (rules in the section comment there). GRAF titles have no stored `title_key`, so the overlap rule normalises **both** titles with one SQL expression (`_match_key`), never one in Python and one in SQL. **Its database tests have not run outside CI.**
+
+PR 27 (migration 0008) adds `places` and `cli load-places`: Barcelona's 73 barris and 10 districts (Open Data BCN, CC BY 4.0; centroid computed by PostGIS) and 947 municipalities (IDESCAT/ICGC, Generalitat open licence; the municipal seat), replaced whole each load. Attribution is part of both licences: it is in `ingest/places.py` and printed by every load. `queries/events.resolve_place` turns a name into a point in SQL, places and venues with a point alike, through `_match_key` on both sides; rules in its section comment. `search_events(near=...)` uses it, and an unknown or ambiguous name raises `UnresolvedPlace` with candidates, each askable as "name, within" ("Canyelles, Garraf"). `places` is a facts-only table in `test_no_verbatim.py`. Its database tests passed locally; `load-places` has not run against the live sources yet (the sandbox blocks Python TLS), though the parsers and resolver were checked on the real downloads and all 600 live GRAF terms.
 
 PR 24 is built: `eval/extraction.py` (gold set, matching, scores, report; pure) and `eval/runner.py` (each labelled page's text, the model calls). The gold set is `eval/gold/extraction.yaml`: facts only, each page pinned to the `content_hash` it was labelled against, `confirmed: true` only once a person has checked every item on the live page. A page is scored from its stored text if the hash matches, else from a fresh fetch if *that* matches, else reported stale; the eval writes nothing but `llm_calls` and the purge. `--draft` writes extraction's answers as unconfirmed labels, which are never scored; a long listing is drafted `partial` (first 10 of each kind), which counts towards recall and the fields but not precision, since its later finds were never checked. The labels are in (2026-11-09: 36 pages, 14 venues, 200 items) and PR 24's done-when is met; the baseline and what it got wrong are in PLAN.md § 8. Precision moves between 1.00 and 0.78 run to run on one MACBA page alone, so compare a prompt change across more than one run. Its database tests passed locally.
 
