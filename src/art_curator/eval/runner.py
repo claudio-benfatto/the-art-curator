@@ -125,8 +125,11 @@ async def load_stored(session: AsyncSession) -> dict[str, StoredPage]:
     return stored
 
 
-async def load_verdicts(session: AsyncSession) -> list[SeedVerdict]:
-    return [
+async def load_verdicts(session: AsyncSession, venue: str | None = None) -> list[SeedVerdict]:
+    """What `discover` left in `venue_seeds`. `venue` keeps only that venue's, compared as
+    `normalize_name`, as `GoldSet.for_venue` keeps its listings: otherwise every other venue's
+    verdicts would be reported as unlabelled."""
+    verdicts = [
         SeedVerdict(**row._mapping)
         for row in await session.execute(
             select(
@@ -140,6 +143,9 @@ async def load_verdicts(session: AsyncSession) -> list[SeedVerdict]:
             .order_by(SEEDS.c.id)
         )
     ]
+    if venue is None:
+        return verdicts
+    return [v for v in verdicts if normalize_name(v.venue_name) == normalize_name(venue)]
 
 
 # --- the labelled pages' text --------------------------------------------------------------------

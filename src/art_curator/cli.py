@@ -533,7 +533,7 @@ def eval_extraction(
         known = ", ".join(everything.venues) or "none"
         typer.echo(f"FAIL: the gold set labels nothing for {venue or 'any venue'}. Known: {known}")
         raise typer.Exit(1)
-    run = asyncio.run(_eval(gold, judge))
+    run = asyncio.run(_eval(gold, venue, judge))
 
     typer.echo("Eval extraction")
     for line in evaluation.report(
@@ -568,7 +568,7 @@ class _EvalRun:
     stopped: str = ""
 
 
-async def _eval(gold: evaluation.GoldSet, judge: bool) -> _EvalRun:
+async def _eval(gold: evaluation.GoldSet, venue: str | None, judge: bool) -> _EvalRun:
     settings = get_settings()
     llm = get_llm_client()
     try:
@@ -577,7 +577,7 @@ async def _eval(gold: evaluation.GoldSet, judge: bool) -> _EvalRun:
             await session.commit()
             today = await eval_runner.today(session)
             stored = await eval_runner.load_stored(session)
-            verdicts = await eval_runner.load_verdicts(session)
+            verdicts = await eval_runner.load_verdicts(session, venue)
 
         with llm.tracer.start_as_current_span("eval-extraction") as span:
             trace_id, _ = telemetry.span_ids(span)

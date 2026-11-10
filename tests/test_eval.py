@@ -807,6 +807,27 @@ def test_eval_scores_the_stored_text_and_discovery_and_writes_nothing(run, db):
     assert "Fictici" not in result.output  # page text is never printed
 
 
+def test_eval_of_one_venue_scores_only_its_discovery(run, db):
+    other_venue = f"""
+    INSERT INTO venues (id, source_venue_id, name, slug, website_url, crawl_enabled, is_pilot)
+    OVERRIDING SYSTEM VALUE VALUES (2, 102, 'MACBA', 'macba', 'https://macba.test/', true, true);
+    INSERT INTO venue_seeds (venue_id, url, page_type, confidence, dated_items, language, status,
+                             model)
+    VALUES (2, 'https://macba.test/ara', 'current_listing', 'high', 3, 'ca', 'accepted',
+            '{HAIKU}')
+    """
+    run_sql(db, SEED_ROW, other_venue)
+    gold = GoldSet(listings={VENUE: (LISTING_URL,), "MACBA": ("https://macba.test/ara",)})
+
+    everyone = run(gold=gold)
+    one = run("--venue", "galeria exemple", gold=gold)
+
+    assert "discovery   2 labelled venues   2 correct" in everyone.output
+    assert one.exit_code == 0, one.output
+    assert "discovery   1 labelled venues   1 correct" in one.output
+    assert "unlabelled" not in one.output  # MACBA's verdicts are not this venue's
+
+
 def test_eval_of_a_venue_the_gold_set_does_not_label_names_the_known(run):
     result = run("--venue", "MACBA", gold=GoldSet(pages=(gold_page(),)))
 
