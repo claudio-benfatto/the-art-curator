@@ -2,7 +2,7 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 in progress: PRs 17–24 built (24's baseline 2026-11-09), then 25 (§ 8).
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 in progress: PRs 17–25 built (24's baseline 2026-11-09; 25 not run live yet) (§ 8).
 **Last updated:** 2026-10-15 (rev. 11)
 
 ---
@@ -250,7 +250,7 @@ Terraform:  8 TF bootstrap + Bedrock IAM ─ 9 OIDC + TF CI ──────�
 | 22 | Migration 0007: `exhibitions`, `art_events`, extraction markers on `venue_pages`; classified in `test_no_verbatim.py`. `cli extract` (skip unchanged, `--venue`, `--limit`, `--dry-run`, report with cost from `llm_calls`). `extract` passes a listing's stored links; crawl follows `detail_url` | Second run on unchanged pages makes zero model calls (met 2026-10-29). Version 3 on the pilots: no listing cut off, a listing costs less than v1's measured $0.038, and the cost is recorded in § 6 (met 2026-10-30: ~$0.022 a listing) |
 | 23 | `queries/events.py` (read-only, async, no agent/transport concerns) + `mcp_server.py` (`mcp` in the dev group) | Usable from Claude Code; no tool returns `raw_text` (tested) |
 | 24 | `eval/extraction.py` (pure scorer) + `cli eval-extraction` + labelling ~30 pages and the correct listing URL per venue | Done-when above. Reports item recall and precision (title match), date and artist accuracy on matched items, false positives on negative pages, stale count and cost. For discovery: accuracy vs the human-labelled listings, the ambiguous rate (human load), and **accepted-but-wrong** (the dangerous case) | Met 2026-11-09: 36 pages, 14 venues, 10 with no current show; runs agree except on one page (baseline below) |
-| 25 | *(optional)* Summary faithfulness judge, `purpose=judge`, `JUDGE_MODEL` defaulting to the chat model (already in IAM and `pricing.yaml`) | Per-summary supported/unsupported in the eval report |
+| 25 | *(optional)* Summary faithfulness judge, `purpose=judge`, `JUDGE_MODEL` defaulting to the chat model (already in IAM and `pricing.yaml`). `llm/judge.py` + `eval-extraction --judge`; unsupported claims must be passages of the summary, so no page text is printed | Per-summary supported/unsupported in the eval report. Built; not run live yet |
 
 PR 21 depends only on the client and can run in parallel with 17–20. `discover` runs by hand in P2; P6 schedules it monthly alongside the nightly crawl. PR 24 is mostly human work: Claude Code can draft labels through the MCP server and the live page, but "hand-checked" means a person confirms every item.
 

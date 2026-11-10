@@ -57,6 +57,7 @@ AWS_REGION=eu-west-1
 CHAT_MODEL=global.anthropic.claude-opus-4-6-v1                 # InvokeModel; Opus 5 + Mantle blocked
 EXTRACT_MODEL=global.anthropic.claude-haiku-4-5-20251001-v1:0  # Converse
 EMBED_MODEL=                                                   # chosen by measurement in P3
+JUDGE_MODEL=                                                   # blank: CHAT_MODEL (eval-extraction --judge)
 ```
 
 An inference-profile ID (`global.` …) selects the runtime endpoint; a bare `anthropic.` ID selects Mantle. `pricing.yaml` and the Terraform IAM are keyed on the exact ID the client sends, and `tests/test_config.py` checks the defaults against `infra/terraform/variables.tf` — a mismatch surfaces only as an IAM denial at runtime.
@@ -195,6 +196,7 @@ uv run python -m art_curator.cli extract            # crawled pages -> exhibitio
 uv run python -m art_curator.cli embed              # summaries -> pgvector (P3)
 uv run python -m art_curator.cli eval-extraction    # score extraction + discovery against the gold set (model calls); --venue
 uv run python -m art_curator.cli eval-extraction --draft FILE  # unconfirmed labels for the pages not labelled yet
+uv run python -m art_curator.cli eval-extraction --judge  # also check every summary against its page (JUDGE_MODEL)
 uv run python -m art_curator.cli chat               # talk to the curator in the terminal
 uv run python -m art_curator.mcp_server             # dev MCP over queries/events.py (stdio); .mcp.json registers it
 
@@ -208,7 +210,7 @@ docker compose up -d                                # full stack incl. api + bot
 
 **P1 is built (2026-10-02)**: PRs 11–16, breakdown in PLAN.md § 8. It is done when the `GRAF` workflow runs green against live GRAF; the last replayed live fetch (10-02) gave 570 terms, 556 with geometry, 156 joined (149 with a website, 1 ambiguous), 20/20 pilots (18 crawlable), 56 events. **Next up is P2 (`crawl` + `extract`).**
 
-**P2 in progress**: PRs 17–24 are built (polite page fetch + robots, two-pass discovery, `venue_seeds` + `cli discover`, `cli crawl` + `cli purge-pages`, extraction core, page links, `cli extract`, queries + dev MCP, gold set + `cli eval-extraction`). `discover` reads a page, sends its text to Haiku and keeps only the verdict (enums and a count) in `venue_seeds`. Human decisions go in `ingest/seeds.yaml` (`pin` / `reject` per venue), never in the table. `discover` was run against the live pilots on 2026-10-07 and the sites it could not settle are pinned.
+**P2 in progress**: PRs 17–25 are built (polite page fetch + robots, two-pass discovery, `venue_seeds` + `cli discover`, `cli crawl` + `cli purge-pages`, extraction core, page links, `cli extract`, queries + dev MCP, gold set + `cli eval-extraction`, summary judge). `discover` reads a page, sends its text to Haiku and keeps only the verdict (enums and a count) in `venue_seeds`. Human decisions go in `ingest/seeds.yaml` (`pin` / `reject` per venue), never in the table. `discover` was run against the live pilots on 2026-10-07 and the sites it could not settle are pinned.
 
 `crawl` is the first thing that writes `venue_pages.raw_text`. It fetches a venue's pins, or else its accepted seeds (a pin replaces them), and stores text and hash only for an `ok` page; `thin` / `blocked` / `robots` / `error` are a `status` (migration 0005) with both NULL, and `unavailable` is reported but never written. It purges text past 7 days before fetching, even on `--dry-run`, and exits 1 after committing if a listing 404s or redirects to the homepage. Run against the live pilots on 2026-10-08: 18 sites, 21 pages, 20 `ok` and 1 `thin` (Galería Alegría's splash page), Dilalica without a seed, no broken seeds; a second run left every hash unchanged. On 2026-10-29 CaixaForum answered 403 (`blocked`, left facts-only) and the other 19 listings were `ok`. Since PR 22 a crawl also fetches, once each, the own pages extraction named for shows that are not over (`kind = 'detail'`, after the listings, inside the 8-page cap).
 
@@ -221,6 +223,8 @@ PR 21a (migration 0006) stores what extraction needs for that: `crawl` keeps an 
 PR 23 adds `queries/events.py` and the dev MCP server (above). Its database tests have not run outside CI either: the sandbox blocks the local Postgres socket.
 
 PR 24 is built: `eval/extraction.py` (gold set, matching, scores, report; pure) and `eval/runner.py` (each labelled page's text, the model calls). The gold set is `eval/gold/extraction.yaml`: facts only, each page pinned to the `content_hash` it was labelled against, `confirmed: true` only once a person has checked every item on the live page. A page is scored from its stored text if the hash matches, else from a fresh fetch if *that* matches, else reported stale; the eval writes nothing but `llm_calls` and the purge. `--draft` writes extraction's answers as unconfirmed labels, which are never scored; a long listing is drafted `partial` (first 10 of each kind), which counts towards recall and the fields but not precision, since its later finds were never checked. The labels are in (2026-11-09: 36 pages, 14 venues, 200 items) and PR 24's done-when is met; the baseline and what it got wrong are in PLAN.md § 8. Precision moves between 1.00 and 0.78 run to run on one MACBA page alone, so compare a prompt change across more than one run. Its database tests passed locally.
+
+PR 25 adds `llm/judge.py` and `eval-extraction --judge`: after extraction, each page with summaries goes to `JUDGE_MODEL` (blank: the chat model, already in IAM and `pricing.yaml`) with the text they were written from, one forced-tool call per page over Converse, thinking off, one retry. A summary is *supported* or *unsupported*, and an unsupported one comes back with its claims, which must be word-for-word passages of the summary: a claim that is not, where a page quote would turn up, is refused like any invalid answer, so the report prints only our own text. The report adds the share supported, each unsupported claim, unjudged pages and the judge's share of the cost. A run the endpoint stopped is not judged. **Not run live yet**, and its database test has not run outside CI.
 
 Event history accrues only where `sync-graf` runs against a database that is kept — the `GRAF` workflow's is thrown away. Until P6 schedules it, run it locally to keep snapshots.
 

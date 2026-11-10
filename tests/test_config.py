@@ -12,6 +12,7 @@ ENV_VARS = (
     "CHAT_MODEL",
     "EXTRACT_MODEL",
     "EMBED_MODEL",
+    "JUDGE_MODEL",
     "DATABASE_URL",
     "GRAF_BASE_URL",
     "HTTP_USER_AGENT",
@@ -85,6 +86,16 @@ def test_env_overrides(monkeypatch):
 def test_blank_embed_model_is_unset(monkeypatch):
     monkeypatch.setenv("EMBED_MODEL", "")
     assert Settings(_env_file=None).embed_model is None
+
+
+def test_judge_model_defaults_to_the_chat_model(monkeypatch):
+    """The chat model is the one already in the app role's IAM and in pricing.yaml."""
+    monkeypatch.setenv("CHAT_MODEL", "anthropic.claude-sonnet-5")
+    monkeypatch.setenv("JUDGE_MODEL", "")
+    assert Settings(_env_file=None).judge_model == "anthropic.claude-sonnet-5"
+
+    monkeypatch.setenv("JUDGE_MODEL", "global.anthropic.claude-haiku-4-5-20251001-v1:0")
+    assert Settings(_env_file=None).judge_model.startswith("global.anthropic.claude-haiku")
 
 
 def test_env_file(tmp_path):

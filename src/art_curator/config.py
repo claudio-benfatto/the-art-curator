@@ -1,8 +1,9 @@
 """All configuration comes from the environment (or `.env`). Nothing else reads env vars."""
 
 from functools import lru_cache
+from typing import Self
 
-from pydantic import SecretStr, field_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +22,9 @@ class Settings(BaseSettings):
     # extract_model_id with a `global.` prefix, or the app role's IAM denies it.
     extract_model: str = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
     embed_model: str | None = None  # chosen by measurement in P3
+    # The summary-faithfulness judge (`eval-extraction --judge`). Blank means the chat model,
+    # which is already in the app role's IAM and in pricing.yaml; any other ID needs both.
+    judge_model: str = ""
 
     # Async driver for the app; Alembic uses the same URL. Default is the Compose `db` service.
     database_url: str = "postgresql+asyncpg://art_curator:art_curator@localhost:5432/art_curator"
@@ -45,6 +49,12 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_is_unset(cls, v: str | None) -> str | None:
         return v or None
+
+    @model_validator(mode="after")
+    def _judge_defaults_to_chat(self) -> Self:
+        if not self.judge_model:
+            self.judge_model = self.chat_model
+        return self
 
 
 @lru_cache
