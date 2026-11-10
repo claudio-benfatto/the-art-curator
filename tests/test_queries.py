@@ -6,6 +6,7 @@ Every row is invented (`tests/corpus.py`). That no tool returns page text is che
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import date, time
 from decimal import Decimal
@@ -482,6 +483,13 @@ def test_a_tool_returns_the_query_rows_as_structured_content(corpus_db):
         ("Prova U", "2026-11-30"),
         ("Stand a la fira", "2026-11-08"),
     ]
+
+
+def test_importing_the_server_leaves_logging_at_the_default_level():
+    """`MCPServer` configures the root logger when it is built, so at INFO an import alone made
+    `sync-graf` print httpx's request lines into its report."""
+    assert mcp_server.mcp.settings.log_level == "WARNING"
+    assert logging.getLogger().getEffectiveLevel() >= logging.WARNING
 
 
 def test_a_tool_refuses_a_limit_over_the_cap():

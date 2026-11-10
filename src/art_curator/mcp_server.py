@@ -42,7 +42,10 @@ NotOverOn = Annotated[
 Kind = Literal[q.KINDS]
 EventId = Annotated[str, Field(pattern=q.EVENT_ID_PATTERN)]
 
-mcp = MCPServer("art-curator", instructions=INSTRUCTIONS)
+# Constructing the server calls `logging.basicConfig` at this level, on the root logger. At INFO,
+# merely importing this module would route every library's INFO lines (httpx's requests among
+# them) to stderr for the whole process, CLI output included. WARNING is Python's default.
+mcp = MCPServer("art-curator", instructions=INSTRUCTIONS, log_level="WARNING")
 
 
 async def _read[T](query: Callable[..., Awaitable[T]], **kwargs: Any) -> T:
