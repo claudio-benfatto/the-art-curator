@@ -34,7 +34,7 @@ REGION = "eu-west-1"
 class StubLlm:
     def __init__(self, record: Recorder | None = None) -> None:
         self.calls: list[LlmCall] = []
-        self.requests: list[dict[str, Any]] = []  # Mantle request bodies, as sent
+        self.requests: list[dict[str, Any]] = []  # Messages request bodies (both transports)
         self._responses: deque[httpx2.Response] = deque()
 
         transport = httpx2.MockTransport(self._handle)
@@ -96,14 +96,17 @@ class StubLlm:
         model: str = "anthropic.claude-opus-5",
         stop_reason: str = "end_turn",
         request_id: str = "req_stub",
+        content: list[dict[str, Any]] | None = None,
         **usage: Any,
     ) -> None:
+        """Queue a Messages response. `content` replaces the single text block `text` makes:
+        thinking blocks and tool calls, as the API would return them."""
         body = {
             "id": "msg_stub",
             "type": "message",
             "role": "assistant",
             "model": model,
-            "content": [{"type": "text", "text": text}],
+            "content": content if content is not None else [{"type": "text", "text": text}],
             "stop_reason": stop_reason,
             "stop_sequence": None,
             "usage": {"input_tokens": 0, "output_tokens": 0, **usage},

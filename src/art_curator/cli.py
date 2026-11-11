@@ -2,7 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated
@@ -13,6 +13,9 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from art_curator.agent.loop import Conversation, Curator, Turn
+from art_curator.agent.prompt import conversation_context, local_today
+from art_curator.agent.tools import CuratorTools, to_json
 from art_curator.config import get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_engine, get_sessionmaker
@@ -731,6 +734,84 @@ async def _spend(
         query = query.where(LlmCall.purpose == purpose)
     calls, cost = (await session.execute(query)).one()
     return calls, cost
+
+
+@app.command()
+def chat(
+    today: Annotated[
+        datetime | None,
+        typer.Option(
+            formats=["%Y-%m-%d"],
+            help="Open the conversation as if today were this day (YYYY-MM-DD): the calendar the "
+            "curator reads dates from starts there.",
+        ),
+    ] = None,
+) -> None:
+    """Talk to the curator in the terminal. Calls the chat model: a few cents an exchange.
+
+    The conversation is in memory and ends when you quit (Ctrl-D). After each reply, a line gives
+    the tool calls, the tool rounds, and the turn's model calls, tokens (cache included) and cost.
+    """
+    settings = get_settings()
+    day = today.date() if today else local_today()
+    curator = Curator(
+        get_llm_client(),
+        CuratorTools(get_sessionmaker()),
+        model=settings.chat_model,
+        effort=settings.chat_effort,
+    )
+    conversation = Conversation(conversation_context(day))
+    typer.echo(
+        f"The Art Curator · {settings.chat_model} · effort {settings.chat_effort} · today {day}"
+        "\nCtrl-D to quit."
+    )
+    # One event loop for the whole conversation: the database pool belongs to it. Input is read
+    # outside it, so Ctrl-C at the prompt stops the program at once.
+    with asyncio.Runner() as runner:
+        try:
+            while True:
+                try:
+                    text = input("\nyou> ").strip()
+                except EOFError:
+                    break
+                if not text:
+                    continue
+                try:
+                    turn = runner.run(curator.turn(conversation, text))
+                except Exception as exc:  # recorded by the client; the conversation is unchanged
+                    typer.echo(f"error: {type(exc).__name__}: {exc}")
+                    continue
+                typer.echo(f"\n{turn.reply or f'(no reply: {turn.stop_reason})'}\n")
+                typer.echo(runner.run(_turn_summary(turn)))
+        finally:
+            telemetry.setup_telemetry().force_flush()
+            runner.run(get_engine().dispose())
+
+
+async def _turn_summary(turn: Turn) -> str:
+    """The tool calls of `turn`, then what its model calls cost, from their llm_calls rows."""
+    async with get_sessionmaker()() as session:
+        calls, cost, fresh, read, written, out = (
+            await session.execute(
+                select(
+                    func.count(),
+                    func.coalesce(func.sum(LlmCall.cost_usd), 0),
+                    func.coalesce(func.sum(LlmCall.input_tokens), 0),
+                    func.coalesce(func.sum(LlmCall.cache_read_input_tokens), 0),
+                    func.coalesce(func.sum(LlmCall.cache_creation_input_tokens), 0),
+                    func.coalesce(func.sum(LlmCall.output_tokens), 0),
+                ).where(LlmCall.trace_id == turn.trace_id)
+            )
+        ).one()
+    lines = [
+        f"  · {call.name} {to_json(call.input)}" + ("  → error" if call.is_error else "")
+        for call in turn.tool_calls
+    ]
+    lines.append(
+        f"  [{turn.iteration_count} tool rounds · {calls} model calls · input {fresh} + cache read "
+        f"{read} + cache write {written} · output {out} · ${cost:.4f}]"
+    )
+    return "\n".join(lines)
 
 
 @app.command("purge-pages")
