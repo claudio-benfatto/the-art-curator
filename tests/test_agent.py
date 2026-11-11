@@ -1,16 +1,24 @@
-"""The curator's loop, tools and prompt (PLAN.md § 8, PR 28), over a stubbed model.
+"""The curator's loop, tools and prompt (PLAN.md § 8, PR 28), over a stubbed model, and the
+conversations it keeps (PR 29).
 
 What PR 28 must show without calling a model: the cap holds, a bad tool input comes back as
 `is_error`, every call carries one cache breakpoint on its last block, and thinking blocks are
 replayed exactly as they came. The tools' database half runs against `tests/corpus.py`.
+
+PR 29: a turn replayed from the database starts with the turn before it, byte for byte, and sends
+what an in-memory conversation would; a conversation ends when idle or when its day is over; and
+`cli chat` resumes, starts over and rates replies.
 """
 
 import asyncio
 import json
-from datetime import date
+from collections.abc import Callable, Iterator
+from datetime import date, timedelta
 from typing import Any
 
 import pytest
+from alembic import command
+from sqlalchemy import text as sql_text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from typer.testing import CliRunner
@@ -22,8 +30,12 @@ from art_curator.agent.prompt import (
     SYSTEM_PROMPT,
     conversation_context,
 )
+from art_curator.agent.store import IDLE, ConversationStore
 from art_curator.agent.tools import TOOL_DEFINITIONS, CuratorTools, ToolResult
+from art_curator.config import get_settings
+from art_curator.db.session import get_engine, get_sessionmaker
 from art_curator.queries import events as q
+from tests.db import alembic_config, run_sql
 from tests.llm_stub import StubLlm
 
 CHAT = "global.anthropic.claude-opus-4-6-v1"
@@ -354,34 +366,6 @@ def test_tool_definitions_are_self_contained_and_match_the_queries():
     assert by_name["get_events"]["input_schema"]["properties"]["ids"]["maxItems"] == q.MAX_HYDRATE
 
 
-# --- cli chat -----------------------------------------------------------------------------------
-
-
-def test_cli_chat_runs_turns_until_end_of_input(monkeypatch):
-    stub = StubLlm()
-    stub.reply(content=[tool_use("a")], stop_reason="tool_use")
-    stub.reply(content=[text("Prova U, at Galeria Exemple.")])
-    stub.reply(content=[text("It closes on the 30th.")])
-    monkeypatch.setattr(cli, "get_llm_client", lambda: stub.client)
-    monkeypatch.setattr(cli, "CuratorTools", lambda _: FakeTools())
-
-    async def summary(turn: Turn) -> str:
-        return f"[{turn.iteration_count} tool rounds]"
-
-    monkeypatch.setattr(cli, "_turn_summary", summary)
-
-    result = CliRunner().invoke(
-        cli.app, ["chat", "--today", "2026-11-11"], input="Saturday?\n\nUntil when?\n"
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "today 2026-11-11" in result.output
-    assert "Prova U, at Galeria Exemple." in result.output and "[1 tool rounds]" in result.output
-    assert "It closes on the 30th." in result.output and "[0 tool rounds]" in result.output
-    assert len(stub.requests) == 3  # the blank line was not sent
-    assert "Wednesday 2026-11-11 (today)" in stub.requests[0]["messages"][0]["content"][0]["text"]
-
-
 # --- the tools over the corpus -------------------------------------------------------------------
 
 
@@ -433,3 +417,217 @@ def test_dates_the_wrong_way_round_are_an_error(corpus_db):
     )
 
     assert result.is_error and "after" in result.content
+
+
+# --- conversations kept in the database (PR 29) -------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def conversations_db(fresh_database) -> Iterator[URL]:
+    """A migrated database the tests below share, each as its own user."""
+    with fresh_database() as url:
+        command.upgrade(alembic_config(url), "head")
+        yield url
+
+
+def kept(url: URL, stub: StubLlm, tools: Any, user: str, *texts: str) -> list[Turn]:
+    """Run `texts` as consecutive turns of `user`'s conversation, each one replayed from the
+    database and saved back, as a server would."""
+
+    async def main() -> list[Turn]:
+        engine = create_async_engine(url)
+        store = ConversationStore(async_sessionmaker(engine, expire_on_commit=False))
+        curator = Curator(stub.client, tools, model=CHAT, effort="medium")
+        try:
+            user_id = await store.user("test", user)
+            done = []
+            for t in texts:
+                stored = await store.current(user_id, TODAY)
+                done.append(await curator.turn(stored.conversation, t))
+                await store.save(stored, done[-1])
+            return done
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(main())
+
+
+def serialized(request: dict[str, Any]) -> str:
+    """A request's messages as JSON, without the breakpoint. `json.loads` keeps an object's keys
+    in the order they came, so equal strings mean equal bytes on the wire up to whitespace, which
+    dict equality would not check."""
+    return json.dumps(without_marks(request["messages"]))
+
+
+def two_turns(stub: StubLlm) -> None:
+    """Queue a search, its answer, and a reply to a second question. The search input's keys are
+    in an order `jsonb` would not keep: it sorts them by length."""
+    stub.reply(content=[thinking(), tool_use("a")], stop_reason="tool_use")
+    stub.reply(content=[thinking("Two fit.", "sig-2"), text("Two picks.")])
+    stub.reply(content=[text("The second one.")])
+
+
+def test_a_resumed_turn_starts_with_the_last_request_byte_for_byte(conversations_db):
+    stub = StubLlm()
+    two_turns(stub)
+
+    kept(conversations_db, stub, FakeTools(), "bytes", "Saturday?", "Which is closer?")
+
+    assert list(SEARCH) == ["date_from", "date_to", "near"]
+    for before, after in zip(stub.requests, stub.requests[1:], strict=False):
+        assert serialized(after).startswith(serialized(before)[:-1])  # up to the closing ]
+    # Replayed from the database, every request is the one an in-memory conversation sends.
+    memory = StubLlm()
+    two_turns(memory)
+    turns(memory, FakeTools(), "Saturday?", "Which is closer?")
+    assert [serialized(r) for r in stub.requests] == [serialized(r) for r in memory.requests]
+
+
+def test_each_message_is_a_row_with_its_turn_and_the_reply_its_rounds(conversations_db):
+    stub = StubLlm()
+    two_turns(stub)
+
+    first, second = kept(conversations_db, stub, FakeTools(), "rows", "Saturday?", "Closer?")
+
+    [rows] = run_sql(
+        conversations_db,
+        "SELECT m.position, m.role, m.trace_id, m.iteration_count FROM messages m "
+        "JOIN conversations c ON c.id = m.conversation_id JOIN users u ON u.id = c.user_id "
+        "WHERE u.external_id = 'rows' ORDER BY m.position",
+    )
+    assert rows == [
+        (0, "user", first.trace_id, None),
+        (1, "assistant", first.trace_id, None),
+        (2, "user", first.trace_id, None),  # the tool results
+        (3, "assistant", first.trace_id, 1),
+        (4, "user", second.trace_id, None),
+        (5, "assistant", second.trace_id, 0),
+    ]
+
+
+def test_a_cut_off_turn_is_completed_by_the_next_text(conversations_db):
+    stub = StubLlm()
+    stub.reply(content=[tool_use("a")], stop_reason="max_tokens")
+    stub.reply(content=[text("Sorry, again:")])
+
+    kept(conversations_db, stub, FakeTools(), "cut", "Saturday?", "Go on")
+
+    # The stored tool results grew by the next text, which went out as one user turn.
+    [[(blocks,)]] = run_sql(
+        conversations_db,
+        "SELECT m.content::text FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+        "JOIN users u ON u.id = c.user_id WHERE u.external_id = 'cut' AND m.position = 2",
+    )
+    assert [b["type"] for b in json.loads(blocks)] == ["tool_result", "text"]
+    assert without_marks(stub.requests[1]["messages"])[2]["content"] == json.loads(blocks)
+
+
+def test_a_conversation_ends_after_idle_hours_or_when_its_day_is_over(conversations_db):
+    async def main() -> list[int]:
+        engine = create_async_engine(conversations_db)
+        store = ConversationStore(async_sessionmaker(engine, expire_on_commit=False))
+        try:
+            user_id = await store.user("test", "expiry")
+            same = [(await store.current(user_id, TODAY)).id for _ in range(2)]
+            async with engine.begin() as conn:
+                await conn.execute(
+                    sql_text(
+                        "UPDATE conversations SET last_turn_at = now() - CAST(:idle AS interval) "
+                        "WHERE user_id = :user AND ended_at IS NULL"
+                    ),
+                    {"idle": IDLE + timedelta(minutes=1), "user": user_id},
+                )
+            idle = (await store.current(user_id, TODAY)).id
+            tomorrow = await store.current(user_id, TODAY + timedelta(days=1))
+            assert tomorrow.conversation.context == conversation_context(TODAY + timedelta(days=1))
+            return [*same, idle, tomorrow.id]
+        finally:
+            await engine.dispose()
+
+    first, again, after_idle, next_day = asyncio.run(main())
+
+    assert first == again != after_idle != next_day
+    [rows] = run_sql(
+        conversations_db,
+        "SELECT c.id, c.ended_at IS NOT NULL FROM conversations c JOIN users u ON u.id = c.user_id"
+        " WHERE u.external_id = 'expiry' ORDER BY c.id",
+    )
+    assert rows == [(first, True), (after_idle, True), (next_day, False)]
+
+
+@pytest.fixture
+def chat(conversations_db, monkeypatch) -> Iterator[Callable[..., Any]]:
+    """`chat(input, user=...)` runs `cli chat` on the conversations database, the model stubbed;
+    `chat.stub` holds what it sent, `chat.url` is the database."""
+    monkeypatch.setenv("DATABASE_URL", conversations_db.render_as_string(hide_password=False))
+    stub = StubLlm()
+    monkeypatch.setattr(cli, "get_llm_client", lambda: stub.client)
+    monkeypatch.setattr(cli, "CuratorTools", lambda _: FakeTools())
+
+    async def summary(turn: Turn) -> str:  # its rows went to the stub, not the database
+        return f"[{turn.iteration_count} tool rounds]"
+
+    monkeypatch.setattr(cli, "_turn_summary", summary)
+
+    def _chat(input: str, *, user: str) -> Any:
+        _clear_caches()  # each run is a new process, with its own engine
+        return CliRunner().invoke(
+            cli.app, ["chat", "--today", "2026-11-11", "--user", user], input=input
+        )
+
+    _chat.stub = stub
+    _chat.url = conversations_db
+    yield _chat
+    _clear_caches()
+
+
+def _clear_caches() -> None:
+    for cached in (get_settings, get_engine, get_sessionmaker):
+        cached.cache_clear()
+
+
+def test_cli_chat_runs_turns_until_end_of_input(chat):
+    chat.stub.reply(content=[tool_use("a")], stop_reason="tool_use")
+    chat.stub.reply(content=[text("Prova U, at Galeria Exemple.")])
+    chat.stub.reply(content=[text("It closes on the 30th.")])
+
+    result = chat("Saturday?\n\nUntil when?\n", user="turns")
+
+    assert result.exit_code == 0, result.output
+    assert "today 2026-11-11" in result.output and "Resuming" not in result.output
+    assert "Prova U, at Galeria Exemple." in result.output and "[1 tool rounds]" in result.output
+    assert "It closes on the 30th." in result.output and "[0 tool rounds]" in result.output
+    assert len(chat.stub.requests) == 3  # the blank line was not sent
+    first = chat.stub.requests[0]["messages"][0]["content"][0]["text"]
+    assert "Wednesday 2026-11-11 (today)" in first
+
+
+def test_cli_chat_resumes_the_conversation_and_new_starts_another(chat):
+    for reply in ("Two picks.", "The second one.", "Hola!"):
+        chat.stub.reply(content=[text(reply)])
+
+    first = chat("Saturday?\n", user="resume")
+    resumed = chat("Which is closer?\n/new\nHola\n", user="resume")
+
+    assert first.exit_code == resumed.exit_code == 0, resumed.output
+    assert "Resuming conversation" in resumed.output and "(2 messages)" in resumed.output
+    assert "New conversation" in resumed.output
+    assert [len(r["messages"]) for r in chat.stub.requests] == [1, 3, 1]
+    assert serialized(chat.stub.requests[1]).startswith(serialized(chat.stub.requests[0])[:-1])
+
+
+def test_cli_chat_rates_the_last_reply_once(chat):
+    chat.stub.reply(content=[text("Two picks.")])
+
+    result = chat("/good\nSaturday?\n/good\n/bad\n/what\n", user="rate")
+
+    assert result.exit_code == 0, result.output
+    assert "No reply to rate yet." in result.output and result.output.count("Noted.") == 2
+    assert result.output.count(cli.CHAT_HELP) == 2  # on start, and for an unknown command
+    [rows] = run_sql(
+        chat.url,
+        "SELECT f.rating, m.iteration_count FROM feedback f JOIN messages m ON m.id = f.message_id"
+        " JOIN conversations c ON c.id = m.conversation_id JOIN users u ON u.id = c.user_id"
+        " WHERE u.external_id = 'rate'",
+    )
+    assert rows == [("bad", 0)]
