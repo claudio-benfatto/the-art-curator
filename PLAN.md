@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PRs 26–27 built (§ 8).
-**Last updated:** 2026-11-10 (rev. 14)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PRs 26–28 built (§ 8).
+**Last updated:** 2026-11-11 (rev. 15)
 
 ---
 
@@ -112,7 +112,7 @@ Each table lands in the phase that first writes it — no speculative schema.
 | `remember(topic, fact, replaces?)` | Profile fact id |
 | `build_itinerary(event_ids, start_time, start_lat, start_lon)` | Order + maps link — P4 |
 
-The model does no date/distance arithmetic: dates are ISO strings read off a calendar, places are names resolved in SQL. `get_venue` folded into `get_events` (§ 8, P3). `query` is gated (§ 8, P3).
+The model does no date/distance arithmetic: dates are ISO strings read off a calendar, places are names resolved in SQL. `lat`/`lon` reach the agent's tool with a client location (P5); until then the only point the model could give is an estimate. `get_venue` folded into `get_events` (§ 8, P3). `query` is gated (§ 8, P3).
 
 ---
 
@@ -131,7 +131,7 @@ Assumptions: Bedrock global endpoint at Anthropic list price (verify in P0; regi
 | Extraction, pilot initial | v1 $0.72 (19 listings); v2 $0.76 (listings) + $0.27 (26 detail pages); **v3 $0.69 for all 45 pages** (46 calls, none cut off), so ~$0.41 for the 19 listings at the v2 detail-page rate |
 | Extraction, pilot nightly (~10% changed) | ~$0.07/night, ~$2/mo |
 | Extraction, all 158 venues | ~8× the pilots: ~$5.5 initial, ~$16/mo nightly |
-| Chat, Opus 4.6, compact + hydrate + caching | ~$0.05/exchange (same per-token price as Opus 5; caching starts only past 4096 tokens) — **likely low**: a first exchange of 3 calls is ~3k + 6k + 9k input tokens with nothing cached under 4096, ≈ $0.07–0.09 in + ~$0.04 out. PR 31 measures it |
+| Chat, Opus 4.6, compact + hydrate + caching | ~$0.05/exchange (same per-token price as Opus 5; caching starts only past 4096 tokens) — **likely low**: a first exchange of 3 calls is ~3k + 6k + 9k input tokens with nothing cached under 4096, ≈ $0.07–0.09 in + ~$0.04 out. **First live exchange (2026-11-11): $0.117**, 2 rounds, 55% of it cache writes (CLAUDE.md, Current state). PR 31 measures it |
 | **PoC total** (300 exchanges + pilot extraction) | **~$18/mo** |
 
 Embeddings are noise. Chat starts on Opus 4.6; measure a cheaper or newer model at P3, whichever the account can call by then.

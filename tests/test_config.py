@@ -10,6 +10,7 @@ from art_curator.config import Settings, get_settings
 ENV_VARS = (
     "AWS_REGION",
     "CHAT_MODEL",
+    "CHAT_EFFORT",
     "EXTRACT_MODEL",
     "EMBED_MODEL",
     "JUDGE_MODEL",

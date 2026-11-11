@@ -34,6 +34,9 @@ Dev MCP half (P2): `mcp_server.py` puts query results into a Claude Code convers
 transcript is one more place prose can be kept. No tool may return `raw_text` or link text: no
 tool's output schema has a field for it, and a page whose text and links carry planted markers
 is fetched through every tool to check that neither marker comes back.
+
+Agent half (P3): the curator's tools put the same query results into a chat, which goes on spans
+(and to Langfuse, when it is on). The same page is fetched through each of them.
 """
 
 import asyncio
@@ -44,7 +47,9 @@ from pathlib import Path
 
 import pytest
 from mcp.types import TextContent
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from art_curator.agent.tools import TOOL_DEFINITIONS, CuratorTools, ToolResult
 from art_curator.db.models import Base
 from art_curator.eval.extraction import GoldItem, GoldPage, GoldSet, load_gold
 from art_curator.ingest.graf import DROP_KEYS, DROP_PREFIXES, banned_keys, scrub
@@ -586,3 +591,34 @@ def test_no_mcp_tool_returns_page_text(corpus_db):
         p for p in results["pages"].structured_content["result"] if p["url"] == LISTING_URL
     ]
     assert listing["text_held"] and listing["link_count"] == 1
+
+
+# --- Agent: page text never reaches a chat -------------------------------------------------------
+
+# Every curator tool, reaching the listing's items as MCP_CALLS does. A new tool fails
+# `test_every_agent_tool_is_scanned` until it is added here.
+AGENT_CALLS: dict[str, dict] = {
+    "search_events": MCP_CALLS["search_events"],
+    "get_events": MCP_CALLS["get_events"],
+}
+
+
+def test_every_agent_tool_is_scanned():
+    assert {tool["name"] for tool in TOOL_DEFINITIONS} == set(AGENT_CALLS)
+
+
+def test_no_agent_tool_returns_page_text(corpus_db):
+    async def main() -> list[ToolResult]:
+        engine = create_async_engine(corpus_db)
+        tools = CuratorTools(async_sessionmaker(engine, expire_on_commit=False))
+        try:
+            return [await tools(name, args) for name, args in AGENT_CALLS.items()]
+        finally:
+            await engine.dispose()
+
+    for name, result in zip(AGENT_CALLS, asyncio.run(main()), strict=True):
+        assert not result.is_error, f"{name}: {result.content}"
+        assert PAGE_MARKER not in result.content, f"{name} returned a page's text"
+        assert LINK_MARKER not in result.content, f"{name} returned a page's link text"
+    # Not vacuous: the listing's items came back, by their facts and our summaries.
+    assert '"source_url":"' + LISTING_URL in result.content

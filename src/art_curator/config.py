@@ -1,7 +1,7 @@
 """All configuration comes from the environment (or `.env`). Nothing else reads env vars."""
 
 from functools import lru_cache
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     # is blocked for this account (CLAUDE.md, Current state). `llm/client.py` routes on the
     # `global.` prefix, so restoring Opus 5 here is a one-line change.
     chat_model: str = "global.anthropic.claude-opus-4-6-v1"
+    # Fixed per deployment: changing it mid-conversation invalidates the messages cache. Opus 4.6
+    # takes low/medium/high/max (no xhigh, CLAUDE.md § 5); `eval-curation` sweeps it.
+    chat_effort: Literal["low", "medium", "high", "max"] = "medium"
     # A global inference profile, called via Bedrock Converse: Mantle refuses every model
     # for this account until AWS resolves it (CLAUDE.md, Current state). Must match Terraform's
     # extract_model_id with a `global.` prefix, or the app role's IAM denies it.
