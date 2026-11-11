@@ -54,11 +54,13 @@ from sqlalchemy.sql.selectable import CompoundSelect
 
 from art_curator.db.models import (
     EVENT_KINDS,
+    PLACE_KINDS,
     ArtEvent,
     EventOccurrence,
     EventSnapshot,
     Exhibition,
     LlmCall,
+    Place,
     Venue,
     VenuePage,
     VenueSeed,
@@ -73,6 +75,7 @@ EXHIBITIONS = Exhibition.__table__
 EVENTS = ArtEvent.__table__
 SNAPSHOTS = EventSnapshot.__table__
 OCCURRENCES = EventOccurrence.__table__
+PLACES = Place.__table__
 CALLS = LlmCall.__table__
 
 
@@ -674,6 +677,139 @@ def _graf_candidates() -> Select:
     )
 
 
+# --- places: what `near` measures from ----------------------------------------------------------
+#
+# A name becomes a point here, never in the model (CLAUDE.md § 8). It names a place (`places`: a
+# barri, district or municipality) or a venue that has a point. A place answers to its name, its
+# aliases, and its name with what it lies within ("Canyelles, Garraf"); a venue to its name, and
+# its name with its city ("PiRA, Barcelona"). Case, accents and punctuation never count: both sides
+# go through `_match_key`.
+#
+# The matches are the names equal to what was asked or, when none is, those that hold every word
+# of it: a name or alias, never the qualified form, and only from MIN_PART_CHARS characters, so a
+# stray "22" or "de" is no place. Matches all within MERGE_RADIUS_KM of the first are one spot,
+# and the first is taken: the most specific kind (RESOLVE_KINDS order), then the shortest name.
+# That is how "Les Corts" is the barri rather than also its district (centroids 1.4 km apart), and
+# "Barcelona" the city rather than also GRAF's catch-all venue term of that name. Matches further
+# apart are candidates, for whoever asked to pick one of: "Canyelles" is a barri of Nou Barris and
+# a town in the Garraf.
+
+RESOLVE_KINDS = (*PLACE_KINDS, "venue")
+MERGE_RADIUS_KM = 1.5
+MIN_PART_CHARS = 4  # "22@" holds no word of four characters, so it is not "Aparador 22"
+MAX_CANDIDATES = 10
+
+
+@dataclass(frozen=True)
+class PlaceRow:
+    name: str
+    kind: str  # one of RESOLVE_KINDS
+    # A barri's district, a district's city, a municipality's comarca, a venue's city.
+    within: str | None
+    latitude: float
+    longitude: float
+
+    def qualified(self) -> str:
+        """How to ask for this one and nothing else: "Canyelles, Garraf"."""
+        return f"{self.name}, {self.within}" if self.within else self.name
+
+
+@dataclass(frozen=True)
+class PlaceMatch:
+    place: PlaceRow | None  # what the name means; None when it means nothing, or several things
+    candidates: list[PlaceRow]  # the several things, most specific first; empty when unknown
+
+
+class UnresolvedPlace(ValueError):
+    """`near` names no place, or several far apart."""
+
+    def __init__(self, asked: str, candidates: list[PlaceRow]) -> None:
+        self.candidates = candidates
+        if candidates:
+            listed = "; ".join(f"{c.qualified()!r} ({c.kind})" for c in candidates)
+            message = f"{asked!r} could be any of: {listed}. Ask again with one of those names."
+        else:
+            message = f"No barri, district, municipality or venue is called {asked!r}."
+        super().__init__(message)
+
+
+def _names() -> CompoundSelect:
+    """One row per name a place or venue answers to. `whole_only` marks a name qualified by where
+    it is, which only an exact match may use: its words would otherwise match every venue in a
+    town. A venue without a point is nowhere to measure from, so it has no names here."""
+    p, v = PLACES.c, VENUES.c
+
+    def row(kind: Any, id_: Any, name: Any, within: Any, geom: Any, label: Any, whole_only: bool):
+        return select(
+            kind.label("kind"),
+            id_.label("id"),
+            name.label("name"),
+            within.label("within"),
+            geom.label("geom"),
+            label.label("label"),
+            literal(whole_only).label("whole_only"),
+        )
+
+    own = func.unnest(func.array_prepend(p.name, p.aliases), type_=Text)
+    venue = literal("venue", Text)
+    return union_all(
+        row(p.kind, p.id, p.name, p.within, p.geom, own, False),
+        row(p.kind, p.id, p.name, p.within, p.geom, p.name.concat(", ").concat(p.within), True),
+        row(venue, v.id, v.name, v.city, v.geom, v.name, False).where(v.geom.is_not(None)),
+        row(venue, v.id, v.name, v.city, v.geom, v.name.concat(", ").concat(v.city), True).where(
+            v.geom.is_not(None)
+        ),
+    )
+
+
+async def resolve_place(session: AsyncSession, name: str) -> PlaceMatch:
+    """The place or venue `name` means, or the candidates when it could mean several far apart
+    (rules at the top of this section)."""
+    asked = _match_key(literal(name, Text))
+    names = _names().subquery("names")
+    key = _match_key(names.c.label)
+    holds_every_word = func.string_to_array(key, " ").op("@>")(func.string_to_array(asked, " "))
+    tier = case(
+        (key == asked, 0),
+        (
+            and_(~names.c.whole_only, func.length(asked) >= MIN_PART_CHARS, holds_every_word),
+            1,
+        ),
+    )
+    # One row per place or venue, at the best tier any of its names reached.
+    matched = (
+        select(
+            names.c.kind, names.c.id, names.c.name, names.c.within, names.c.geom, tier.label("tier")
+        )
+        .where(asked != "", tier.is_not(None))
+        .distinct(names.c.kind, names.c.id)
+        .order_by(names.c.kind, names.c.id, tier)
+        .subquery("matched")
+    )
+    m = matched.c
+    specific = case({kind: rank for rank, kind in enumerate(RESOLVE_KINDS)}, value=m.kind)
+    order = [m.tier, specific, func.length(m.name), m.name]
+    point = cast(m.geom, Geometry("POINT", srid=4326))
+    query = select(
+        m.tier,
+        m.name,
+        m.kind,
+        m.within,
+        func.ST_Y(point).label("latitude"),
+        func.ST_X(point).label("longitude"),
+        func.ST_DWithin(
+            m.geom, func.first_value(m.geom).over(order_by=order), MERGE_RADIUS_KM * 1000
+        ).label("near_first"),
+    ).order_by(*order)
+
+    rows = (await session.execute(query)).all()
+    best = [row for row in rows if row.tier == rows[0].tier]
+    places = [PlaceRow(r.name, r.kind, r.within, r.latitude, r.longitude) for r in best]
+    if places and all(row.near_first for row in best):
+        return PlaceMatch(place=places[0], candidates=[])
+    return PlaceMatch(place=None, candidates=places[:MAX_CANDIDATES])
+
+
 @dataclass(frozen=True)
 class EventRow:
     """One thing to see, as `search_events` lists it: what the model ranks by, ~50 tokens.
@@ -699,6 +835,7 @@ class EventRow:
 class SearchResult:
     total: int  # rows that matched; more than len(events) when `limit` cut the list
     events: list[EventRow]
+    near: PlaceRow | None = None  # what `near` was taken to mean, so a wrong guess shows
 
 
 async def search_events(
@@ -706,6 +843,7 @@ async def search_events(
     *,
     date_from: date,
     date_to: date,
+    near: str | None = None,
     lat: float | None = None,
     lon: float | None = None,
     radius_km: float | None = None,
@@ -716,9 +854,13 @@ async def search_events(
     """Everything on at some point from `date_from` to `date_to` (days at the venues), from all
     three sources. Dates and distances are worked out here, never by the model (CLAUDE.md § 8).
 
-    `lat`/`lon` give each row its distance and put the nearest first; `radius_km` then keeps only
-    the rows inside it. `kinds` keeps those of the listed KINDS. `free_only` drops what is known
-    to cost money: only GRAF knows prices, so an extracted item stays, with `is_free` NULL.
+    `near` names where to measure from: a barri, district, municipality or venue (`resolve_place`),
+    or `lat`/`lon` give the point itself. A point gives each row its distance and puts the nearest
+    first; `radius_km` then keeps only the rows inside it. A `near` that names nothing, or several
+    places far apart, raises UnresolvedPlace with the candidates.
+
+    `kinds` keeps those of the listed KINDS. `free_only` drops what is known to cost money: only
+    GRAF knows prices, so an extracted item stays, with `is_free` NULL.
 
     Rows come nearest first when there is a point, then the soonest to end, open-ended last: if
     `limit` cuts the list, what goes is what is furthest away and on longest. `total` says how
@@ -728,10 +870,19 @@ async def search_events(
         raise ValueError(f"date_from {date_from} is after date_to {date_to}")
     if (lat is None) != (lon is None):
         raise ValueError("lat and lon come together")
-    if radius_km is not None and lat is None:
-        raise ValueError("radius_km needs lat and lon")
+    if near is not None and lat is not None:
+        raise ValueError("near or lat and lon, not both")
+    if radius_km is not None and near is None and lat is None:
+        raise ValueError("radius_km needs near, or lat and lon")
     if kinds is not None and (unknown := set(kinds) - set(KINDS)):
         raise ValueError(f"unknown kinds {sorted(unknown)}; known: {', '.join(KINDS)}")
+    origin = None
+    if near is not None:
+        match = await resolve_place(session, near)
+        if match.place is None:
+            raise UnresolvedPlace(near, match.candidates)
+        origin = match.place
+        lat, lon = origin.latitude, origin.longitude
 
     candidates = union_all(
         _exhibition_candidates(), _event_candidates(), _graf_candidates()
@@ -788,7 +939,7 @@ async def search_events(
 
     rows = (await session.execute(query)).mappings().all()
     events = [EventRow(**{k: v for k, v in row.items() if k != "total"}) for row in rows]
-    return SearchResult(total=rows[0]["total"] if rows else 0, events=events)
+    return SearchResult(total=rows[0]["total"] if rows else 0, events=events, near=origin)
 
 
 @dataclass(frozen=True)

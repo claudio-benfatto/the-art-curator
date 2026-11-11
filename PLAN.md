@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PR 26 built (§ 8).
-**Last updated:** 2026-11-10 (rev. 13)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PRs 26–27 built (§ 8).
+**Last updated:** 2026-11-10 (rev. 14)
 
 ---
 
@@ -94,7 +94,7 @@ Each table lands in the phase that first writes it — no speculative schema.
 | | `venue_seeds` (venue, listing URL, page type, confidence, dated-item count, language, status, model, `discovered_at`; no free text) | P2 |
 | | `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) | P2 |
 | | `embedding` + embed markers on both (model, hash of the embedded text) | P3, gated (§ 8) |
-| Reference | `places` (name, aliases, kind barri/district/municipality, point; open data, CC BY) | P3 |
+| Reference | `places` (kind barri/district/municipality, source code, name, aliases, `within`, point; Open Data BCN CC BY 4.0 + IDESCAT/ICGC open licence) | P3 |
 | User | `users` (`client`, `external_id`) · `conversations` (context block, `ended_at`) · `messages` (API content blocks as sent, `trace_id`, `iteration_count`) · `profile_facts` (append-only, `superseded_by`) · `feedback` | P3 |
 | | `itineraries` | P4 |
 | Telemetry | `llm_calls` (trace/span, provider, model, purpose `chat/discover/extract/embed/judge/smoke`, tokens incl. cache, cost, latency, stop_reason) | P0 |
@@ -107,7 +107,7 @@ Each table lands in the phase that first writes it — no speculative schema.
 
 | Tool | Returns |
 |---|---|
-| `search_events(date_from, date_to, near? \| lat+lon?, radius_km?, kinds?, free_only?, query?, limit)` | Compact rows (~50 tok): prefixed id, kind, title, venue, start/end, `ends_in_days`, `distance_km`, `at_venue`, `is_free`, artists/media/themes; plus `total` matched. `near` lands in PR 27, `query` in 35 |
+| `search_events(date_from, date_to, near? \| lat+lon?, radius_km?, kinds?, free_only?, query?, limit)` | Compact rows (~50 tok): prefixed id, kind, title, venue, start/end, `ends_in_days`, `distance_km`, `at_venue`, `is_free`, artists/media/themes; plus `total` matched. plus `near`, the place it resolved to. `query` lands in 35 |
 | `get_events(ids ≤ 10)` | `summary_en`, all facts, venue name/address/website, source/detail URL, price |
 | `remember(topic, fact, replaces?)` | Profile fact id |
 | `build_itinerary(event_ids, start_time, start_lat, start_lon)` | Order + maps link — P4 |
@@ -293,7 +293,7 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 | Runs and place | Exhibition: open start and end when missing. Event: no end = its start day; no date = never searched. Off-venue or online: no distance, never in a radius | The same rules as the `not_over_on` queries; a venue's point is not where an off-site show is |
 | Price | `free_only` drops only what is *known* paid; extracted rows have `is_free` NULL | Venue pages give no price; dropping unknowns would empty the pilots |
 | Kinds | One vocabulary: `exhibition` + `EVENT_KINDS`; GRAF `event_category` ids mapped in code (`graf.CATEGORIES`, 10 ids read off `class_list` 2026-11-10; unknown → `other`). Several GRAF labels share a kind, so GRAF rows also carry their own label as `category` | The filter means the same thing on every source, and the model still sees seminari vs xerrada; GRAF serves no category taxonomy over REST |
-| Location | `near: <place>` resolved in SQL against `places` (Barcelona barris and districts, Catalan municipalities) and venue names, or `lat`/`lon` when the client sends a location (P5). Unknown or ambiguous → `is_error` with candidates | Geocoding from model memory is distance estimation (CLAUDE.md § 8) |
+| Location | `near: <place>` resolved in SQL against `places` (Barcelona barris and districts, Catalan municipalities) and venue names, or `lat`/`lon` when the client sends a location (P5). Exact name or alias first, else every word in one. Matches within 1.5 km are one spot, the most specific kind taken (les Corts barri over district, Barcelona city over GRAF's catch-all term). Unknown or ambiguous → `is_error` with candidates, each askable as "name, within" | Geocoding from model memory is distance estimation (CLAUDE.md § 8) |
 | Dates | Tools take ISO dates only. Each conversation opens with today and a 14-day calendar (weekday → date) in `SITE_TIMEZONE`. A conversation ends after 6 h idle or at local midnight | "Saturday" is a lookup, not arithmetic; a calendar cannot outlive its day |
 | Prompt layout | System prompt fully static. Per-conversation context (calendar, profile snapshot, client location) is the first user turn, frozen | The static prefix stays shareable across users if chat moves to a 512-token-minimum model (CLAUDE.md § 6) |
 | History | `messages` keeps the API content blocks exactly as sent and received, thinking blocks and signatures included, and the loop replays them unchanged | Opus 4.5+ keeps prior-turn thinking in context; any edit to history breaks the cache from that point |

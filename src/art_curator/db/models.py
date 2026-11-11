@@ -58,6 +58,9 @@ EVENT_KINDS = (
     "other",
 )  # fmt: skip
 
+# What `ingest/places.py` loads, most specific first: `resolve_place` prefers them in this order.
+PLACE_KINDS = ("barri", "district", "municipality")
+
 
 def _one_of(column: str, values: tuple[str, ...]) -> str:
     return f"{column} IN (" + ", ".join(f"'{v}'" for v in values) + ")"
@@ -347,6 +350,36 @@ class ArtEvent(_Extracted, Base):
         CheckConstraint(_one_of("confidence", EXTRACT_CONFIDENCES), name="confidence"),
         CheckConstraint(_all_of("media", MEDIA), name="media"),
         CheckConstraint(_one_of("kind", EVENT_KINDS), name="kind"),
+    )
+
+
+# --- Reference ----------------------------------------------------------------------------------
+
+
+class Place(Base):
+    """A named area to measure distance from: a Barcelona barri or district, or a Catalan
+    municipality. Open data, facts only (`ingest/places.py` names the sources and their licences),
+    and replaced whole by every `load-places`.
+
+    `geom` is one point: a barri's or district's centroid, a municipality's seat. `within` is what
+    tells two places of one name apart ("Canyelles", barri of Nou Barris or municipality of the
+    Garraf). `aliases` are other names the place answers to, such as the name without its article.
+    """
+
+    __tablename__ = "places"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    kind: Mapped[str]  # one of PLACE_KINDS
+    code: Mapped[str]  # the source's own code: barri or district number, INE municipality code
+    name: Mapped[str]
+    aliases: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default=text("'{}'"))
+    within: Mapped[str | None]  # a barri's district, a district's city, a municipality's comarca
+    geom: Mapped[WKBElement] = mapped_column(Geography("POINT", srid=4326, spatial_index=False))
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        UniqueConstraint("kind", "code"),
+        CheckConstraint(_one_of("kind", PLACE_KINDS), name="kind"),
     )
 
 

@@ -320,6 +320,35 @@ def test_a_point_without_a_radius_puts_the_nearest_first(corpus_db):
     assert result.events[-1].distance_km is None
 
 
+def test_near_measures_from_the_place_it_names(corpus_db):
+    result = _search(corpus_db, **WEEKEND, near="poblenou", radius_km=1)
+
+    assert (result.near.name, result.near.kind, result.near.within) == (
+        "el Poblenou",
+        "barri",
+        "Sant Martí",
+    )
+    assert _ids(result) == ["g:4"]  # Annex Exemple's opening
+    assert result.events[0].distance_km == pytest.approx(0.2, abs=0.05)
+
+
+def test_near_a_venue_measures_from_its_point(corpus_db):
+    by_name = _search(corpus_db, **WEEKEND, near="GALERIA EXEMPLE", radius_km=1)
+    by_point = _search(corpus_db, **WEEKEND, **AT_GALLERY, radius_km=1)
+
+    assert (by_name.near.name, by_name.near.kind) == ("Galeria Exemple", "venue")
+    assert by_name.events == by_point.events
+    assert by_point.near is None
+
+
+def test_near_a_name_that_is_nowhere_says_so(corpus_db):
+    """Sala 100% Lluny is a venue, but it has no point to measure from."""
+    for name in ("Atlantis", "Sala 100% Lluny"):
+        with pytest.raises(q.UnresolvedPlace, match="No barri, district") as raised:
+            _search(corpus_db, **WEEKEND, near=name)
+        assert raised.value.candidates == []
+
+
 def test_search_by_kind_means_the_same_on_every_source(corpus_db):
     exhibitions = _search(corpus_db, **WEEKEND, kinds=["exhibition"])
     openings = _search(corpus_db, **WEEKEND, kinds=["opening"])
@@ -352,9 +381,16 @@ def test_total_counts_what_a_limit_cut(corpus_db):
         {"date_from": date(2026, 11, 8), "date_to": date(2026, 11, 5)},
         {**WEEKEND, "lat": 41.38},
         {**WEEKEND, "radius_km": 2},
+        {**WEEKEND, "near": "Poblenou", **AT_GALLERY},
         {**WEEKEND, "kinds": ["exposicio"]},
     ],
-    ids=["dates-backwards", "lat-without-lon", "radius-without-point", "unknown-kind"],
+    ids=[
+        "dates-backwards",
+        "lat-without-lon",
+        "radius-without-point",
+        "near-and-point",
+        "unknown-kind",
+    ],
 )
 def test_search_refuses_what_it_cannot_answer(kwargs):
     """Refused before any SQL, so no database is needed."""
@@ -429,6 +465,28 @@ def test_search_events_over_mcp_returns_the_result_and_its_total(corpus_db):
     assert [row["id"] for row in result.structured_content["events"]] == ["a:2", "g:4"]
 
 
+def test_search_events_over_mcp_says_where_near_was_taken_to_be(corpus_db):
+    weekend = {"date_from": "2026-11-05", "date_to": "2026-11-08"}
+    found, unknown = call_tools(
+        corpus_db,
+        [
+            ("search_events", {**weekend, "near": "Poblenou", "radius_km": 1}),
+            ("search_events", {**weekend, "near": "Atlantis"}),
+        ],
+    )
+
+    assert found.structured_content["near"]["name"] == "el Poblenou"
+    assert unknown.is_error
+    assert "Atlantis" in unknown.content[0].text
+
+
+def test_resolve_place_over_mcp(corpus_db):
+    [result] = call_tools(corpus_db, [("resolve_place", {"name": "el poblenou"})])
+
+    assert result.structured_content["place"]["name"] == "el Poblenou"
+    assert result.structured_content["candidates"] == []
+
+
 def test_get_events_over_mcp_refuses_a_bad_id():
     """Refused by the tool's schema, so the database here is never reached."""
     [result] = call_tools(
@@ -469,7 +527,7 @@ def test_costs_since_a_day_and_for_a_purpose(corpus_db):
 def test_the_server_has_a_tool_per_query():
     assert [tool.name for tool in list_tools()] == [
         "venues", "seeds", "pages", "exhibitions", "art_events", "graf_events", "search_events",
-        "get_events", "llm_costs",
+        "resolve_place", "get_events", "llm_costs",
     ]  # fmt: skip
 
 

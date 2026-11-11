@@ -58,7 +58,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 # Every table must be classified here. A new table fails `test_every_table_is_classified` until
 # someone decides which rules apply to it — that decision is the point.
-SOURCE_TABLES = {"venues", "event_snapshots", "event_occurrences"}  # facts only, ever
+# Facts only, ever. `places` is open reference data: names, codes and points (ingest/places.py).
+SOURCE_TABLES = {"venues", "event_snapshots", "event_occurrences", "places"}
 # Third-party text, 7-day TTL, purged. `links` carries each link's text, and a CHECK ties it to
 # `raw_text`, so one purge covers both (tests/test_crawl.py).
 PROSE_CACHE = {"venue_pages": {"raw_text", "links"}}
@@ -148,6 +149,7 @@ def test_database_carries_no_third_party_prose(migrated_db):
         ("venues", "body_html"),
         ("llm_calls", "response_body"),
         ("venue_pages", "raw_html"),
+        ("places", "description"),
     ],
 )
 def test_planted_column_is_caught(table, column):
@@ -525,6 +527,7 @@ MCP_CALLS: dict[str, dict] = {
     # Everything the listing wrote, searched and then hydrated.
     "search_events": {"date_from": "2026-01-01", "date_to": "2026-12-31", "limit": 100},
     "get_events": {"ids": ["x:2", "x:3", "a:1", "a:2", "a:3"]},
+    "resolve_place": {"name": "Galeria Exemple"},
     "llm_costs": {},
 }
 PAGE_TEXT_FIELDS = PROSE_CACHE["venue_pages"] | {"text"}

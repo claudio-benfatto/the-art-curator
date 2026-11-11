@@ -15,6 +15,7 @@ from datetime import date
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from sqlalchemy import text
@@ -28,6 +29,7 @@ Read-only views of The Art Curator's database: venues, discovery seeds, crawled 
 the exhibitions and events extracted from them, GRAF's events, and model cost.
 search_events and get_events are the curator's own tools: all three sources as one list, then
 the details of a shortlist by its prefixed ids (x: exhibition, a: art event, g: GRAF).
+resolve_place shows what search_events' `near` takes a place name to mean.
 Tools return ids, facts and metadata, never a page's text: to read a page, open its URL in a
 browser. summary_en is written by our extraction model, not copied from the venue.
 Dates are days in Europe/Madrid. Filter by venue_id from the venues tool."""
@@ -144,6 +146,13 @@ async def graf_events(
 async def search_events(
     date_from: Annotated[date, Field(description="First day of the visit (YYYY-MM-DD).")],
     date_to: Annotated[date, Field(description="Last day; date_from again for a single day.")],
+    near: Annotated[
+        str | None,
+        Field(
+            description="Measure from this barri, district, municipality or venue, by name "
+            "(see resolve_place). Instead of lat/lon."
+        ),
+    ] = None,
     lat: Annotated[
         float | None, Field(ge=-90, le=90, description="Latitude to measure from.")
     ] = None,
@@ -162,18 +171,40 @@ async def search_events(
     """Exhibitions, art events and GRAF events on at some point in the dates, as one list:
     id, kind (and GRAF's own category), title, venue, start/end, ends_in_days, distance_km,
     artists, media, themes, and
-    `total` matched. A GRAF event extraction also found is listed once, under its x:/a: id."""
-    return await _read(
-        q.search_events,
-        date_from=date_from,
-        date_to=date_to,
-        lat=lat,
-        lon=lon,
-        radius_km=radius_km,
-        kinds=kinds,
-        free_only=free_only,
-        limit=limit,
-    )
+    `total` matched. A GRAF event extraction also found is listed once, under its x:/a: id.
+    With `near`, `near` in the result says which place the name was taken to mean."""
+    try:
+        return await _read(
+            q.search_events,
+            date_from=date_from,
+            date_to=date_to,
+            near=near,
+            lat=lat,
+            lon=lon,
+            radius_km=radius_km,
+            kinds=kinds,
+            free_only=free_only,
+            limit=limit,
+        )
+    except q.UnresolvedPlace as exc:
+        # The SDK hides an unexpected exception's message; this one carries the candidates.
+        raise ToolError(str(exc)) from exc
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def resolve_place(
+    name: Annotated[
+        str,
+        Field(
+            min_length=1,
+            description="A barri, district, municipality or venue. Case and accents do not "
+            "matter; 'name, within' picks one of two of a name ('Canyelles, Garraf').",
+        ),
+    ],
+) -> q.PlaceMatch:
+    """The point search_events would measure `near` from, or the candidates when the name could
+    mean several places far apart. Neither when it means nothing."""
+    return await _read(q.resolve_place, name=name)
 
 
 @mcp.tool(annotations=READ_ONLY)
