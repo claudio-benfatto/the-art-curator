@@ -36,7 +36,8 @@ tool's output schema has a field for it, and a page whose text and links carry p
 is fetched through every tool to check that neither marker comes back.
 
 Agent half (P3): the curator's tools put the same query results into a chat, which goes on spans
-(and to Langfuse, when it is on). The same page is fetched through each of them.
+(and to Langfuse, when it is on) and, since PR 29, into `messages`. The same page is fetched
+through each of them.
 """
 
 import asyncio
@@ -73,6 +74,9 @@ OWN_TABLES = {"llm_calls", "venue_seeds"}
 # Facts read off a page, plus prose that is ours: `summary_en`, and nothing else that could hold
 # a sentence, passed `longest_shared_run` before it was written (`test_extraction_tables_*`).
 OWN_PROSE = {"exhibitions": {"summary_en"}, "art_events": {"summary_en"}}
+# Conversations: the user's words, the curator's, and tool results, which are what the agent tools
+# return (`test_no_agent_tool_returns_page_text`). `conversations.context` is our calendar block.
+CONVERSATION_TABLES = {"users", "conversations", "messages", "feedback"}
 
 PROSE = re.compile(r"desc|summary|body|content|excerpt|abstract|prose|blurb|text|html", re.I)
 THIRD_PARTY_TEXT = re.compile(r"raw|html|body|excerpt|page_text", re.I)
@@ -113,7 +117,9 @@ def _violations(columns: dict[str, set[str]]) -> list[str]:
 
 
 def test_every_table_is_classified():
-    classified = SOURCE_TABLES | set(PROSE_CACHE) | OWN_TABLES | set(OWN_PROSE)
+    classified = (
+        SOURCE_TABLES | set(PROSE_CACHE) | OWN_TABLES | set(OWN_PROSE) | CONVERSATION_TABLES
+    )
     assert set(Base.metadata.tables) == classified
 
 

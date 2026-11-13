@@ -13,8 +13,9 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from art_curator.agent.loop import Conversation, Curator, Turn
-from art_curator.agent.prompt import conversation_context, local_today
+from art_curator.agent.loop import Curator, Turn
+from art_curator.agent.prompt import local_today
+from art_curator.agent.store import ConversationStore, StoredConversation
 from art_curator.agent.tools import CuratorTools, to_json
 from art_curator.config import get_settings
 from art_curator.db.models import LlmCall
@@ -736,21 +737,30 @@ async def _spend(
     return calls, cost
 
 
+CLI_CLIENT = "cli"  # what `users.client` says for people talking through `cli chat`
+CHAT_HELP = "/new starts a new conversation, /good and /bad rate the last reply, Ctrl-D quits."
+
+
 @app.command()
 def chat(
     today: Annotated[
         datetime | None,
         typer.Option(
             formats=["%Y-%m-%d"],
-            help="Open the conversation as if today were this day (YYYY-MM-DD): the calendar the "
-            "curator reads dates from starts there.",
+            help="Talk as if today were this day (YYYY-MM-DD): a conversation opened on another "
+            "day ends, and the new one's calendar starts here.",
         ),
     ] = None,
+    user: Annotated[
+        str, typer.Option(help="Who is talking: each user has their own conversations.")
+    ] = "local",
 ) -> None:
     """Talk to the curator in the terminal. Calls the chat model: a few cents an exchange.
 
-    The conversation is in memory and ends when you quit (Ctrl-D). After each reply, a line gives
-    the tool calls, the tool rounds, and the turn's model calls, tokens (cache included) and cost.
+    The conversation is kept in the database: quitting (Ctrl-D) and coming back resumes it, until
+    it has been idle 6 hours or its day is over. /new starts another; /good and /bad rate the last
+    reply. After each reply, a line gives the tool calls, the tool rounds, and the turn's model
+    calls, tokens (cache included) and cost.
     """
     settings = get_settings()
     day = today.date() if today else local_today()
@@ -760,15 +770,19 @@ def chat(
         model=settings.chat_model,
         effort=settings.chat_effort,
     )
-    conversation = Conversation(conversation_context(day))
+    store = ConversationStore(get_sessionmaker())
     typer.echo(
         f"The Art Curator · {settings.chat_model} · effort {settings.chat_effort} · today {day}"
-        "\nCtrl-D to quit."
+        f"\n{CHAT_HELP}"
     )
-    # One event loop for the whole conversation: the database pool belongs to it. Input is read
+    # One event loop for the whole session: the database pool belongs to it. Input is read
     # outside it, so Ctrl-C at the prompt stops the program at once.
     with asyncio.Runner() as runner:
         try:
+            user_id = runner.run(store.user(CLI_CLIENT, user))
+            stored = runner.run(store.current(user_id, day))
+            if stored.saved:
+                typer.echo(f"Resuming conversation {stored.id} ({stored.saved} messages).")
             while True:
                 try:
                     text = input("\nyou> ").strip()
@@ -776,9 +790,19 @@ def chat(
                     break
                 if not text:
                     continue
+                if text.startswith("/"):
+                    stored = runner.run(_chat_command(store, user_id, day, stored, text))
+                    continue
                 try:
-                    turn = runner.run(curator.turn(conversation, text))
-                except Exception as exc:  # recorded by the client; the conversation is unchanged
+                    # Replayed from the database every turn, as a server would, which also ends
+                    # a conversation that went idle while the prompt waited.
+                    opened = stored.id
+                    stored = runner.run(store.current(user_id, day))
+                    if stored.id != opened:
+                        typer.echo("(the last conversation expired: this is a new one)")
+                    turn = runner.run(curator.turn(stored.conversation, text))
+                    runner.run(store.save(stored, turn))
+                except Exception as exc:  # model calls are recorded; nothing was saved
                     typer.echo(f"error: {type(exc).__name__}: {exc}")
                     continue
                 typer.echo(f"\n{turn.reply or f'(no reply: {turn.stop_reason})'}\n")
@@ -786,6 +810,22 @@ def chat(
         finally:
             telemetry.setup_telemetry().force_flush()
             runner.run(get_engine().dispose())
+
+
+async def _chat_command(
+    store: ConversationStore, user_id: int, day: date, stored: StoredConversation, command: str
+) -> StoredConversation:
+    """Run one of `cli chat`'s slash commands; returns the conversation to carry on with."""
+    if command == "/new":
+        await store.close(user_id)
+        stored = await store.current(user_id, day)
+        typer.echo(f"New conversation {stored.id}.")
+    elif command in ("/good", "/bad"):
+        rated = await store.rate(stored.id, "good" if command == "/good" else "bad")
+        typer.echo("Noted." if rated else "No reply to rate yet.")
+    else:
+        typer.echo(CHAT_HELP)
+    return stored
 
 
 async def _turn_summary(turn: Turn) -> str:

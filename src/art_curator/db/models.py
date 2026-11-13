@@ -11,9 +11,11 @@ ids are only unique per source, not globally.
 
 from datetime import date, datetime, time
 from decimal import Decimal
+from typing import Any
 
 from geoalchemy2 import Geography, WKBElement
 from sqlalchemy import (
+    JSON,
     BigInteger,
     CheckConstraint,
     DateTime,
@@ -60,6 +62,9 @@ EVENT_KINDS = (
 
 # What `ingest/places.py` loads, most specific first: `resolve_place` prefers them in this order.
 PLACE_KINDS = ("barri", "district", "municipality")
+
+MESSAGE_ROLES = ("user", "assistant")
+FEEDBACK_RATINGS = ("good", "bad")
 
 
 def _one_of(column: str, values: tuple[str, ...]) -> str:
@@ -381,6 +386,99 @@ class Place(Base):
         UniqueConstraint("kind", "code"),
         CheckConstraint(_one_of("kind", PLACE_KINDS), name="kind"),
     )
+
+
+# --- User ---------------------------------------------------------------------------------------
+
+
+class User(Base):
+    """Someone talking to the curator, as a client knows them. `client` is an opaque string the
+    client picks ("cli", say) and `external_id` its id for the person: the backend never learns
+    what the client is (CLAUDE.md § 3)."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    client: Mapped[str]
+    external_id: Mapped[str]
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (UniqueConstraint("client", "external_id"),)
+
+
+class Conversation(Base):
+    """One conversation: the context block it opened with, frozen, and the local day that block's
+    calendar starts from. `agent/store.py` ends it after `IDLE` without a turn or once `day` is
+    past, and `ended_at` is when it was closed, which is never before that."""
+
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    context: Mapped[str]  # the first block of the first user turn (`agent/prompt.py`)
+    day: Mapped[date]  # today, in SITE_TIMEZONE, when it opened: where the calendar starts
+    last_turn_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    ended_at: Mapped[datetime | None]
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        Index("ix_conversations_user_id", "user_id"),
+        # At most one open conversation a user: the one a new turn joins.
+        Index(
+            "uq_conversations_open_user_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("ended_at IS NULL"),
+        ),
+    )
+
+
+class Message(Base):
+    """One API message of a conversation, `content` exactly as sent and received: thinking blocks
+    with their signatures, tool calls, tool results. The loop replays them unchanged, since any
+    edit to history breaks the cache from that point on (CLAUDE.md § 6).
+
+    `content` is `json`, not `jsonb`: `jsonb` reorders an object's keys, so a tool call's input
+    would come back in another order than the model wrote it, and the replayed request would no
+    longer start with the one before it.
+
+    Every message of a turn carries the turn's `trace_id`; the last assistant message of a turn
+    carries its `iteration_count`, and is the reply that feedback rates."""
+
+    __tablename__ = "messages"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"))
+    position: Mapped[int]  # 0, 1, 2… within the conversation
+    role: Mapped[str]  # one of MESSAGE_ROLES
+    content: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    trace_id: Mapped[str | None]
+    iteration_count: Mapped[int | None]
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "position"),
+        CheckConstraint(_one_of("role", MESSAGE_ROLES), name="role"),
+        CheckConstraint(
+            "iteration_count IS NULL OR role = 'assistant'", name="iteration_count_on_reply"
+        ),
+    )
+
+
+class Feedback(Base):
+    """What the user made of one reply: `good` or `bad`. One verdict a reply; a second replaces
+    the first."""
+
+    __tablename__ = "feedback"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), unique=True
+    )
+    rating: Mapped[str]  # one of FEEDBACK_RATINGS
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (CheckConstraint(_one_of("rating", FEEDBACK_RATINGS), name="rating"),)
 
 
 # --- Telemetry ----------------------------------------------------------------------------------
