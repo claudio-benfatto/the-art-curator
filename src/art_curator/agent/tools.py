@@ -6,9 +6,10 @@ model, not a guarantee. An input that fails validation, names no tool, or that t
 (dates the wrong way round, a place it cannot pin down) comes back as an `is_error` result the
 model can read and correct, never as an exception out of the loop.
 
-Each tool is a thin wrapper over `queries/events.py`, which does every date and distance in SQL
-(CLAUDE.md § 8). Results are compact JSON of the query's own rows: facts, titles and our
-summaries, never a page's text (CLAUDE.md § 1).
+`search_events` and `get_events` are thin wrappers over `queries/events.py`, which does every date
+and distance in SQL (CLAUDE.md § 8). Results are compact JSON of the query's own rows: facts,
+titles and our summaries, never a page's text (CLAUDE.md § 1). `remember` is the one tool that
+writes: a fact about the user it is bound to (`agent/profile.py`).
 
 `lat`/`lon` on `search_events` wait for a client that sends a location (P5): until then the only
 point the model could give is one it estimated, which is the distance arithmetic § 8 forbids.
@@ -25,6 +26,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from art_curator.agent import profile
+from art_curator.db.models import PROFILE_TOPICS
 from art_curator.llm.tools import flat_schema, validation_feedback
 from art_curator.queries import events as q
 
@@ -65,12 +68,29 @@ class GetEventsInput(BaseModel):
     )
 
 
-async def _search_events(session: AsyncSession, args: SearchEventsInput) -> dict[str, Any]:
+class RememberInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    topic: Literal[PROFILE_TOPICS] = Field(description="What the fact is about.")
+    fact: str = Field(
+        min_length=1,
+        max_length=200,
+        description="One short sentence in English: 'Likes video art; finds painting dull.'",
+    )
+    replaces: int | None = Field(
+        default=None,
+        description="The id of a remembered fact this one corrects or updates; it is dropped.",
+    )
+
+
+async def _search_events(
+    session: AsyncSession, _user_id: int, args: SearchEventsInput
+) -> dict[str, Any]:
     result = await q.search_events(session, **args.model_dump())
     return {**asdict(result), "truncated": result.total > len(result.events)}
 
 
-async def _get_events(session: AsyncSession, args: GetEventsInput) -> dict[str, Any]:
+async def _get_events(session: AsyncSession, _user_id: int, args: GetEventsInput) -> dict[str, Any]:
     found = await q.get_events(session, args.ids)
     returned = {detail.id for detail in found}
     asked = [f"{prefix}:{number}" for prefix, number in map(q.parse_event_id, args.ids)]
@@ -80,12 +100,18 @@ async def _get_events(session: AsyncSession, args: GetEventsInput) -> dict[str, 
     }
 
 
+async def _remember(session: AsyncSession, user_id: int, args: RememberInput) -> dict[str, Any]:
+    fact_id = await profile.remember(session, user_id, **args.model_dump())
+    return {"id": fact_id, "replaced": args.replaces}
+
+
 @dataclass(frozen=True)
 class Tool:
     name: str
     description: str
     input: type[BaseModel]
-    run: Callable[[AsyncSession, Any], Awaitable[dict[str, Any]]]
+    run: Callable[[AsyncSession, int, Any], Awaitable[dict[str, Any]]]  # session, user id, input
+    writes: bool = False
 
     def definition(self) -> dict[str, Any]:
         return {
@@ -117,6 +143,15 @@ TOOLS = (
         "Ids that name nothing are listed in `not_found`.",
         GetEventsInput,
         _get_events,
+    ),
+    Tool(
+        "remember",
+        "Keep one fact about this person for future conversations, under a topic. Returns its "
+        "id. With `replaces`, the fact of that id (from the context block or an earlier "
+        "remember) is dropped from the profile in favour of this one.",
+        RememberInput,
+        _remember,
+        writes=True,
     ),
 )
 TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
@@ -155,10 +190,12 @@ def _json_default(value: Any) -> Any:
 
 
 class CuratorTools:
-    """Runs one tool call, each in its own read-only transaction. The model writes nothing."""
+    """Runs one tool call for one user, each in its own transaction: read-only, except for a tool
+    that writes, and that one only ever about this user."""
 
-    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession], user_id: int) -> None:
         self._sessionmaker = sessionmaker
+        self._user_id = user_id
 
     async def __call__(self, name: str, tool_input: dict[str, Any]) -> ToolResult:
         tool = TOOLS_BY_NAME.get(name)
@@ -169,8 +206,10 @@ class CuratorTools:
         except ValidationError as exc:
             return ToolResult(f"Invalid input: {validation_feedback(exc)}", True)
         try:
-            async with self._sessionmaker() as session:
-                await session.execute(text("SET TRANSACTION READ ONLY"))
-                return ToolResult(to_json(await tool.run(session, args)))
-        except ValueError as exc:  # the query's own refusals, UnresolvedPlace among them
+            # A refusal raised inside rolls the transaction back, so it leaves nothing written.
+            async with self._sessionmaker() as session, session.begin():
+                if not tool.writes:
+                    await session.execute(text("SET TRANSACTION READ ONLY"))
+                return ToolResult(to_json(await tool.run(session, self._user_id, args)))
+        except ValueError as exc:  # refusals: UnresolvedPlace, profile.UnknownFact and the like
             return ToolResult(str(exc), True)

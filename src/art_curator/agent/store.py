@@ -6,7 +6,8 @@ turn n+1's request starts with turn n's, byte for byte, and the cache holds (CLA
 
 A conversation ends after `IDLE` without a turn, or once its day is over in SITE_TIMEZONE: its
 context block holds a calendar, and a calendar cannot outlive its day (PLAN.md § 8, Dates). The
-next turn then opens a new one; nothing carries over until the profile (PR 30) does.
+next turn then opens a new one, and what carries over is the profile: the facts `remember` kept,
+rendered into the new context block (`agent/profile.py`).
 
 Two turns on one conversation at once are not serialised: the second to save collides with the
 first on `(conversation_id, position)` and fails, leaving the first's.
@@ -20,6 +21,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from art_curator.agent import profile
 from art_curator.agent.loop import Conversation, Turn
 from art_curator.agent.prompt import conversation_context
 from art_curator.db.models import Conversation as ConversationRow
@@ -56,7 +58,8 @@ class ConversationStore:
 
     async def current(self, user_id: int, today: date) -> StoredConversation:
         """The user's open conversation, replayed from its messages; or, if it has expired or
-        there is none, a new one whose calendar starts at `today`."""
+        there is none, a new one whose calendar starts at `today`, with the profile as it is
+        now."""
         async with self._sessions() as session, session.begin():
             found = (
                 await session.execute(
@@ -71,7 +74,8 @@ class ConversationStore:
                     return await _replay(session, row)
                 row.ended_at = func.now()
                 await session.flush()  # the open-conversation index allows one at a time
-            row = ConversationRow(user_id=user_id, context=conversation_context(today), day=today)
+            context = conversation_context(today, await profile.snapshot(session, user_id))
+            row = ConversationRow(user_id=user_id, context=context, day=today)
             session.add(row)
             await session.flush()
             return StoredConversation(row.id, Conversation(row.context), saved=0)
@@ -84,6 +88,16 @@ class ConversationStore:
                 .where(ConversationRow.user_id == user_id, ConversationRow.ended_at.is_(None))
                 .values(ended_at=func.now())
             )
+
+    async def remembered(self, user_id: int) -> list[profile.Fact]:
+        """The user's live profile, as the next conversation will open with it."""
+        async with self._sessions() as session:
+            return await profile.snapshot(session, user_id)
+
+    async def forget(self, user_id: int) -> None:
+        """Delete everything kept about the user: profile, conversations, messages, feedback."""
+        async with self._sessions() as session, session.begin():
+            await profile.forget(session, user_id)
 
     async def save(self, stored: StoredConversation, turn: Turn) -> None:
         """Append the messages `turn` added to `stored.conversation`, each with the turn's trace,

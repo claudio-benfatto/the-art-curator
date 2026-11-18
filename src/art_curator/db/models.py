@@ -65,6 +65,9 @@ PLACE_KINDS = ("barri", "district", "municipality")
 
 MESSAGE_ROLES = ("user", "assistant")
 FEEDBACK_RATINGS = ("good", "bad")
+# What a remembered fact is about (`agent/profile.py`); the `remember` tool offers these and no
+# others, so a new topic needs a migration.
+PROFILE_TOPICS = ("media", "themes", "area", "budget", "language", "access", "other")
 
 
 def _one_of(column: str, values: tuple[str, ...]) -> str:
@@ -479,6 +482,26 @@ class Feedback(Base):
     created_at: Mapped[datetime] = _created_at()
 
     __table_args__ = (CheckConstraint(_one_of("rating", FEEDBACK_RATINGS), name="rating"),)
+
+
+class ProfileFact(Base):
+    """One thing the curator learned about a user, in its own words: what `remember` wrote.
+    Append-only: a correction is a new fact, and the one it replaces points at it through
+    `superseded_by`. The live profile is the facts nothing has superseded (`agent/profile.py`)."""
+
+    __tablename__ = "profile_facts"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    topic: Mapped[str]  # one of PROFILE_TOPICS
+    fact: Mapped[str]  # one short English sentence the model wrote
+    superseded_by: Mapped[int | None] = mapped_column(ForeignKey("profile_facts.id"))
+    created_at: Mapped[datetime] = _created_at()
+
+    __table_args__ = (
+        Index("ix_profile_facts_user_id", "user_id"),
+        CheckConstraint(_one_of("topic", PROFILE_TOPICS), name="topic"),
+    )
 
 
 # --- Telemetry ----------------------------------------------------------------------------------
