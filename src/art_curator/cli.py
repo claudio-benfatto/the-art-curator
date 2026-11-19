@@ -1,6 +1,8 @@
 """Command-line entry point: `python -m art_curator.cli <command>`."""
 
 import asyncio
+import re
+import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -17,9 +19,10 @@ from art_curator.agent.loop import Curator, Turn
 from art_curator.agent.prompt import local_today
 from art_curator.agent.store import ConversationStore, StoredConversation
 from art_curator.agent.tools import CuratorTools, to_json
-from art_curator.config import get_settings
+from art_curator.config import Effort, get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_engine, get_sessionmaker
+from art_curator.eval import curation, curation_runner
 from art_curator.eval import extraction as evaluation
 from art_curator.eval import runner as eval_runner
 from art_curator.ingest import crawl as crawling
@@ -34,7 +37,7 @@ from art_curator.ingest.sync import (
     write_graf,
 )
 from art_curator.llm.client import get_llm_client
-from art_curator.llm.pricing import Usage, cost_usd
+from art_curator.llm.pricing import UnknownModelError, Usage, cost_usd, price_for
 from art_curator.obs import telemetry
 
 app = typer.Typer(no_args_is_help=True)
@@ -735,6 +738,140 @@ async def _spend(
         query = query.where(LlmCall.purpose == purpose)
     calls, cost = (await session.execute(query)).one()
     return calls, cost
+
+
+@app.command("eval-curation")
+def eval_curation(
+    scenario: Annotated[
+        list[str] | None,
+        typer.Option(help="Only this scenario, by id. Repeat it for more than one."),
+    ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option(
+            help="The chat model to run instead of CHAT_MODEL. It needs a price in pricing.yaml "
+            "and a grant in the app role's IAM.",
+        ),
+    ] = None,
+    effort: Annotated[
+        Effort | None, typer.Option(help="The chat effort to run instead of CHAT_EFFORT.")
+    ] = None,
+    arm: Annotated[
+        str,
+        typer.Option(
+            help="A name for this run, printed in the report and the transcript's name: one arm "
+            "of an A/B or a sweep. Every arm runs the same curator until semantic ranking lands "
+            "(PR 35).",
+        ),
+    ] = "baseline",
+    today: Annotated[
+        datetime | None,
+        typer.Option(
+            formats=["%Y-%m-%d"],
+            help="Run as if today were this day (YYYY-MM-DD): the scenarios' dates and the "
+            "calendar start here.",
+        ),
+    ] = None,
+    judge: Annotated[
+        bool,
+        typer.Option(
+            "--judge/--no-judge",
+            help="Have JUDGE_MODEL read each conversation for taste fit and for claims nothing on "
+            "record supports. About five cents a scenario on Opus.",
+        ),
+    ] = True,
+    transcript: Annotated[
+        Path | None,
+        typer.Option(
+            metavar="FILE",
+            help="Where to write the conversations, for a person to judge. Default: a new file "
+            "in the system's temporary directory, outside the repo.",
+        ),
+    ] = None,
+) -> None:
+    """Run the scripted conversations in eval/gold/curation.yaml through the curator and score
+    them. Calls the chat model: about two dollars a run with the judge, under one and a half
+    without it (PLAN.md § 8, P3).
+
+    Each scenario runs as a throwaway user that is deleted afterwards, so nothing is left but the
+    cost of the calls. The scores are a baseline, not a gate: the run exits 1 only if the
+    scenarios are invalid, a place they name cannot be resolved, or the endpoint refused a call.
+    """
+    settings = get_settings()
+    try:
+        everything = curation.load_scenarios()
+    except ValidationError as exc:
+        typer.echo(f"FAIL: eval/gold/curation.yaml is invalid.\n{exc}")
+        raise typer.Exit(1) from exc
+    try:
+        scenarios = everything.select(scenario or [])
+    except ValueError as exc:
+        typer.echo(f"FAIL: {exc}")
+        raise typer.Exit(1) from exc
+    model = model or settings.chat_model
+    judge_model = settings.judge_model if judge else None
+    for priced in filter(None, (model, judge_model)):
+        try:
+            price_for(priced)
+        except UnknownModelError as exc:
+            typer.echo(f"FAIL: {priced} has no price in pricing.yaml, so its cost is unknown.")
+            raise typer.Exit(1) from exc
+
+    day = today.date() if today else local_today()
+    info = curation.RunInfo(day, model, effort or settings.chat_effort, arm, judge_model)
+    if transcript is None:
+        name = re.sub(r"[^A-Za-z0-9_.-]+", "-", arm)
+        transcript = Path(tempfile.gettempdir()) / (
+            f"eval-curation-{day}-{name}-{datetime.now():%H%M%S}.md"
+        )
+
+    typer.echo("Eval curation")
+    runs, problems = asyncio.run(_eval_curation(scenarios, info))
+    if problems:
+        typer.echo("FAIL: an area in the scenarios names no single place.")
+        for problem in problems:
+            typer.echo(f"  {problem}")
+        raise typer.Exit(1)
+    for line in curation.report(info, runs):
+        typer.echo(f"  {line}")
+    transcript.write_text(curation.transcript(info, runs), encoding="utf-8")
+    typer.echo(f"  {'transcript':<12} {transcript}")
+    if any(run.stopped for run in runs):
+        raise typer.Exit(1)
+
+
+async def _eval_curation(
+    scenarios: list[curation.Scenario], info: curation.RunInfo
+) -> tuple[list[curation.ScenarioRun], list[str]]:
+    """Every scenario's run, or none and why the scenarios' places cannot be checked."""
+    llm = get_llm_client()
+    sessions = get_sessionmaker()
+    try:
+        async with sessions() as session:
+            problems = await curation_runner.unresolved_places(
+                session, curation.area_places(scenarios)
+            )
+        if problems:
+            return [], problems
+        runs = []
+        for scenario in scenarios:
+            run = await curation_runner.run_scenario(
+                llm,
+                sessions,
+                scenario,
+                today=info.today,
+                model=info.model,
+                effort=info.effort,
+                judge_model=info.judge_model,
+            )
+            typer.echo(f"  {curation.progress_line(run)}")
+            runs.append(run)
+            if run.stopped:
+                break
+        return runs, []
+    finally:
+        telemetry.setup_telemetry().force_flush()
+        await get_engine().dispose()
 
 
 CLI_CLIENT = "cli"  # what `users.client` says for people talking through `cli chat`

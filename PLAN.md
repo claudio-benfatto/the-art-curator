@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PRs 26–28 built (§ 8).
-**Last updated:** 2026-11-11 (rev. 15)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PRs 26–31 built (§ 8); 31's baseline not run yet.
+**Last updated:** 2026-11-19 (rev. 16)
 
 ---
 
@@ -66,13 +66,14 @@ src/art_curator/
   llm/client.py            the only model call site — Mantle (Claude) + bedrock-runtime (others), records cost
   llm/pricing.py           pricing.yaml → cost per call
   llm/extract.py           page → Exhibition[]
+  llm/judge.py             summary faithfulness (P2) · curation_judge.py: taste + unsupported claims (P3)
   llm/embed.py             summary → vector (via client.py)
   queries/events.py        shared query module (incl. search_events, get_events, resolve_place)
   ingest/                  http.py, graf.py, matching.py, sync.py (P1) · crawl.py, discover.py, extraction.py (P2) · places.py, embedding.py (P3)
   agent/                   loop.py, tools.py, prompt.py, profile.py, store.py (conversations)
   routes/itinerary.py      P4
   obs/                     telemetry.py
-  eval/                    extraction.py, runner.py (P2) · curation.py (P3)
+  eval/                    extraction.py, runner.py (P2) · curation.py, curation_runner.py (P3)
   api/main.py              POST /chat (SSE), POST /feedback, DELETE /users/{id}/profile
   clients/telegram_bot.py  P5
   mcp_server.py            dev-time only
@@ -279,7 +280,7 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 
 ### P3 breakdown
 
-**Scope:** what P2 stored for the pilots, plus GRAF's live events (region-wide, facts only). The gold set alone holds 36 current exhibitions and 24 current events over 12 venues; GRAF adds 56–104. **Done when:** `eval-curation` runs ~20 scripted conversations and reports: zero recommended items the tools did not return, zero recommended items outside the asked dates, area or price, and a person judges ≥ 16 of 20 sensible; cache reads > 80% of input on calls whose prefix passes 4096 tokens; cost per exchange within 2× § 6; `iteration_count` on every trace, with its distribution; the semantic A/B, or the truncation measurement that skipped it. As in P2, the first numbers are **evidence for P4, not a merge gate**.
+**Scope:** what P2 stored for the pilots, plus GRAF's live events (region-wide, facts only). The gold set alone holds 36 current exhibitions and 24 current events over 12 venues; GRAF adds 56–104. **Done when:** `eval-curation` runs ~10 scripted conversations and reports: zero recommended items the tools did not return, zero recommended items outside the asked dates, area or price, and a person judges ≥ 8 of 10 sensible; cache reads > 80% of input on calls whose prefix passes 4096 tokens; cost per exchange within 2× § 6; `iteration_count` on every trace, with its distribution; the semantic A/B, or the truncation measurement that skipped it. As in P2, the first numbers are **evidence for P4, not a merge gate**.
 
 **Design decisions:**
 
@@ -305,7 +306,7 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 | Identity | `users(client, external_id)` unique, `client` an opaque string; one bearer token per deployment (`API_TOKEN`), API bound to localhost until P7 | The backend never learns what the client is (CLAUDE.md § 3) |
 | Streaming | `LlmClient.stream_message`: one `llm_calls` row when the stream ends or breaks. SSE events: `status` (tool running), `text` deltas, `done` (message id, `iteration_count`). Thinking is not forwarded. Needs `bedrock:InvokeModelWithResponseStream`, which the app role lacks | A row on every path, as for unstreamed calls |
 | Semantic ranking | **Gated:** built only if `eval-curation` shows `search_events` truncating (`total` > returned) in a real share of scenarios. Then: embed `summary_en` + themes + media (GRAF rows have no summary, so none); the model writes `query` in English, so the embedding model need not be multilingual; `query` reorders the filtered set, unembedded rows last | A few dozen current extracted items plus GRAF's window fit in one result; ranking cannot beat "the model sees everything" until they stop fitting |
-| Curation eval | `eval/gold/curation.yaml`: ~20 scripted conversations (persona, turns, constraints, relative dates only), placed where the pilots are. Per exchange: titles in the reply matched to tool results (grounding), hard constraints checked in SQL on the matched ids, a judge (`JUDGE_MODEL`) for taste fit and invented items, and iteration count, cost, cache share and latency. Transcripts go to a file outside the repo for the human read. Runs on the live DB, so arms are compared on the same day | Expected answers rot as shows close; constraints do not |
+| Curation eval | `eval/gold/curation.yaml`: ~10 scripted conversations (persona, turns, constraints, relative dates only), placed where the pilots are. Per exchange: titles in the reply matched to tool results (grounding), hard constraints checked in SQL on the matched ids, a judge (`JUDGE_MODEL`) for taste fit and invented items, and iteration count, cost, cache share and latency. Transcripts go to a file outside the repo for the human read. Runs on the live DB, so arms are compared on the same day | Expected answers rot as shows close; constraints do not |
 
 ```
 26 search_events + get_events ─┬─ 28 agent core + cli chat ─ 29 conversations ─ 30 profile ─ 31 curation eval ─┬─ 35 embeddings (gated) ─ 36 sign-off
@@ -320,7 +321,7 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 | 28 | `agent/`: tool schemas + pydantic validation, static system prompt, conversation-start context, the loop (cap, final `tool_choice: none`, `cached_tail` on every call, thinking + effort, trace with `iteration_count`). `cli chat` in-process, in memory, `--today`. SDK pin | Stubbed: cap holds; bad input → `is_error`; breakpoint on the last block every call; thinking blocks replayed unchanged. Live: the § 1 question answered over the pilots |
 | 29 | Migration 0009: `users`, `conversations`, `messages`, `feedback`; classified in `test_no_verbatim.py`. Replay from the DB, conversation expiry; `cli chat` resumes, `/new`, `/good`, `/bad` | Turn n+1's request starts with turn n's, byte for byte (tested). Live: a resumed turn within 5 min reads the cache |
 | 30 | Migration 0010: `profile_facts`. `agent/profile.py`: `remember`, snapshot, supersede, forget | A fact remembered in one conversation is in the next one's context; forget leaves no rows |
-| 31 | `eval/curation.py` + `eval/gold/curation.yaml` + `cli eval-curation` (`--effort`, `--model`, `--arm`) | Baseline in § 8; two runs agree within noise; truncation share and cost per exchange reported |
+| 31 | `eval/curation.py` + `eval/gold/curation.yaml` + `cli eval-curation` (`--effort`, `--model`, `--arm`) | Baseline in § 8; two runs agree within noise; truncation share and cost per exchange reported. Built (10 scenarios, 15 turns); baseline not run yet |
 | 32 | Terraform: `InvokeModelWithResponseStream` on the chat profile; IAM + `pricing.yaml` for two embedding candidates and one cheaper chat candidate; the Smoke workflow calls each | Gated CI apply green (the first one since the 09-23 laptop apply: read the plan); Smoke green through OIDC |
 | 33 | `LlmClient.stream_message` (recorded stream, row on a broken stream) + a recorded-stream stub; the loop yields events | Stubbed: one row per stream, a broken one included; cost equals the unstreamed path's |
 | 34 | `api/`: `POST /chat` (SSE), `POST /feedback`, `DELETE /users/{id}/profile`; bearer token; Compose `api`; `cli chat --api URL` | The same conversation in-process and over HTTP; boundary test covers `api/` |
@@ -329,7 +330,7 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 
 PR 32 depends on nothing and can go first; 33–34 do not block the eval, which runs in-process. PR 31 is the checkpoint: everything after it is plumbing or optional. Writing the scenarios is human work, like P2's labels.
 
-**Cost:** an eval run ≈ 20 scenarios × ~3 exchanges × ~$0.10 ≈ $6, plus ~$1 of judge; an effort sweep or A/B multiplies it. Embeddings are noise (§ 6).
+**Cost:** an eval run ≈ 10 first turns × ~$0.12 + 5 follow-ups × ~$0.04 ≈ $1.40, plus ~$0.50 of Opus judge; the repeat run for noise goes `--no-judge`, so a baseline is ~$3. An effort sweep or A/B multiplies it. Embeddings are noise (§ 6).
 
 ---
 
