@@ -738,7 +738,10 @@ async def _spend(
 
 
 CLI_CLIENT = "cli"  # what `users.client` says for people talking through `cli chat`
-CHAT_HELP = "/new starts a new conversation, /good and /bad rate the last reply, Ctrl-D quits."
+CHAT_HELP = (
+    "/new starts a new conversation, /good and /bad rate the last reply, /profile shows what is "
+    "remembered about you, /forget deletes it and every conversation, Ctrl-D quits."
+)
 
 
 @app.command()
@@ -759,17 +762,12 @@ def chat(
 
     The conversation is kept in the database: quitting (Ctrl-D) and coming back resumes it, until
     it has been idle 6 hours or its day is over. /new starts another; /good and /bad rate the last
-    reply. After each reply, a line gives the tool calls, the tool rounds, and the turn's model
-    calls, tokens (cache included) and cost.
+    reply. What the curator remembers about you opens every new conversation: /profile lists it and
+    /forget deletes it. After each reply, a line gives the tool calls, the tool rounds, and the
+    turn's model calls, tokens (cache included) and cost.
     """
     settings = get_settings()
     day = today.date() if today else local_today()
-    curator = Curator(
-        get_llm_client(),
-        CuratorTools(get_sessionmaker()),
-        model=settings.chat_model,
-        effort=settings.chat_effort,
-    )
     store = ConversationStore(get_sessionmaker())
     typer.echo(
         f"The Art Curator · {settings.chat_model} · effort {settings.chat_effort} · today {day}"
@@ -780,6 +778,12 @@ def chat(
     with asyncio.Runner() as runner:
         try:
             user_id = runner.run(store.user(CLI_CLIENT, user))
+            curator = Curator(
+                get_llm_client(),
+                CuratorTools(get_sessionmaker(), user_id),
+                model=settings.chat_model,
+                effort=settings.chat_effort,
+            )
             stored = runner.run(store.current(user_id, day))
             if stored.saved:
                 typer.echo(f"Resuming conversation {stored.id} ({stored.saved} messages).")
@@ -823,6 +827,13 @@ async def _chat_command(
     elif command in ("/good", "/bad"):
         rated = await store.rate(stored.id, "good" if command == "/good" else "bad")
         typer.echo("Noted." if rated else "No reply to rate yet.")
+    elif command == "/profile":
+        facts = await store.remembered(user_id)
+        typer.echo("\n".join(f"  [{f.id}] {f.topic}: {f.fact}" for f in facts) or "Nothing yet.")
+    elif command == "/forget":
+        await store.forget(user_id)
+        stored = await store.current(user_id, day)
+        typer.echo(f"Forgotten: profile and conversations deleted. New conversation {stored.id}.")
     else:
         typer.echo(CHAT_HELP)
     return stored

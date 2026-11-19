@@ -75,8 +75,9 @@ OWN_TABLES = {"llm_calls", "venue_seeds"}
 # a sentence, passed `longest_shared_run` before it was written (`test_extraction_tables_*`).
 OWN_PROSE = {"exhibitions": {"summary_en"}, "art_events": {"summary_en"}}
 # Conversations: the user's words, the curator's, and tool results, which are what the agent tools
-# return (`test_no_agent_tool_returns_page_text`). `conversations.context` is our calendar block.
-CONVERSATION_TABLES = {"users", "conversations", "messages", "feedback"}
+# return (`test_no_agent_tool_returns_page_text`). `conversations.context` is our calendar block and
+# the profile; `profile_facts.fact` is the curator's sentence about what the user said.
+CONVERSATION_TABLES = {"users", "conversations", "messages", "feedback", "profile_facts"}
 
 PROSE = re.compile(r"desc|summary|body|content|excerpt|abstract|prose|blurb|text|html", re.I)
 THIRD_PARTY_TEXT = re.compile(r"raw|html|body|excerpt|page_text", re.I)
@@ -601,22 +602,24 @@ def test_no_mcp_tool_returns_page_text(corpus_db):
 
 # --- Agent: page text never reaches a chat -------------------------------------------------------
 
-# Every curator tool, reaching the listing's items as MCP_CALLS does. A new tool fails
-# `test_every_agent_tool_is_scanned` until it is added here.
+# Every curator tool that reads, reaching the listing's items as MCP_CALLS does. A new tool fails
+# `test_every_agent_tool_is_scanned` until it is added here or to WRITE_ONLY_TOOLS.
 AGENT_CALLS: dict[str, dict] = {
     "search_events": MCP_CALLS["search_events"],
     "get_events": MCP_CALLS["get_events"],
 }
+# Tools that read nothing: `remember` returns the id it wrote and the id it was given.
+WRITE_ONLY_TOOLS = {"remember"}
 
 
 def test_every_agent_tool_is_scanned():
-    assert {tool["name"] for tool in TOOL_DEFINITIONS} == set(AGENT_CALLS)
+    assert {tool["name"] for tool in TOOL_DEFINITIONS} == set(AGENT_CALLS) | WRITE_ONLY_TOOLS
 
 
 def test_no_agent_tool_returns_page_text(corpus_db):
     async def main() -> list[ToolResult]:
         engine = create_async_engine(corpus_db)
-        tools = CuratorTools(async_sessionmaker(engine, expire_on_commit=False))
+        tools = CuratorTools(async_sessionmaker(engine, expire_on_commit=False), user_id=0)
         try:
             return [await tools(name, args) for name, args in AGENT_CALLS.items()]
         finally:

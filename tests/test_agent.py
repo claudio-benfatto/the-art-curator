@@ -8,6 +8,9 @@ replayed exactly as they came. The tools' database half runs against `tests/corp
 PR 29: a turn replayed from the database starts with the turn before it, byte for byte, and sends
 what an in-memory conversation would; a conversation ends when idle or when its day is over; and
 `cli chat` resumes, starts over and rates replies.
+
+PR 30: a fact remembered in one conversation is in the next one's context block, a correction
+supersedes the fact it names and nothing else, and forget leaves no rows of the user.
 """
 
 import asyncio
@@ -25,6 +28,7 @@ from typer.testing import CliRunner
 
 from art_curator import cli
 from art_curator.agent.loop import CAPPED, MAX_TOOL_ROUNDS, Conversation, Curator, Turn
+from art_curator.agent.profile import Fact
 from art_curator.agent.prompt import (
     CALENDAR_DAYS,
     SYSTEM_PROMPT,
@@ -33,6 +37,7 @@ from art_curator.agent.prompt import (
 from art_curator.agent.store import IDLE, ConversationStore
 from art_curator.agent.tools import TOOL_DEFINITIONS, CuratorTools, ToolResult
 from art_curator.config import get_settings
+from art_curator.db.models import PROFILE_TOPICS
 from art_curator.db.session import get_engine, get_sessionmaker
 from art_curator.queries import events as q
 from tests.db import alembic_config, run_sql
@@ -41,6 +46,7 @@ from tests.llm_stub import StubLlm
 CHAT = "global.anthropic.claude-opus-4-6-v1"
 TODAY = date(2026, 11, 11)  # a Wednesday
 SEARCH = {"date_from": "2026-11-14", "date_to": "2026-11-15", "near": "Poblenou"}
+NOBODY = 0  # the user a read-only tool runs for: it reads nothing of theirs
 NO_ROWS = ToolResult('{"total":0,"events":[],"near":null,"truncated":false}')
 
 
@@ -196,7 +202,7 @@ def test_bad_input_goes_back_to_the_model_as_an_error():
     )
     stub.reply(content=[text("Which Saturday?")])
 
-    _, [turn] = turns(stub, CuratorTools(NoDatabase()), "Saturday?")
+    _, [turn] = turns(stub, CuratorTools(NoDatabase(), NOBODY), "Saturday?")
 
     [result] = stub.requests[1]["messages"][2]["content"]
     assert result["is_error"] is True and result["tool_use_id"] == "a"
@@ -216,11 +222,15 @@ def test_bad_input_goes_back_to_the_model_as_an_error():
         ("get_events", {"ids": []}, "ids"),
         ("get_events", {"ids": ["12"]}, "ids.0"),
         ("get_events", {"ids": [f"x:{n}" for n in range(q.MAX_HYDRATE + 1)]}, "ids"),
-        ("remember", {"fact": "likes video"}, "No tool is called 'remember'"),
+        ("remember", {"fact": "Likes video art."}, "topic: Field required"),
+        ("remember", {"topic": "mood", "fact": "Likes video art."}, "topic"),
+        ("remember", {"topic": "media", "fact": "x" * 201}, "fact"),
+        ("remember", {"topic": "media", "fact": "Likes video.", "replaces": "x"}, "replaces"),
+        ("forget", {}, "No tool is called 'forget'"),
     ],
 )
 def test_invalid_calls_never_reach_the_database(name, tool_input, expected):
-    result = asyncio.run(CuratorTools(NoDatabase())(name, tool_input))
+    result = asyncio.run(CuratorTools(NoDatabase(), NOBODY)(name, tool_input))
 
     assert result.is_error
     assert expected in result.content
@@ -358,12 +368,15 @@ def test_the_calendar_names_each_day_from_today():
 def test_tool_definitions_are_self_contained_and_match_the_queries():
     by_name = {tool["name"]: tool for tool in TOOL_DEFINITIONS}
 
-    assert list(by_name) == ["search_events", "get_events"]
+    assert list(by_name) == ["search_events", "get_events", "remember"]
     assert "$ref" not in json.dumps(TOOL_DEFINITIONS)
     search = by_name["search_events"]["input_schema"]
     assert search["required"] == ["date_from", "date_to"]
     assert search["properties"]["kinds"]["anyOf"][0]["items"]["enum"] == list(q.KINDS)
     assert by_name["get_events"]["input_schema"]["properties"]["ids"]["maxItems"] == q.MAX_HYDRATE
+    remember = by_name["remember"]["input_schema"]
+    assert remember["required"] == ["topic", "fact"]
+    assert remember["properties"]["topic"]["enum"] == list(PROFILE_TOPICS)
 
 
 # --- the tools over the corpus -------------------------------------------------------------------
@@ -372,7 +385,7 @@ def test_tool_definitions_are_self_contained_and_match_the_queries():
 def _run_tools(url: URL, calls: list[tuple[str, dict[str, Any]]]) -> list[ToolResult]:
     async def main() -> list[ToolResult]:
         engine = create_async_engine(url)
-        tools = CuratorTools(async_sessionmaker(engine, expire_on_commit=False))
+        tools = CuratorTools(async_sessionmaker(engine, expire_on_commit=False), NOBODY)
         try:
             return [await tools(name, tool_input) for name, tool_input in calls]
         finally:
@@ -562,7 +575,7 @@ def chat(conversations_db, monkeypatch) -> Iterator[Callable[..., Any]]:
     monkeypatch.setenv("DATABASE_URL", conversations_db.render_as_string(hide_password=False))
     stub = StubLlm()
     monkeypatch.setattr(cli, "get_llm_client", lambda: stub.client)
-    monkeypatch.setattr(cli, "CuratorTools", lambda _: FakeTools())
+    monkeypatch.setattr(cli, "CuratorTools", lambda *_: FakeTools())
 
     async def summary(turn: Turn) -> str:  # its rows went to the stub, not the database
         return f"[{turn.iteration_count} tool rounds]"
@@ -631,3 +644,201 @@ def test_cli_chat_rates_the_last_reply_once(chat):
         " WHERE u.external_id = 'rate'",
     )
     assert rows == [("bad", 0)]
+
+
+# --- the profile (PR 30) -------------------------------------------------------------------------
+
+
+def test_the_context_lists_the_profile_with_the_ids_remember_corrects_by():
+    facts = [Fact(3, "media", "Likes video art."), Fact(7, "area", "Starts from Poblenou.")]
+
+    assert "Remembered about this person: nothing yet." in conversation_context(TODAY)
+    context = conversation_context(TODAY, facts)
+    assert "[3] media: Likes video art.\n[7] area: Starts from Poblenou.\n</context>" in context
+
+
+def remembering(url: URL, stub: StubLlm, user: str, text: str) -> tuple[Turn, str]:
+    """Run `text` as the first turn of a new conversation of `user`, with the real tools bound to
+    them; returns the turn and the context block its conversation opened with."""
+
+    async def main() -> tuple[Turn, str]:
+        engine = create_async_engine(url)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        store = ConversationStore(sessions)
+        try:
+            user_id = await store.user("test", user)
+            tools = CuratorTools(sessions, user_id)
+            curator = Curator(stub.client, tools, model=CHAT, effort="medium")
+            await store.close(user_id)
+            stored = await store.current(user_id, TODAY)
+            turn = await curator.turn(stored.conversation, text)
+            await store.save(stored, turn)
+            return turn, stored.conversation.context
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(main())
+
+
+def tool_result(request: dict[str, Any]) -> dict[str, Any]:
+    """The first tool result of the last message of `request`, parsed."""
+    result = request["messages"][-1]["content"][0]
+    assert result["type"] == "tool_result" and not result.get("is_error"), result
+    return json.loads(result["content"])
+
+
+def facts_of(url: URL, user: str) -> list[tuple]:
+    [rows] = run_sql(
+        url,
+        "SELECT f.id, f.topic, f.fact, f.superseded_by FROM profile_facts f "
+        f"JOIN users u ON u.id = f.user_id WHERE u.external_id = '{user}' ORDER BY f.id",
+    )
+    return rows
+
+
+def test_a_fact_remembered_in_one_conversation_opens_the_next(conversations_db):
+    stub = StubLlm()
+    likes = {"topic": "media", "fact": "Likes video art."}
+    stub.reply(content=[tool_use("a", "remember", **likes)], stop_reason="tool_use")
+    stub.reply(content=[text("Video it is.")])
+    _, first = remembering(conversations_db, stub, "taste", "I love video art")
+    remembered = tool_result(stub.requests[1])
+
+    stub.reply(content=[text("Hola!")])
+    _, second = remembering(conversations_db, stub, "taste", "Hola")
+
+    assert "Remembered about this person: nothing yet." in first
+    assert f"[{remembered['id']}] media: Likes video art." in second
+    assert remembered == {"id": remembered["id"], "replaced": None}
+    # The new conversation's first request carries it: the model sees it from the first turn.
+    assert stub.requests[-1]["messages"][0]["content"][0]["text"] == second
+
+
+def test_a_correction_supersedes_the_fact_it_names(conversations_db):
+    stub = StubLlm()
+    stub.reply(
+        content=[tool_use("a", "remember", topic="area", fact="Starts from Gràcia.")],
+        stop_reason="tool_use",
+    )
+    stub.reply(content=[text("Gràcia, noted.")])
+    remembering(conversations_db, stub, "moved", "I live in Gràcia")
+    old = tool_result(stub.requests[1])["id"]
+    moved = {"topic": "area", "fact": "Starts from Poblenou.", "replaces": old}
+    stub.reply(content=[tool_use("b", "remember", **moved)], stop_reason="tool_use")
+    stub.reply(content=[text("Poblenou, then.")])
+    remembering(conversations_db, stub, "moved", "I moved to Poblenou")
+    new = tool_result(stub.requests[3])["id"]
+
+    stub.reply(content=[text("Hola!")])
+    _, context = remembering(conversations_db, stub, "moved", "Hola")
+
+    assert f"[{new}] area: Starts from Poblenou." in context and "Gràcia" not in context
+    # Append-only: the old fact is kept, pointing at the one that replaced it.
+    assert facts_of(conversations_db, "moved") == [
+        (old, "area", "Starts from Gràcia.", new),
+        (new, "area", "Starts from Poblenou.", None),
+    ]
+
+
+def test_a_correction_of_no_live_fact_is_an_error_and_writes_nothing(conversations_db):
+    async def main() -> list[ToolResult]:
+        engine = create_async_engine(conversations_db)
+        sessions = async_sessionmaker(engine, expire_on_commit=False)
+        store = ConversationStore(sessions)
+        try:
+            mine = CuratorTools(sessions, await store.user("test", "corrects"))
+            theirs = CuratorTools(sessions, await store.user("test", "someone else"))
+            other = json.loads((await theirs("remember", {**fact, "fact": "Theirs."})).content)
+            first = json.loads((await mine("remember", fact)).content)["id"]
+            await mine("remember", {**fact, "replaces": first})
+            return [
+                await mine("remember", {**fact, "replaces": first}),  # already replaced
+                await mine("remember", {**fact, "replaces": other["id"]}),  # another user's
+                await mine("remember", {**fact, "replaces": 10**9}),  # no such fact
+            ]
+        finally:
+            await engine.dispose()
+
+    fact = {"topic": "budget", "fact": "Prefers free entry."}
+    replaced, theirs, missing = asyncio.run(main())
+
+    assert all(result.is_error for result in (replaced, theirs, missing))
+    successor = facts_of(conversations_db, "corrects")[1][0]
+    assert f"already replaced by fact {successor}" in replaced.content
+    assert "No remembered fact has id" in theirs.content and "No remembered" in missing.content
+    assert len(facts_of(conversations_db, "corrects")) == 2  # the refused facts were rolled back
+    assert [row[3] for row in facts_of(conversations_db, "someone else")] == [None]
+
+
+USER_ROWS = {
+    "profile_facts": "SELECT count(*) FROM profile_facts WHERE user_id = {user}",
+    "conversations": "SELECT count(*) FROM conversations WHERE user_id = {user}",
+    "messages": "SELECT count(*) FROM messages m JOIN conversations c "
+    "ON c.id = m.conversation_id WHERE c.user_id = {user}",
+    "feedback": "SELECT count(*) FROM feedback f JOIN messages m ON m.id = f.message_id "
+    "JOIN conversations c ON c.id = m.conversation_id WHERE c.user_id = {user}",
+}
+
+
+def rows_of(url: URL, user_id: int) -> dict[str, int]:
+    counts = run_sql(url, *(sql.format(user=user_id) for sql in USER_ROWS.values()))
+    return {table: rows[0][0] for table, rows in zip(USER_ROWS, counts, strict=True)}
+
+
+def test_forget_leaves_no_rows_of_the_user(conversations_db):
+    stub = StubLlm()
+    for user in ("forgotten", "kept"):
+        stub.reply(
+            content=[tool_use("a", "remember", topic="themes", fact="Likes archives.")],
+            stop_reason="tool_use",
+        )
+        stub.reply(content=[text("Archives, noted.")])
+        remembering(conversations_db, stub, user, "I like archives")
+
+    async def main() -> tuple[int, int]:
+        engine = create_async_engine(conversations_db)
+        store = ConversationStore(async_sessionmaker(engine, expire_on_commit=False))
+        try:
+            forgotten, kept = [await store.user("test", u) for u in ("forgotten", "kept")]
+            for user_id in (forgotten, kept):
+                assert await store.rate((await store.current(user_id, TODAY)).id, "good")
+            await store.forget(forgotten)
+            assert await store.remembered(forgotten) == []
+            return forgotten, kept
+        finally:
+            await engine.dispose()
+
+    forgotten, kept = asyncio.run(main())
+
+    assert rows_of(conversations_db, forgotten) == dict.fromkeys(USER_ROWS, 0)
+    assert rows_of(conversations_db, kept) == {
+        "profile_facts": 1,
+        "conversations": 1,
+        "messages": 4,
+        "feedback": 1,
+    }
+
+
+def test_cli_chat_shows_and_forgets_the_profile(chat):
+    chat.stub.reply(content=[text("Video, then.")])
+    chat("/profile\n", user="forget")  # creates the user
+    run_sql(
+        chat.url,
+        "INSERT INTO profile_facts (user_id, topic, fact) SELECT id, 'media', 'Likes video art.' "
+        "FROM users WHERE external_id = 'forget'",
+    )
+
+    result = chat("/profile\n/new\nSaturday?\n/forget\n/profile\n", user="forget")
+
+    assert result.exit_code == 0, result.output
+    assert "] media: Likes video art." in result.output and "Forgotten" in result.output
+    assert result.output.endswith("you> Nothing yet.\n\nyou> ")
+    assert "media: Likes video art." in chat.stub.requests[0]["messages"][0]["content"][0]["text"]
+    [[(user_id,)]] = run_sql(chat.url, "SELECT id FROM users WHERE external_id = 'forget'")
+    # Only the conversation /forget opened to carry on with, empty and knowing nothing.
+    assert rows_of(chat.url, user_id) == {
+        "profile_facts": 0,
+        "conversations": 1,
+        "messages": 0,
+        "feedback": 0,
+    }
