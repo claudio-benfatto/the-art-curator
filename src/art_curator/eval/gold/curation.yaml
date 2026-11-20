@@ -1,0 +1,148 @@
+# Scripted conversations for `eval-curation` (PLAN.md § 8, P3). Written by people, never drafted
+# by a model: what is asked, and what a good answer must keep to, is the judgement being tested.
+#
+# A scenario never names a show: shows close, and the expected answer would rot. It says who is
+# asking (`persona`, read by the judge and the person judging the transcript), what the curator
+# remembers of them before it starts (`profile`, as `remember` would have written it), and what
+# they say, turn by turn (`user`). Each turn's `expect` holds:
+#
+#   dates:     the days asked about. One day (`saturday`) or [first, last]. A day is today,
+#              tomorrow or a weekday, the first on or after today as the calendar lists it, and
+#              `+N` adds N days (`today+13` is the calendar's last day). `last` counts from
+#              `first`, so [saturday, sunday] is a weekend on any day of the week.
+#   area:      {near: <place>, km: <radius>}, only when the user gives a distance or limit. The
+#              place is resolved as `search_events` resolves `near`, and must name one place.
+#   free:      true when the user wants nothing that costs money (an unknown price passes).
+#   kinds:     only these kinds: exhibition, opening, talk, workshop, performance, screening,
+#              guided_tour, concert, fair, other. Only when the user is that specific.
+#   searches:  true if this turn must call search_events, false if it must not.
+#   remembers: topics this turn must `remember` (media, themes, area, budget, language, access,
+#              other); [] when it must remember nothing, such as a one-off plan.
+#
+# dates, area, free and kinds are hard constraints on every item the reply names, and carry over
+# to the next turns until a turn restates them (`null` drops one). searches and remembers are
+# about their own turn only. Leave out what the user did not ask for: a constraint the user never
+# set measures the scenario, not the curator.
+#
+# Placed where the data is: the pilots with current shows sit in the Raval, Montjuïc, Poblenou and
+# the Eixample, plus Vic; elsewhere only GRAF's facts-only listings (PLAN.md § 9, Coverage).
+#
+# Every turn is paid for. A scenario's first turn is ~$0.12 on Opus 4.6 (cache writes included), a
+# follow-up within 5 minutes ~$0.04, and the judge ~$0.05 a scenario. These 10 scenarios, 15 turns,
+# are ~$1.90 a run with the judge: add one only for what no other scenario tests.
+
+scenarios:
+  - id: poblenou-video-saturday
+    persona: Lives near Poblenou, likes video art and installation. First conversation.
+    turns:
+      - user: >-
+          I have Saturday afternoon in Barcelona, I like video art and installation, I'm near
+          Poblenou. What should I see?
+        expect:
+          dates: saturday
+          searches: true
+          remembers: [media]
+      - user: Only what I can walk to from there, say within 2 km.
+        expect:
+          area: {near: Poblenou, km: 2}
+
+  - id: raval-weekend-ca
+    persona: Catalan speaker spending the weekend around the Raval; open to anything.
+    turns:
+      - user: Aquest cap de setmana sóc pel Raval. Què hi ha d'interessant a prop?
+        expect:
+          dates: [saturday, sunday]
+          searches: true
+          remembers: []
+      - user: I diumenge al matí, hi ha alguna visita guiada?
+        expect:
+          dates: sunday
+          kinds: [guided_tour]
+
+  - id: free-students-es
+    persona: Two art students in Barcelona with no money to spend.
+    turns:
+      - user: >-
+          Somos estudiantes y no queremos pagar nada. ¿Qué podemos ver gratis este sábado en
+          Barcelona?
+        expect:
+          dates: saturday
+          free: true
+          searches: true
+          remembers: [budget]
+
+  - id: profile-opens-the-conversation
+    persona: Returning user who starts from Gràcia and likes photography and sculpture.
+    profile:
+      - {topic: area, fact: Usually starts from Gràcia.}
+      - {topic: media, fact: Likes photography and sculpture; not keen on painting.}
+    turns:
+      - user: I'm free tomorrow evening. Any ideas?
+        expect:
+          dates: tomorrow
+          searches: true
+          remembers: []
+
+  - id: moved-to-gracia
+    persona: Returning user who lived in Poblenou and has just moved to Gràcia; likes video art.
+    profile:
+      - {topic: area, fact: Lives in Poblenou.}
+      - {topic: media, fact: Likes video art and installation.}
+    turns:
+      - user: What's on this weekend near me?
+        expect:
+          dates: [saturday, sunday]
+          searches: true
+      - user: Actually, I've just moved to Gràcia. What's close to there instead?
+        expect:
+          searches: true
+          remembers: [area]
+
+  - id: girona-friday
+    persona: Will be in Girona for work on Friday and has the evening free.
+    turns:
+      - user: I'm in Girona on Friday. Any art events in the evening?
+        expect:
+          dates: friday
+          searches: true
+
+  - id: one-off-plan-near-macba
+    persona: Showing their visiting mother around the Raval on Saturday.
+    turns:
+      - user: >-
+          On Saturday I'll be near the MACBA with my mother, who is visiting. What could we see
+          together?
+        expect:
+          dates: saturday
+          searches: true
+          remembers: []
+      - user: She uses a wheelchair. Which of these are step-free?
+
+  - id: eixample-gallery-hop
+    persona: Collector who prefers small commercial galleries to museums.
+    turns:
+      - user: >-
+          On Saturday I want to do a gallery hop in the Eixample: small commercial galleries,
+          not museums.
+        expect:
+          dates: saturday
+          searches: true
+
+  - id: ambiguous-canyelles
+    persona: Staying in the Canyelles neighbourhood of Nou Barris this weekend.
+    turns:
+      - user: I'm staying in Canyelles this weekend. Anything within 3 km of there?
+        expect:
+          dates: [saturday, sunday]
+      - user: The one in Barcelona, in Nou Barris.
+        expect:
+          area: {near: "Canyelles, Nou Barris", km: 3}
+          searches: true
+
+  - id: closing-this-weekend
+    persona: Worried about missing shows before they close.
+    turns:
+      - user: What closes this weekend that I shouldn't miss?
+        expect:
+          dates: [saturday, sunday]
+          searches: true
