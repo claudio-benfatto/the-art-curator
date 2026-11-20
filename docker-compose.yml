@@ -2,6 +2,7 @@
 #
 #   docker compose up -d db              # app database only
 #   docker compose up -d db langfuse     # + Langfuse UI on http://localhost:3000
+#   docker compose up -d api             # + the HTTP API on http://127.0.0.1:8000
 #
 # Langfuse does not fit in a 2 GB Docker VM: worker + ClickHouse take ~1 GB before the web app
 # starts, and web is OOM-killed on boot. On Colima: `colima stop && colima start --memory 6`.
@@ -30,6 +31,29 @@ services:
       interval: 3s
       timeout: 3s
       retries: 10
+
+  # --- The HTTP API (POST /chat and the rest; `api/main.py`) -------------------------------------
+  # Settings come from .env like the CLI's (API_TOKEN must be set there, or the API will not
+  # start); only what differs inside the network is overridden here. Bedrock calls use your AWS
+  # credentials, mounted read-only: set AWS_PROFILE in .env if they are not the default profile.
+  # Migrations still run from the host (`uv run alembic upgrade head`).
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://art_curator:art_curator@db:5432/art_curator
+      LANGFUSE_HOST: http://langfuse:3000
+    volumes:
+      - ${HOME}/.aws:/root/.aws:ro
+    ports:
+      - 127.0.0.1:8000:8000
 
   # --- Langfuse (optional trace UI; OTel + llm_calls stand alone without it) ---------------------
   # Trimmed from upstream's docker-compose.yml for v4. Starts only when targeted by name.

@@ -56,6 +56,14 @@ class ConversationStore:
             )
             return found.scalar_one()
 
+    async def find_user(self, client: str, external_id: str) -> int | None:
+        """The id of the user `client` knows as `external_id`, or None if never seen: for requests
+        that should not create a user, such as forgetting one."""
+        async with self._sessions() as session:
+            return await session.scalar(
+                select(User.id).where(User.client == client, User.external_id == external_id)
+            )
+
     async def current(self, user_id: int, today: date) -> StoredConversation:
         """The user's open conversation, replayed from its messages; or, if it has expired or
         there is none, a new one whose calendar starts at `today`, with the profile as it is
@@ -99,9 +107,10 @@ class ConversationStore:
         async with self._sessions() as session, session.begin():
             await profile.forget(session, user_id)
 
-    async def save(self, stored: StoredConversation, turn: Turn) -> None:
+    async def save(self, stored: StoredConversation, turn: Turn) -> int:
         """Append the messages `turn` added to `stored.conversation`, each with the turn's trace,
-        and its iteration count on the last reply."""
+        and its iteration count on the last reply. Returns that reply's message id: what feedback
+        names it by."""
         messages = stored.conversation.messages
         new = messages[stored.saved :]
         last_reply = max(i for i, message in enumerate(new) if message["role"] == "assistant")
@@ -117,7 +126,7 @@ class ConversationStore:
                     )
                     .values(content=messages[stored.saved - 1]["content"])
                 )
-            session.add_all(
+            rows = [
                 Message(
                     conversation_id=stored.id,
                     position=stored.saved + i,
@@ -127,13 +136,17 @@ class ConversationStore:
                     iteration_count=turn.iteration_count if i == last_reply else None,
                 )
                 for i, message in enumerate(new)
-            )
+            ]
+            session.add_all(rows)
+            await session.flush()  # assigns the ids
+            reply_id = rows[last_reply].id
             await session.execute(
                 update(ConversationRow)
                 .where(ConversationRow.id == stored.id)
                 .values(last_turn_at=func.now())
             )
         stored.saved = len(messages)
+        return reply_id
 
     async def rate(self, conversation_id: int, rating: Rating) -> bool:
         """Record `rating` on the conversation's last reply, replacing any earlier verdict on it.
@@ -150,14 +163,37 @@ class ConversationStore:
             )
             if reply is None:
                 return False
-            stmt = insert(Feedback).values(message_id=reply, rating=rating)
-            await session.execute(
-                stmt.on_conflict_do_update(
-                    index_elements=["message_id"],
-                    set_={"rating": stmt.excluded.rating, "created_at": func.now()},
+            await _rate(session, reply, rating)
+            return True
+
+    async def rate_reply(self, user_id: int, message_id: int, rating: Rating) -> bool:
+        """Record `rating` on the reply `save` returned as `message_id`, replacing any earlier
+        verdict on it. False when that is not a reply in one of the user's conversations."""
+        async with self._sessions() as session, session.begin():
+            reply = await session.scalar(
+                select(Message.id)
+                .join(ConversationRow, ConversationRow.id == Message.conversation_id)
+                .where(
+                    Message.id == message_id,
+                    Message.iteration_count.is_not(None),
+                    ConversationRow.user_id == user_id,
                 )
             )
+            if reply is None:
+                return False
+            await _rate(session, reply, rating)
             return True
+
+
+async def _rate(session: AsyncSession, message_id: int, rating: Rating) -> None:
+    """Upsert the verdict on one reply: a second replaces the first."""
+    stmt = insert(Feedback).values(message_id=message_id, rating=rating)
+    await session.execute(
+        stmt.on_conflict_do_update(
+            index_elements=["message_id"],
+            set_={"rating": stmt.excluded.rating, "created_at": func.now()},
+        )
+    )
 
 
 async def _replay(session: AsyncSession, row: ConversationRow) -> StoredConversation:

@@ -3,6 +3,7 @@
 import asyncio
 import re
 import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -20,6 +21,7 @@ from art_curator.agent.loop import Curator, Turn
 from art_curator.agent.prompt import local_today
 from art_curator.agent.store import ConversationStore, StoredConversation
 from art_curator.agent.tools import CuratorTools, to_json
+from art_curator.clients.api import ChatFailed, CuratorApi, ReplyDone, TextChunk, ToolStatus
 from art_curator.config import Effort, get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_engine, get_sessionmaker
@@ -934,6 +936,13 @@ def chat(
     user: Annotated[
         str, typer.Option(help="Who is talking: each user has their own conversations.")
     ] = "local",
+    api: Annotated[
+        str | None,
+        typer.Option(
+            help="Talk through the HTTP API at this URL (http://127.0.0.1:8000) instead of "
+            "in-process, with API_TOKEN. The reply streams as it is written.",
+        ),
+    ] = None,
 ) -> None:
     """Talk to the curator in the terminal. Calls the chat model: a few cents an exchange.
 
@@ -942,7 +951,15 @@ def chat(
     reply. What the curator remembers about you opens every new conversation: /profile lists it and
     /forget deletes it. After each reply, a line gives the tool calls, the tool rounds, and the
     turn's model calls, tokens (cache included) and cost.
+
+    With --api, the same conversation goes through the HTTP API, as any other client's would: the
+    same user, so a conversation begun in-process carries on over HTTP. The line after each reply
+    then gives only the tool rounds and the reply's message id (costs stay on the server), and
+    /good and /bad rate the last reply of this session.
     """
+    if api is not None:
+        _chat_over_api(api, user, today.date() if today else None)
+        return
     settings = get_settings()
     day = today.date() if today else local_today()
     store = ConversationStore(get_sessionmaker())
@@ -964,13 +981,7 @@ def chat(
             stored = runner.run(store.current(user_id, day))
             if stored.saved:
                 typer.echo(f"Resuming conversation {stored.id} ({stored.saved} messages).")
-            while True:
-                try:
-                    text = input("\nyou> ").strip()
-                except EOFError:
-                    break
-                if not text:
-                    continue
+            for text in _chat_input():
                 if text.startswith("/"):
                     stored = runner.run(_chat_command(store, user_id, day, stored, text))
                     continue
@@ -991,6 +1002,17 @@ def chat(
         finally:
             telemetry.setup_telemetry().force_flush()
             runner.run(get_engine().dispose())
+
+
+def _chat_input() -> Iterator[str]:
+    """What the user types, a line at a time, blank lines skipped, until end of input."""
+    while True:
+        try:
+            text = input("\nyou> ").strip()
+        except EOFError:
+            return
+        if text:
+            yield text
 
 
 async def _chat_command(
@@ -1014,6 +1036,74 @@ async def _chat_command(
     else:
         typer.echo(CHAT_HELP)
     return stored
+
+
+def _chat_over_api(url: str, user: str, day: date | None) -> None:
+    """`cli chat --api`: each message and slash command is a request to the API at `url`."""
+    token = get_settings().api_token
+    if token is None:
+        raise typer.BadParameter("API_TOKEN is not set: the API refuses requests without it")
+    typer.echo(f"The Art Curator · {url}" + (f" · today {day}" if day else "") + f"\n{CHAT_HELP}")
+    with asyncio.Runner() as runner:
+        api = CuratorApi(url, token.get_secret_value(), client=CLI_CLIENT)
+        last_reply: int | None = None  # the message id of this session's last reply
+        try:
+            for text in _chat_input():
+                try:
+                    if text.startswith("/"):
+                        last_reply = runner.run(_api_command(api, user, last_reply, text))
+                    else:
+                        last_reply = runner.run(_api_turn(api, user, text, day))
+                except Exception as exc:  # the server saved nothing of a failed turn
+                    typer.echo(f"error: {type(exc).__name__}: {exc}")
+        finally:
+            runner.run(api.aclose())
+
+
+async def _api_turn(api: CuratorApi, user: str, text: str, day: date | None) -> int:
+    """Send one message and print the reply as it streams; returns the reply's message id."""
+    typer.echo()
+    line_open = False  # streamed text has started a line that nothing has ended yet
+    async for event in api.chat(user, text, today=day):
+        match event:
+            case ToolStatus(tool):
+                typer.echo(("\n" if line_open else "") + f"  · {tool}")
+                line_open = False
+            case TextChunk(chunk):
+                typer.echo(chunk, nl=False)
+                line_open = True
+            case ReplyDone(message_id, rounds, stop_reason):
+                if not line_open:
+                    typer.echo(f"(no reply: {stop_reason})", nl=False)
+                typer.echo(f"\n\n  [{rounds} tool rounds · message {message_id}]")
+                return message_id
+    raise ChatFailed("the stream ended before the turn did")
+
+
+async def _api_command(
+    api: CuratorApi, user: str, last_reply: int | None, command: str
+) -> int | None:
+    """`_chat_command` over the API; returns the reply a later /good or /bad would rate."""
+    if command == "/new":
+        await api.new_conversation(user)
+        typer.echo("New conversation.")
+        return None
+    elif command in ("/good", "/bad"):
+        if last_reply is None:
+            typer.echo("No reply to rate yet.")
+        else:
+            await api.feedback(user, last_reply, "good" if command == "/good" else "bad")
+            typer.echo("Noted.")
+    elif command == "/profile":
+        facts = await api.profile(user)
+        typer.echo("\n".join(f"  [{f.id}] {f.topic}: {f.fact}" for f in facts) or "Nothing yet.")
+    elif command == "/forget":
+        await api.forget(user)
+        typer.echo("Forgotten: profile and conversations deleted.")
+        return None
+    else:
+        typer.echo(CHAT_HELP)
+    return last_reply
 
 
 async def _turn_summary(turn: Turn) -> str:

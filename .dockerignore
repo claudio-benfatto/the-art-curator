@@ -1,0 +1,12 @@
+# Build context for docker/api/Dockerfile. Secrets never enter an image: settings come from the
+# environment Compose passes at run time.
+.env
+.env.*
+.git
+.venv
+**/__pycache__
+.pytest_cache
+.ruff_cache
+infra
+tests
+migrations

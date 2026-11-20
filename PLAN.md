@@ -2,8 +2,8 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PRs 26–31 built (§ 8); 31's baseline not run yet.
-**Last updated:** 2026-11-19 (rev. 16)
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PRs 26–34 built (§ 8); 31's baseline not run yet.
+**Last updated:** 2026-11-20 (rev. 17)
 
 ---
 
@@ -74,7 +74,8 @@ src/art_curator/
   routes/itinerary.py      P4
   obs/                     telemetry.py
   eval/                    extraction.py, runner.py (P2) · curation.py, curation_runner.py (P3)
-  api/main.py              POST /chat (SSE), POST /feedback, DELETE /users/{id}/profile
+  api/main.py              POST /chat (SSE), POST /feedback, /users/{client}/{user}/profile (GET, DELETE) and /conversation (DELETE)
+  clients/api.py           the HTTP client: cli chat --api (P3), the Telegram bot (P5)
   clients/telegram_bot.py  P5
   mcp_server.py            dev-time only
   cli.py                   smoke, sync-graf, discover, crawl, extract, eval-extraction · load-places, chat, eval-curation, embed
@@ -302,9 +303,9 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 | Thinking / effort | `thinking: adaptive`; effort from `CHAT_EFFORT` (start `medium`), fixed per deployment; the eval sweeps it | A per-request change invalidates the messages cache |
 | SDK | Pin `anthropic[bedrock]<2` | 2.0.0 sends API version `2026-10-21`, which Bedrock accepts only for Claude 4.7+: chat on Opus 4.6 would break on a routine lock upgrade |
 | Profile | `remember(topic, fact, replaces?)` → `profile_facts`, append-only; `topic` from a small enum (media, themes, area, budget, language, access, other). The snapshot, with fact ids, is rendered at conversation start; a mid-conversation `remember` shows through its tool result and is not re-rendered | Re-rendering would edit the prefix |
-| Forget | `DELETE /users/{id}/profile` deletes the user's facts and conversations. Lands in P3 | P5 stays client-only |
-| Identity | `users(client, external_id)` unique, `client` an opaque string; one bearer token per deployment (`API_TOKEN`), API bound to localhost until P7 | The backend never learns what the client is (CLAUDE.md § 3) |
-| Streaming | `LlmClient.stream_message`: one `llm_calls` row when the stream ends or breaks. SSE events: `status` (tool running), `text` deltas, `done` (message id, `iteration_count`). Thinking is not forwarded. Needs `bedrock:InvokeModelWithResponseStream`, which the app role lacks | A row on every path, as for unstreamed calls |
+| Forget | `DELETE /users/{client}/{user}/profile` deletes the user's facts and conversations. Lands in P3 | P5 stays client-only |
+| Identity | `users(client, external_id)` unique, `client` an opaque string; routes name a user as `{client}/{user}`, never by our id. One bearer token per deployment (`API_TOKEN`; unset, the API will not start), API bound to localhost until P7 | The backend never learns what the client is (CLAUDE.md § 3) |
+| Streaming | `LlmClient.stream_message`: one `llm_calls` row when the stream ends or breaks. SSE events: `status` (tool running), `text` deltas, `done` (message id, `iteration_count`), `error`. Thinking is not forwarded. The turn is saved before `done`; a disconnect saves nothing. Needs `bedrock:InvokeModelWithResponseStream` (PR 32) | A row on every path, as for unstreamed calls |
 | Semantic ranking | **Gated:** built only if `eval-curation` shows `search_events` truncating (`total` > returned) in a real share of scenarios. Then: embed `summary_en` + themes + media (GRAF rows have no summary, so none); the model writes `query` in English, so the embedding model need not be multilingual; `query` reorders the filtered set, unembedded rows last | A few dozen current extracted items plus GRAF's window fit in one result; ranking cannot beat "the model sees everything" until they stop fitting |
 | Curation eval | `eval/gold/curation.yaml`: ~10 scripted conversations (persona, turns, constraints, relative dates only), placed where the pilots are. Per exchange: titles in the reply matched to tool results (grounding), hard constraints checked in SQL on the matched ids, a judge (`JUDGE_MODEL`) for taste fit and invented items, and iteration count, cost, cache share and latency. Transcripts go to a file outside the repo for the human read. Runs on the live DB, so arms are compared on the same day | Expected answers rot as shows close; constraints do not |
 
@@ -324,7 +325,7 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 | 31 | `eval/curation.py` + `eval/gold/curation.yaml` + `cli eval-curation` (`--effort`, `--model`, `--arm`) | Baseline in § 8; two runs agree within noise; truncation share and cost per exchange reported. Built (10 scenarios, 15 turns); baseline not run yet |
 | 32 | Terraform: `InvokeModelWithResponseStream` on the chat profile; IAM + `pricing.yaml` for two embedding candidates (Titan Text Embeddings V2, Cohere Embed v4, in-region) and one cheaper chat candidate (Sonnet 4.6); `LlmClient.embed`; the Smoke workflow calls each | Gated CI apply green (the first one since the 09-23 laptop apply: read the plan); Smoke green through OIDC. Built and applied through CI; Smoke not run yet |
 | 33 | `LlmClient.stream_message` (recorded stream, row on a broken stream) + a recorded-stream stub; the loop yields events; the Smoke chat leg streams | Stubbed: one row per stream, a broken one included; cost equals the unstreamed path's. Smoke green on the streamed chat call (PR 32's grant). Built (a `chat streamed` Smoke leg beside the unstreamed one); Smoke not run yet |
-| 34 | `api/`: `POST /chat` (SSE), `POST /feedback`, `DELETE /users/{id}/profile`; bearer token; Compose `api`; `cli chat --api URL` | The same conversation in-process and over HTTP; boundary test covers `api/` |
+| 34 | `api/`: `POST /chat` (SSE), `POST /feedback`, `DELETE /users/{client}/{user}/profile`, plus `GET` profile and `DELETE …/conversation` for `cli chat`'s `/profile` and `/new`; bearer token; Compose `api`; `clients/api.py`; `cli chat --api URL` | The same conversation in-process and over HTTP; boundary test covers `api/`. Built; DB tests not run outside CI, image not built |
 | 35 | *(gated)* `LlmClient.embed` batching if needed (one text a call since PR 32), migration 0011: `embedding` + markers, `cli embed` (skip unchanged), model chosen by a ~20-query retrieval check, `query` on `search_events` | A/B reported by `eval-curation`; decision recorded |
 | 36 | Sign-off (docs): chat cost, cache share, latency, iteration distribution into § 6 and § 8; decide loop vs workflow, chat model and effort | P3 done-when met |
 
