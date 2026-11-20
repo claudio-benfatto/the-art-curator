@@ -28,8 +28,9 @@
 # the Eixample, plus Vic; elsewhere only GRAF's facts-only listings (PLAN.md § 9, Coverage).
 #
 # Every turn is paid for. A scenario's first turn is ~$0.12 on Opus 4.6 (cache writes included), a
-# follow-up within 5 minutes ~$0.04, and the judge ~$0.05 a scenario. These 10 scenarios, 15 turns,
-# are ~$1.90 a run with the judge: add one only for what no other scenario tests.
+# follow-up within 5 minutes ~$0.04, and the judge ~$0.05 a scenario. This is the full set, 20
+# scenarios and 30 turns, ~$3.80 a run with the judge; the PR 31 default keeps 10 of them (~$1.90).
+# Run a subset with --scenario.
 
 scenarios:
   - id: poblenou-video-saturday
@@ -71,6 +72,19 @@ scenarios:
           searches: true
           remembers: [budget]
 
+  - id: miro-sunday-not-painting
+    persona: Visitor going up Montjuïc on Sunday; finds painting dull, likes experimental work.
+    turns:
+      - user: >-
+          We'll be up at Montjuïc on Sunday morning. Anything worth seeing near the Fundació
+          Joan Miró?
+        expect:
+          dates: sunday
+          searches: true
+      - user: I'm not into painting at all. Anything more experimental?
+        expect:
+          remembers: [media]
+
   - id: profile-opens-the-conversation
     persona: Returning user who starts from Gràcia and likes photography and sculpture.
     profile:
@@ -98,12 +112,42 @@ scenarios:
           searches: true
           remembers: [area]
 
+  - id: vic-day-trip-ca
+    persona: Lives in Barcelona and is spending Saturday in Vic.
+    turns:
+      - user: Dissabte faig una escapada a Vic. Hi ha alguna exposició per allà?
+        expect:
+          dates: saturday
+          searches: true
+          remembers: []
+      - user: I a quina hora obre?
+        expect:
+          searches: false
+
   - id: girona-friday
     persona: Will be in Girona for work on Friday and has the evening free.
     turns:
       - user: I'm in Girona on Friday. Any art events in the evening?
         expect:
           dates: friday
+          searches: true
+
+  - id: openings-tonight
+    persona: Likes the social side of art; goes to openings for the crowd.
+    turns:
+      - user: Any exhibition openings tonight in Barcelona?
+        expect:
+          dates: today
+          kinds: [opening]
+          searches: true
+
+  - id: talks-next-week-es
+    persona: Spanish speaker interested in talks and debates on contemporary art.
+    turns:
+      - user: La semana que viene, ¿hay charlas o conferencias sobre arte contemporáneo?
+        expect:
+          dates: [monday, monday+6]
+          kinds: [talk]
           searches: true
 
   - id: one-off-plan-near-macba
@@ -118,6 +162,14 @@ scenarios:
           remembers: []
       - user: She uses a wheelchair. Which of these are step-free?
 
+  - id: textile-now-ca
+    persona: Catalan speaker passionate about textile art and craft.
+    turns:
+      - user: M'interessa molt l'art tèxtil. Hi ha alguna exposició que pugui veure avui?
+        expect:
+          dates: today
+          searches: true
+
   - id: eixample-gallery-hop
     persona: Collector who prefers small commercial galleries to museums.
     turns:
@@ -126,6 +178,17 @@ scenarios:
           not museums.
         expect:
           dates: saturday
+          searches: true
+      - user: Put them in an order I can walk.
+        expect:
+          searches: false
+
+  - id: kids-sunday-es
+    persona: Parent with children aged 6 and 9 looking for a family activity.
+    turns:
+      - user: Domingo con niños de 6 y 9 años. ¿Algún taller o actividad de arte para familias?
+        expect:
+          dates: sunday
           searches: true
 
   - id: ambiguous-canyelles
@@ -146,3 +209,46 @@ scenarios:
         expect:
           dates: [saturday, sunday]
           searches: true
+
+  - id: photography-two-weeks
+    persona: Photography lover who can go any evening in the next two weeks.
+    turns:
+      - user: Any good photography shows in the next two weeks? I can go any evening.
+        expect:
+          dates: [today, today+13]
+          searches: true
+          remembers: [media]
+
+  - id: sabadell-10km-ca
+    persona: Lives in Sabadell and does not want to travel into Barcelona.
+    turns:
+      - user: >-
+          Visc a Sabadell i no vull moure'm més de 10 km. Què hi ha aquestes dues setmanes?
+        expect:
+          dates: [today, today+13]
+          area: {near: Sabadell, km: 10}
+          searches: true
+          remembers: [area]
+
+  - id: performance-friday
+    persona: Into performance and live art; free on Friday night.
+    turns:
+      - user: Is there any performance or live art on Friday night?
+        expect:
+          dates: friday
+          kinds: [performance]
+          searches: true
+
+  - id: sant-antoni-narrowing
+    persona: Has Saturday near Sant Antoni and wants to be told what is worth it.
+    turns:
+      - user: Saturday, near Sant Antoni. What's on?
+        expect:
+          dates: saturday
+          searches: true
+      - user: Too much. Just the two you would pick.
+        expect:
+          searches: false
+      - user: Is either of them free?
+        expect:
+          searches: false
