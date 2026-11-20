@@ -6,6 +6,7 @@ import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated
 
@@ -36,13 +37,21 @@ from art_curator.ingest.sync import (
     report,
     write_graf,
 )
-from art_curator.llm.client import get_llm_client
+from art_curator.llm.client import EMBED_DIMENSIONS, get_llm_client
 from art_curator.llm.pricing import UnknownModelError, Usage, cost_usd, price_for
 from art_curator.obs import telemetry
 
 app = typer.Typer(no_args_is_help=True)
 
 SMOKE_PROMPT = "Reply with the single word: ok"
+
+
+class SmokeVia(StrEnum):
+    """How `smoke` reaches the model: the client method each kind of call goes through."""
+
+    converse = "converse"  # Converse: extraction, discovery, judge
+    messages = "messages"  # Messages API: InvokeModel for a `global.` profile (chat), else Mantle
+    embed = "embed"  # InvokeModel with an embedding model's own body
 
 
 @app.command()
@@ -59,17 +68,18 @@ def config() -> None:
 @app.command()
 def smoke(
     model: Annotated[str | None, typer.Option(help="Model ID. Defaults to EXTRACT_MODEL.")] = None,
-    mantle: Annotated[
-        bool, typer.Option(help="Call via Mantle (Messages API) instead of Converse.")
-    ] = False,
+    via: Annotated[
+        SmokeVia, typer.Option(help="The client method to call the model through.")
+    ] = SmokeVia.converse,
 ) -> None:
     """Make one real, recorded model call and check its llm_calls row. Costs a fraction of a cent.
 
     Passes when the call succeeds and its row carries tokens, a trace id, and a cost that
-    matches pricing.yaml for the recorded tokens.
+    matches pricing.yaml for the recorded tokens; an embedding must also be EMBED_DIMENSIONS long.
     """
     model = model or get_settings().extract_model
-    row, error = asyncio.run(_smoke(model, mantle=mantle))
+    result = asyncio.run(_smoke(model, via=via))
+    row, error = result.row, result.error
 
     if row is None:
         typer.echo(f"FAIL: no llm_calls row for the call ({error or 'no error raised'})")
@@ -98,48 +108,69 @@ def smoke(
             cache_read_tokens=row.cache_read_input_tokens,
         ),
     )
-    problems = [
-        msg
-        for ok, msg in [
-            (row.output_tokens > 0, "no output tokens recorded"),
-            (row.trace_id is not None, "no trace id on the row"),
-            (row.cost_usd == expected, f"cost {row.cost_usd} != {expected} from pricing.yaml"),
+    # An embedding has no output tokens: its whole cost is the input.
+    if via is SmokeVia.embed:
+        checks = [
+            (row.input_tokens > 0, "no input tokens recorded"),
+            (
+                result.dimensions == EMBED_DIMENSIONS,
+                f"embedding has {result.dimensions} dimensions, not {EMBED_DIMENSIONS}",
+            ),
         ]
-        if not ok
+    else:
+        checks = [(row.output_tokens > 0, "no output tokens recorded")]
+    checks += [
+        (row.trace_id is not None, "no trace id on the row"),
+        (row.cost_usd == expected, f"cost {row.cost_usd} != {expected} from pricing.yaml"),
     ]
+    problems = [msg for ok, msg in checks if not ok]
     if problems:
         typer.echo("FAIL: " + "; ".join(problems))
         raise typer.Exit(1)
     typer.echo("OK")
 
 
-async def _smoke(model: str, *, mantle: bool) -> tuple[LlmCall | None, str | None]:
+@dataclass
+class SmokeResult:
+    row: LlmCall | None
+    error: str | None
+    dimensions: int | None = None  # an embedding's length; None for the other calls
+
+
+async def _smoke(model: str, *, via: SmokeVia) -> SmokeResult:
     client = get_llm_client()
     error: str | None = None
+    dimensions: int | None = None
     try:
         with client.tracer.start_as_current_span("smoke") as span:
             trace_id, _ = telemetry.span_ids(span)
             try:
-                if mantle:
-                    await client.create_message(
-                        purpose="smoke",
-                        model=model,
-                        max_tokens=16,
-                        messages=[{"role": "user", "content": SMOKE_PROMPT}],
-                    )
-                else:
-                    await client.converse_message(
-                        purpose="smoke",
-                        model=model,
-                        messages=[{"role": "user", "content": [{"text": SMOKE_PROMPT}]}],
-                        inferenceConfig={"maxTokens": 16},
-                    )
+                match via:
+                    case SmokeVia.converse:
+                        await client.converse_message(
+                            purpose="smoke",
+                            model=model,
+                            messages=[{"role": "user", "content": [{"text": SMOKE_PROMPT}]}],
+                            inferenceConfig={"maxTokens": 16},
+                        )
+                    case SmokeVia.messages:
+                        await client.create_message(
+                            purpose="smoke",
+                            model=model,
+                            max_tokens=16,
+                            messages=[{"role": "user", "content": SMOKE_PROMPT}],
+                        )
+                    case SmokeVia.embed:
+                        vector = await client.embed(
+                            purpose="smoke", model=model, text=SMOKE_PROMPT, input_type="query"
+                        )
+                        dimensions = len(vector)
             except Exception as exc:  # the client has already recorded it
                 error = f"{type(exc).__name__}: {exc}"
 
         async with get_sessionmaker()() as session:
             row = await session.scalar(select(LlmCall).where(LlmCall.trace_id == trace_id))
-        return row, error
+        return SmokeResult(row, error, dimensions)
     finally:
         telemetry.setup_telemetry().force_flush()
         await get_engine().dispose()

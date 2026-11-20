@@ -1,19 +1,13 @@
 name: Smoke
 
 # The only workflow that calls a model (CLAUDE.md #10). Manual, because it costs money
-# (a fraction of a cent per run). Passes when one real call is recorded in llm_calls with
-# tokens, a trace id and the cost pricing.yaml predicts.
+# (a fraction of a cent per run). One leg per model the app role is granted in
+# infra/terraform/bedrock.tf, each through the client method the app uses for it, so a green
+# run proves every grant through the smoke role, which carries the app's Bedrock policy. A leg
+# passes when one real call is recorded in llm_calls with tokens, a trace id and the cost
+# pricing.yaml predicts. tests/test_config.py checks this list against the Terraform defaults.
 on:
   workflow_dispatch:
-    inputs:
-      model:
-        description: Model ID (default EXTRACT_MODEL)
-        required: false
-        default: ""
-      mantle:
-        description: Call via Mantle (Messages API) instead of Converse
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -22,6 +16,27 @@ jobs:
   smoke:
     # Needs infra/README.md step 5; skipped rather than red until then.
     if: vars.AWS_SMOKE_ROLE_ARN != ''
+    name: smoke (${{ matrix.use }}, ${{ matrix.model }})
+    strategy:
+      # One refused model must not hide whether the others work.
+      fail-fast: false
+      matrix:
+        include:
+          - use: extract
+            model: global.anthropic.claude-haiku-4-5-20251001-v1:0
+            via: converse
+          - use: chat
+            model: global.anthropic.claude-opus-4-6-v1
+            via: messages
+          - use: chat candidate
+            model: global.anthropic.claude-sonnet-4-6
+            via: messages
+          - use: embed candidate
+            model: amazon.titan-embed-text-v2:0
+            via: embed
+          - use: embed candidate
+            model: cohere.embed-v4:0
+            via: embed
     runs-on: ubuntu-latest
     # The smoke role trusts only this environment's OIDC subject (github_oidc.tf).
     environment: smoke
@@ -56,13 +71,9 @@ jobs:
           role-to-assume: ${{ vars.AWS_SMOKE_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
       - run: uv run alembic upgrade head
-      # Inputs go through env, never interpolated into the script.
+      # Matrix values go through env, never interpolated into the script.
       - name: Smoke call
         env:
-          MODEL: ${{ inputs.model }}
-          MANTLE: ${{ inputs.mantle }}
-        run: |
-          args=()
-          if [ -n "$MODEL" ]; then args+=(--model "$MODEL"); fi
-          if [ "$MANTLE" = "true" ]; then args+=(--mantle); fi
-          uv run python -m art_curator.cli smoke "${args[@]}"
+          MODEL: ${{ matrix.model }}
+          VIA: ${{ matrix.via }}
+        run: uv run python -m art_curator.cli smoke --model "$MODEL" --via "$VIA"

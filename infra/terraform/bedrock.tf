@@ -3,9 +3,11 @@
 # attached to compute in P7 (or assumed locally for now) — but the policy
 # scope is fixed here rather than left to whichever principal shows up later.
 #
-# Both chat and extraction run on the runtime endpoint through global
-# cross-region inference profiles: chat with InvokeModel (Messages shape),
-# extraction with Converse. Both authorize as bedrock:InvokeModel.
+# Chat, extraction and the chat candidates run on the runtime endpoint through
+# global cross-region inference profiles: chat with InvokeModel (Messages
+# shape), extraction with Converse. Both authorize as bedrock:InvokeModel. Only
+# the chat model also gets bedrock:InvokeModelWithResponseStream, which is what
+# a streamed /chat reply authorizes as (PLAN.md § 8, PR 33).
 #
 # Each model takes the three-part grant from the Bedrock user guide
 # (global-cross-region-inference.html): the profile in the requesting region,
@@ -14,16 +16,27 @@
 # pinned to the profile via bedrock:InferenceProfileArn, so the role can't call
 # the model directly or through some other profile.
 #
+# The embedding candidates are the exception: invoked in-region by their
+# foundation-model ID, so each takes one grant on its regional model ARN.
+#
 # No bedrock-mantle:CreateInference statement: Mantle refuses every model for
 # this account (CLAUDE.md, Current state), so granting it would be scope the
 # app can't use. Restore it — scoped by the `bedrock-mantle:Model` condition
 # key, which is how Mantle narrows to specific models — when that lifts.
 locals {
   # Catalog IDs, matching config.py's CHAT_MODEL / EXTRACT_MODEL minus `global.`.
-  runtime_model_ids = toset([var.chat_model_id, var.extract_model_id])
+  runtime_model_ids = toset(concat(
+    [var.chat_model_id, var.extract_model_id],
+    var.chat_candidate_model_ids,
+  ))
   profile_arns = {
     for id in local.runtime_model_ids :
     id => "arn:${local.partition}:bedrock:${var.aws_region}:${local.account_id}:inference-profile/global.${id}"
+  }
+  # Streaming is granted to the chat model alone: nothing else streams.
+  runtime_actions = {
+    for id in local.runtime_model_ids :
+    id => id == var.chat_model_id ? ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"] : ["bedrock:InvokeModel"]
   }
 }
 
@@ -32,7 +45,7 @@ data "aws_iam_policy_document" "app_bedrock_access" {
     for_each = local.runtime_model_ids
     content {
       sid       = "RuntimeProfile${md5(statement.value)}"
-      actions   = ["bedrock:InvokeModel"]
+      actions   = local.runtime_actions[statement.value]
       resources = [local.profile_arns[statement.value]]
       condition {
         test     = "StringEquals"
@@ -46,7 +59,7 @@ data "aws_iam_policy_document" "app_bedrock_access" {
     for_each = local.runtime_model_ids
     content {
       sid       = "RuntimeRegionalModel${md5(statement.value)}"
-      actions   = ["bedrock:InvokeModel"]
+      actions   = local.runtime_actions[statement.value]
       resources = ["arn:${local.partition}:bedrock:${var.aws_region}::foundation-model/${statement.value}"]
       condition {
         test     = "StringEquals"
@@ -65,7 +78,7 @@ data "aws_iam_policy_document" "app_bedrock_access" {
     for_each = local.runtime_model_ids
     content {
       sid       = "RuntimeGlobalModel${md5(statement.value)}"
-      actions   = ["bedrock:InvokeModel"]
+      actions   = local.runtime_actions[statement.value]
       resources = ["arn:${local.partition}:bedrock:::foundation-model/${statement.value}"]
       condition {
         test     = "StringEquals"
@@ -76,6 +89,20 @@ data "aws_iam_policy_document" "app_bedrock_access" {
         test     = "StringEquals"
         variable = "bedrock:InferenceProfileArn"
         values   = [local.profile_arns[statement.value]]
+      }
+    }
+  }
+
+  dynamic "statement" {
+    for_each = toset(var.embed_candidate_model_ids)
+    content {
+      sid       = "EmbedModel${md5(statement.value)}"
+      actions   = ["bedrock:InvokeModel"]
+      resources = ["arn:${local.partition}:bedrock:${var.aws_region}::foundation-model/${statement.value}"]
+      condition {
+        test     = "StringEquals"
+        variable = "aws:RequestedRegion"
+        values   = [var.aws_region]
       }
     }
   }

@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 from art_curator import cli
 from art_curator.config import get_settings
 from art_curator.db.session import get_engine, get_sessionmaker
-from art_curator.llm.client import db_recorder
+from art_curator.llm.client import EMBED_DIMENSIONS, db_recorder
 from tests.db import run_sql
 from tests.llm_stub import StubLlm
 
@@ -69,10 +69,37 @@ def test_smoke_fails_and_still_records_a_refused_call(stub, migrated_db):
     assert any(e == "AccessDeniedException" for _, _, e in _smoke_rows(migrated_db))
 
 
-def test_smoke_via_mantle(stub):
-    opus = "anthropic.claude-opus-5"
-    stub.reply(input_tokens=12, output_tokens=3, model=opus)
-    result = CliRunner().invoke(cli.app, ["smoke", "--mantle", "--model", opus])
+@pytest.mark.parametrize(
+    ("model", "provider"),
+    [
+        ("anthropic.claude-opus-5", "bedrock-mantle"),
+        ("global.anthropic.claude-sonnet-4-6", "bedrock-invoke"),
+    ],
+)
+def test_smoke_via_messages(stub, model, provider):
+    stub.reply(input_tokens=12, output_tokens=3, model=model)
+    result = CliRunner().invoke(cli.app, ["smoke", "--via", "messages", "--model", model])
 
     assert result.exit_code == 0, result.output
-    assert f"bedrock-mantle {opus}" in result.output
+    assert f"{provider} {model}" in result.output
+
+
+def test_smoke_via_embed(stub, migrated_db):
+    stub.embed_reply({"embeddings": [[0.1] * EMBED_DIMENSIONS]}, input_tokens=10)
+    result = CliRunner().invoke(
+        cli.app, ["smoke", "--via", "embed", "--model", "cohere.embed-v4:0"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "bedrock-invoke cohere.embed-v4:0" in result.output
+    assert "$0.000001" in result.output  # 10 × $0.12 / 1M = 1.2 µ$, stored to 6 dp
+
+
+def test_smoke_fails_an_embedding_of_the_wrong_length(stub):
+    stub.embed_reply({"embeddings": [[0.1] * 1536]}, input_tokens=10)
+    result = CliRunner().invoke(
+        cli.app, ["smoke", "--via", "embed", "--model", "cohere.embed-v4:0"]
+    )
+
+    assert result.exit_code == 1
+    assert f"embedding has 1536 dimensions, not {EMBED_DIMENSIONS}" in result.output

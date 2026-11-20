@@ -1,9 +1,10 @@
 # USD per million tokens, keyed by the Bedrock model ID the client sends.
 #
 # Source: Anthropic list prices (platform.claude.com/docs/en/about-claude/pricing), 2026-09-22.
-# Assumes the Bedrock *global* endpoint bills at list price (PLAN.md § 6) — not yet checked
-# against the AWS Pricing API or a bill. Regional endpoints cost +10% and are not modelled here;
-# switching to one means updating these numbers.
+# Checked 2026-11-20 against the AWS Price List API for eu-west-1 (offer
+# AmazonBedrockFoundationModels, the `_Global` usage types): Opus 4.6, Sonnet 4.6 and Haiku 4.5
+# bill at list on the global endpoint, every column. Not yet checked against a bill. Regional
+# endpoints cost +10% and are not modelled here; switching to one means updating these numbers.
 #
 # Cache columns: 5-minute write = 1.25× input, 1-hour write = 2× input, read = 0.1× input.
 # A model without cache prices (e.g. an embedding model) must never report cache tokens.
@@ -23,6 +24,14 @@ models:
     cache_write_5m: "6.25"
     cache_write_1h: "10.00"
     cache_read: "0.50"
+
+  # Chat candidate (PLAN.md § 8, PR 32), via the runtime endpoint like Opus 4.6.
+  global.anthropic.claude-sonnet-4-6:
+    input: "3.00"
+    output: "15.00"
+    cache_write_5m: "3.75"
+    cache_write_1h: "6.00"
+    cache_read: "0.30"
 
   anthropic.claude-sonnet-5:
     input: "2.00"
@@ -45,3 +54,14 @@ models:
     cache_write_5m: "1.25"
     cache_write_1h: "2.00"
     cache_read: "0.10"
+
+  # Embedding candidates, invoked in-region (eu-west-1). Input only: an embedding has no output
+  # tokens and no cache. Prices from the AWS Price List API for eu-west-1, 2026-11-20: Titan from
+  # offer AmazonBedrock ($0.000026004 per 1K), Cohere from AmazonBedrockFoundationModels.
+  amazon.titan-embed-text-v2:0:
+    input: "0.026004"
+    output: "0"
+
+  cohere.embed-v4:0:
+    input: "0.12"
+    output: "0"

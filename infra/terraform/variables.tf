@@ -39,7 +39,7 @@ variable "tf_state_bucket" {
 }
 
 # Keep these in sync with config.py's CHAT_MODEL / EXTRACT_MODEL defaults.
-# EMBED_MODEL is chosen by measurement in P3 and added then.
+# EMBED_MODEL is chosen by measurement in P3 from embed_candidate_model_ids.
 
 # Both are bedrock-runtime *catalog* IDs, called through their `global.`
 # inference profiles, so config.py's CHAT_MODEL / EXTRACT_MODEL are these with
@@ -57,20 +57,52 @@ variable "extract_model_id" {
   default     = "anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 
+# Models the app role may call so that P3 can measure them against the ones in
+# use: `eval-curation --model` for chat, the retrieval check (PLAN.md § 8,
+# PR 35) for embeddings. Every ID here is priced in pricing.yaml and called by
+# the Smoke workflow, and tests/test_config.py checks both.
+
+# Runtime catalog IDs, called through their `global.` inference profiles like
+# chat_model_id. Claude only (CLAUDE.md #4). Sonnet 4.6: $3/$15 against Opus
+# 4.6's $5/$25, and a 1024-token cache minimum against 4096, so the ~2k-token
+# static prefix is cacheable on the first call. Sonnet 5 is cheaper still, but
+# this account is refused the newest models (CLAUDE.md, Current state).
+variable "chat_candidate_model_ids" {
+  description = "Bedrock catalog model IDs of chat candidates (Claude only), invoked via their global. inference profiles."
+  type        = list(string)
+  default     = ["anthropic.claude-sonnet-4-6"]
+}
+
+# Foundation-model IDs invoked in-region (eu-west-1 serves both on demand), not
+# through a profile: Titan has none, and in-region keeps one IAM grant per model.
+variable "embed_candidate_model_ids" {
+  description = "Bedrock foundation model IDs of embedding candidates, invoked in aws_region without an inference profile."
+  type        = list(string)
+  default = [
+    "amazon.titan-embed-text-v2:0",
+    "cohere.embed-v4:0",
+  ]
+}
+
 # Catalog IDs, not Mantle IDs: model agreements are keyed on the Bedrock
 # catalog ID, which for older models carries a date/version suffix that the
 # Mantle ID drops (anthropic.claude-haiku-4-5 on Mantle). List them with
 #   aws bedrock list-foundation-models --by-provider anthropic --query 'modelSummaries[].modelId'
 variable "bedrock_agreement_model_ids" {
-  description = "Bedrock catalog model IDs to enable (Marketplace agreement) — the models behind chat_model_id / extract_model_id, plus candidates we need to test access for."
+  description = "Bedrock catalog model IDs to enable (Marketplace agreement) — the models behind chat_model_id / extract_model_id, the Marketplace-sold candidates, plus models we need to test access for."
   type        = list(string)
   # Opus 4.6 (the chat model) is absent on purpose: the account can already
   # invoke it, so declaring an agreement here would fight whatever grants that.
   # Opus 5 and Sonnet 5 stay subscribed so nothing else has to change when
-  # Bedrock's eligibility for the newest models is reassessed.
+  # Bedrock's eligibility for the newest models is reassessed. Sonnet 4.6 and
+  # Cohere Embed v4 are candidates sold through Marketplace; the smoke role
+  # cannot subscribe on first use, so the agreement has to exist first. Titan
+  # is Amazon's own and needs none.
   default = [
     "anthropic.claude-opus-5",
     "anthropic.claude-sonnet-5",
     "anthropic.claude-haiku-4-5-20251001-v1:0",
+    "anthropic.claude-sonnet-4-6",
+    "cohere.embed-v4:0",
   ]
 }

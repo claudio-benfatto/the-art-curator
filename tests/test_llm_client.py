@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from art_curator.db.models import LLM_PURPOSES
 from art_curator.llm.client import (
     AUTO_CACHE,
+    EMBED_DIMENSIONS,
     PROVIDER_CONVERSE,
     PROVIDER_INVOKE,
     PROVIDER_MANTLE,
     PURPOSES,
+    MissingUsageError,
     cached_tail,
     db_recorder,
     is_profile_model,
@@ -257,6 +259,86 @@ def test_converse_refuses_chat():
     stub = StubLlm()
     with pytest.raises(ValueError, match="Claude-only"):
         asyncio.run(stub.client.converse_message(purpose="chat", model=HAIKU, messages=[]))
+    assert stub.calls == []
+
+
+TITAN = "amazon.titan-embed-text-v2:0"
+COHERE = "cohere.embed-v4:0"
+VECTOR = [0.5] * EMBED_DIMENSIONS
+
+
+def test_titan_embedding_writes_one_row():
+    stub = StubLlm()
+    stub.embed_reply({"embedding": VECTOR, "inputTextTokenCount": 7}, input_tokens=7)
+    vector = asyncio.run(
+        stub.client.embed(purpose="embed", model=TITAN, text="a show", input_type="document")
+    )
+
+    assert vector == VECTOR
+    assert stub.embed_requests == [
+        {"inputText": "a show", "dimensions": EMBED_DIMENSIONS, "normalize": True}
+    ]
+    [row] = stub.calls
+    assert (row.provider, row.model, row.purpose) == (PROVIDER_INVOKE, TITAN, "embed")
+    assert (row.input_tokens, row.output_tokens, row.request_id) == (7, 0, "aws-embed-stub")
+    assert row.stop_reason is None
+    assert row.cost_usd == Decimal("0.000000")  # 7 × $0.026004 / 1M rounds to nothing
+
+
+@pytest.mark.parametrize(
+    "embeddings",
+    [[VECTOR], {"float": [VECTOR]}],
+    ids=["list", "by-type"],
+)
+def test_cohere_embedding_reads_either_response_shape(embeddings):
+    stub = StubLlm()
+    stub.embed_reply({"id": "e1", "embeddings": embeddings}, input_tokens=50_000)
+    vector = asyncio.run(
+        stub.client.embed(purpose="embed", model=COHERE, text="sculpture", input_type="query")
+    )
+
+    assert vector == VECTOR
+    assert stub.embed_requests == [
+        {
+            "texts": ["sculpture"],
+            "input_type": "search_query",
+            "embedding_types": ["float"],
+            "output_dimension": EMBED_DIMENSIONS,
+        }
+    ]
+    [row] = stub.calls
+    assert row.input_tokens == 50_000
+    assert row.cost_usd == Decimal("0.006000")  # 50k × $0.12 / 1M
+
+
+def test_cohere_documents_are_embedded_as_documents():
+    stub = StubLlm()
+    stub.embed_reply({"embeddings": [VECTOR]}, input_tokens=3)
+    asyncio.run(stub.client.embed(purpose="embed", model=COHERE, text="x", input_type="document"))
+    assert stub.embed_requests[0]["input_type"] == "search_document"
+
+
+def test_titan_count_in_the_body_is_enough():
+    stub = StubLlm()
+    stub.embed_reply({"embedding": VECTOR, "inputTextTokenCount": 9})
+    asyncio.run(stub.client.embed(purpose="embed", model=TITAN, text="x", input_type="query"))
+    assert stub.calls[0].input_tokens == 9
+
+
+def test_embedding_without_a_token_count_is_an_error_row():
+    """A call that cannot be priced is recorded as failed, never as free."""
+    stub = StubLlm()
+    stub.embed_reply({"embeddings": [VECTOR]})
+    with pytest.raises(MissingUsageError):
+        asyncio.run(stub.client.embed(purpose="embed", model=COHERE, text="x", input_type="query"))
+    [row] = stub.calls
+    assert (row.error_type, row.input_tokens) == ("MissingUsageError", 0)
+
+
+def test_unknown_embedding_model_fails_before_calling():
+    stub = StubLlm()
+    with pytest.raises(ValueError, match="not an embedding model"):
+        asyncio.run(stub.client.embed(purpose="embed", model=CHAT, text="x", input_type="query"))
     assert stub.calls == []
 
 
