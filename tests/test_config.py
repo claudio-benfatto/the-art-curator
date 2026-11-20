@@ -96,6 +96,7 @@ def test_smoke_workflow_calls_every_granted_model():
     granted = {
         ("global." + _tf_default("extract_model_id"), "converse"),
         ("global." + _tf_default("chat_model_id"), "messages"),
+        ("global." + _tf_default("chat_model_id"), "stream"),  # InvokeModelWithResponseStream
         *(("global." + m, "messages") for m in _tf_list_default("chat_candidate_model_ids")),
         *((m, "embed") for m in _tf_list_default("embed_candidate_model_ids")),
     }

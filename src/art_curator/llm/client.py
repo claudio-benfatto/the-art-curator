@@ -13,13 +13,15 @@ callers name a model and nothing else changes:
 Embeddings (`embed`) also go over runtime InvokeModel, with each embedding model's own body:
 Converse does not serve embedding models.
 
-Streaming is not wrapped yet: `/chat` lands in P3 and will add a recorded stream here.
+`stream_message` is `create_message` streamed, for `/chat`: the same routing and the same row,
+written when the stream ends or breaks, from what it reported by then.
 """
 
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import lru_cache
@@ -27,6 +29,7 @@ from typing import Any, Literal, get_args
 
 import boto3
 from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
+from anthropic.lib.streaming import AsyncMessageStream
 from anthropic.types import Message, TextBlockParam
 from botocore.config import Config as BotoConfig
 from opentelemetry import trace
@@ -136,6 +139,14 @@ class _Outcome:
     output: Any  # completion body, for the span (masked per purpose)
 
 
+@dataclass
+class _Recording:
+    """What a call hands back to `_recording`: its outcome once it has one. A stream that breaks
+    sets the outcome it had reached before re-raising, so its row still carries those tokens."""
+
+    outcome: _Outcome | None = None
+
+
 class LlmClient:
     """Wraps the model transports. Each call runs in its own OTel span, whose ids land on the
     `llm_calls` row. Recording failures propagate: a call that can't be recorded is an error,
@@ -161,24 +172,64 @@ class LlmClient:
         runtime InvokeModel endpoint, a bare `anthropic.` ID to Mantle. `params` are passed
         through (system, messages, tools, thinking, output_config, max_tokens, ...)."""
         if params.get("stream"):
-            raise ValueError("streaming is not recorded yet; call without stream=True")
-
-        on_profile = is_profile_model(model)
-        if on_profile and "cache_control" in params:
-            # Silent non-caching is the failure mode we'd otherwise debug later: the runtime
-            # endpoint rejects top-level cache_control. Use cached_tail() instead (§ 6).
-            raise ValueError(
-                f"{model} is served by InvokeModel, which has no top-level cache_control; "
-                "mark the breakpoint with cached_tail()"
-            )
-        client = self._invoke if on_profile else self._mantle
-        provider = PROVIDER_INVOKE if on_profile else PROVIDER_MANTLE
+            raise ValueError("call stream_message to stream; create_message waits for the reply")
+        client, provider = self._messages_transport(model, params)
 
         async def call() -> tuple[Message, _Outcome]:
             msg = await client.messages.create(model=model, **params)
             return msg, _outcome_from_message(msg)
 
         return await self._recorded(provider, purpose, model, params, call)
+
+    @asynccontextmanager
+    async def stream_message(
+        self, *, purpose: Purpose, model: str, **params: Any
+    ) -> AsyncIterator[AsyncMessageStream]:
+        """`create_message`, streamed: the same routing and params, and one `llm_calls` row,
+        written when the block exits. On an inference profile it authorizes as
+        `bedrock:InvokeModelWithResponseStream`, which only the chat model is granted.
+
+            async with llm.stream_message(purpose="chat", model=..., **params) as stream:
+                async for event in stream:
+                    ...
+                message = await stream.get_final_message()
+
+        A block that exits normally drains whatever it left unread, so the row has the final
+        usage. One that exits on an exception — a broken stream, or the caller giving up on it
+        (a cancelled task, a closed generator) — records the usage the stream had reported by
+        then: the input and cache tokens of `message_start`, and output tokens only if a
+        `message_delta` arrived. That undercounts output, but never records the call as free.
+        """
+        if "stream" in params:
+            raise ValueError("stream_message streams already; leave out stream=")
+        client, provider = self._messages_transport(model, params)
+
+        async with (
+            self._recording(provider, purpose, model, params) as recording,
+            client.messages.stream(model=model, **params) as stream,
+        ):
+            try:
+                yield stream
+                message = await stream.get_final_message()
+            except BaseException:
+                recording.outcome = _outcome_so_far(stream)
+                raise
+            recording.outcome = _outcome_from_message(message, request_id=stream.request_id)
+
+    def _messages_transport(
+        self, model: str, params: dict[str, Any]
+    ) -> tuple[AsyncAnthropicBedrock | AsyncAnthropicBedrockMantle, str]:
+        """The Messages client and provider name for `model`, by its ID."""
+        if is_profile_model(model):
+            if "cache_control" in params:
+                # Silent non-caching is the failure mode we'd otherwise debug later: the runtime
+                # endpoint rejects top-level cache_control. Use cached_tail() instead (§ 6).
+                raise ValueError(
+                    f"{model} is served by InvokeModel, which has no top-level cache_control; "
+                    "mark the breakpoint with cached_tail()"
+                )
+            return self._invoke, PROVIDER_INVOKE
+        return self._mantle, PROVIDER_MANTLE
 
     @property
     def tracer(self) -> trace.Tracer:
@@ -231,6 +282,17 @@ class LlmClient:
         request: dict[str, Any],
         call: Callable[[], Awaitable[tuple[T, _Outcome]]],
     ) -> T:
+        async with self._recording(provider, purpose, model, request) as recording:
+            result, recording.outcome = await call()
+        return result
+
+    @asynccontextmanager
+    async def _recording(
+        self, provider: str, purpose: Purpose, model: str, request: dict[str, Any]
+    ) -> AsyncIterator[_Recording]:
+        """One span and one `llm_calls` row around the call made inside the block, which sets
+        `outcome` when it has one. The row is written however the block exits: an exception,
+        cancellation included, is recorded as `error_type` with whatever outcome was set."""
         if purpose not in PURPOSES:
             raise ValueError(f"unknown purpose {purpose!r}")
         price_for(model)  # unpriced model: fail before spending anything
@@ -256,25 +318,24 @@ class LlmClient:
                 cost_usd=Decimal(0),
             )
 
+            recording = _Recording()
             start = time.perf_counter()
             try:
-                result, outcome = await call()
-            except Exception as exc:
-                row.request_id = _request_id_from_error(exc)
+                yield recording
+            except BaseException as exc:  # a stream the caller abandoned is a row too
                 row.latency_ms = _elapsed_ms(start)
                 row.error_type = type(exc).__name__
+                if recording.outcome is not None:
+                    _set_usage(row, recording.outcome)
+                row.request_id = row.request_id or _request_id_from_error(exc)
                 await self._record(row)
                 raise
             row.latency_ms = _elapsed_ms(start)
 
-            usage = outcome.usage
-            row.request_id = outcome.request_id
-            row.input_tokens = usage.input_tokens
-            row.output_tokens = usage.output_tokens
-            row.cache_creation_input_tokens = usage.cache_write_tokens
-            row.cache_read_input_tokens = usage.cache_read_tokens
-            row.cost_usd = cost_usd(model, usage)
-            row.stop_reason = outcome.stop_reason
+            outcome = recording.outcome
+            if outcome is None:
+                raise RuntimeError("a recorded call finished without an outcome")
+            _set_usage(row, outcome)
 
             span.set_attributes(
                 telemetry.usage_attributes(
@@ -290,14 +351,25 @@ class LlmClient:
                 telemetry.body_attributes(purpose, input=request, output=outcome.output)
             )
             await self._record(row)
-            return result
+
+
+def _set_usage(row: LlmCall, outcome: _Outcome) -> None:
+    usage = outcome.usage
+    row.request_id = outcome.request_id
+    row.input_tokens = usage.input_tokens
+    row.output_tokens = usage.output_tokens
+    row.cache_creation_input_tokens = usage.cache_write_tokens
+    row.cache_read_input_tokens = usage.cache_read_tokens
+    row.cost_usd = cost_usd(row.model, usage)
+    row.stop_reason = outcome.stop_reason
 
 
 def _elapsed_ms(start: float) -> int:
     return round((time.perf_counter() - start) * 1000)
 
 
-def _outcome_from_message(msg: Message) -> _Outcome:
+def _outcome_from_message(msg: Message, *, request_id: str | None = None) -> _Outcome:
+    """`request_id` for a streamed message, whose id is on the stream rather than the message."""
     u = msg.usage
     written = u.cache_creation_input_tokens or 0
     if u.cache_creation is not None:
@@ -313,10 +385,20 @@ def _outcome_from_message(msg: Message) -> _Outcome:
             cache_write_1h_tokens=write_1h,
             cache_read_tokens=u.cache_read_input_tokens or 0,
         ),
-        request_id=msg._request_id,
+        request_id=request_id or msg._request_id,
         stop_reason=msg.stop_reason,
         output=msg.content,
     )
+
+
+def _outcome_so_far(stream: AsyncMessageStream) -> _Outcome | None:
+    """The outcome a stream had reached when it broke: its message as accumulated so far, or
+    None if not even `message_start` arrived (nothing to read the usage from)."""
+    try:
+        snapshot = stream.current_message_snapshot
+    except AssertionError:  # the SDK asserts a snapshot exists; before message_start none does
+        return None
+    return _outcome_from_message(snapshot, request_id=stream.request_id)
 
 
 def _outcome_from_converse(resp: dict[str, Any]) -> _Outcome:

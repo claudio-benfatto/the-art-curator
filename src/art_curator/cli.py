@@ -51,6 +51,7 @@ class SmokeVia(StrEnum):
 
     converse = "converse"  # Converse: extraction, discovery, judge
     messages = "messages"  # Messages API: InvokeModel for a `global.` profile (chat), else Mantle
+    stream = "stream"  # Messages API streamed (/chat): InvokeModelWithResponseStream for a profile
     embed = "embed"  # InvokeModel with an embedding model's own body
 
 
@@ -160,6 +161,14 @@ async def _smoke(model: str, *, via: SmokeVia) -> SmokeResult:
                             max_tokens=16,
                             messages=[{"role": "user", "content": SMOKE_PROMPT}],
                         )
+                    case SmokeVia.stream:
+                        async with client.stream_message(
+                            purpose="smoke",
+                            model=model,
+                            max_tokens=16,
+                            messages=[{"role": "user", "content": SMOKE_PROMPT}],
+                        ) as stream:
+                            await stream.until_done()
                     case SmokeVia.embed:
                         vector = await client.embed(
                             purpose="smoke", model=model, text=SMOKE_PROMPT, input_type="query"

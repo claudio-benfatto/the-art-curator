@@ -84,6 +84,17 @@ def test_smoke_via_messages(stub, model, provider):
     assert f"{provider} {model}" in result.output
 
 
+def test_smoke_via_stream(stub, migrated_db):
+    model = "global.anthropic.claude-opus-4-6-v1"
+    stub.stream_reply(input_tokens=12, output_tokens=3, model=model)
+    result = CliRunner().invoke(cli.app, ["smoke", "--via", "stream", "--model", model])
+
+    assert result.exit_code == 0, result.output
+    assert f"bedrock-invoke {model}" in result.output
+    assert stub.paths == [f"/model/{model}/invoke-with-response-stream"]
+    assert "$0.000135" in result.output  # Opus 4.6: 12 × 5 + 3 × 25 = 135 µ$
+
+
 def test_smoke_via_embed(stub, migrated_db):
     stub.embed_reply({"embeddings": [[0.1] * EMBED_DIMENSIONS]}, input_tokens=10)
     result = CliRunner().invoke(
