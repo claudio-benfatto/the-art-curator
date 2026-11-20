@@ -51,7 +51,11 @@ class Settings(BaseSettings):
     langfuse_public_key: str = "pk-lf-local"
     langfuse_secret_key: SecretStr = SecretStr("sk-lf-local")
 
-    @field_validator("embed_model", mode="before")
+    # The one bearer token every client of the HTTP API sends (`api/main.py`). Unset, the API
+    # refuses to start: there is no unauthenticated mode, even on localhost.
+    api_token: SecretStr | None = None
+
+    @field_validator("embed_model", "api_token", mode="before")
     @classmethod
     def _blank_is_unset(cls, v: str | None) -> str | None:
         return v or None
