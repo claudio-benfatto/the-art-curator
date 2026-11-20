@@ -2,10 +2,12 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from art_curator.cli import app
 from art_curator.config import Settings, get_settings
+from art_curator.llm.pricing import price_for
 
 ENV_VARS = (
     "AWS_REGION",
@@ -74,6 +76,36 @@ def test_model_defaults_match_terraform():
     s = Settings(_env_file=None)
     assert s.chat_model == "global." + _tf_default("chat_model_id")
     assert s.extract_model == "global." + _tf_default("extract_model_id")
+
+
+def _tf_list_default(name: str) -> list[str]:
+    tf = (Path(__file__).resolve().parents[1] / "infra/terraform/variables.tf").read_text()
+    match = re.search(rf'variable "{name}" \{{.*?default\s*=\s*\[(.*?)\]', tf, re.DOTALL)
+    assert match, f"no list default for {name} in variables.tf"
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+def _smoke_calls() -> set[tuple[str, str]]:
+    workflow = Path(__file__).resolve().parents[1] / ".github/workflows/smoke.yml"
+    matrix = yaml.safe_load(workflow.read_text())["jobs"]["smoke"]["strategy"]["matrix"]
+    return {(leg["model"], leg["via"]) for leg in matrix["include"]}
+
+
+def test_smoke_workflow_calls_every_granted_model():
+    """A grant the smoke run skips is unproven; a call to a model without one is a red run."""
+    granted = {
+        ("global." + _tf_default("extract_model_id"), "converse"),
+        ("global." + _tf_default("chat_model_id"), "messages"),
+        *(("global." + m, "messages") for m in _tf_list_default("chat_candidate_model_ids")),
+        *((m, "embed") for m in _tf_list_default("embed_candidate_model_ids")),
+    }
+    assert _smoke_calls() == granted
+
+
+def test_every_smoke_model_is_priced():
+    # The client refuses an unpriced model before calling it, so the leg could never pass.
+    for model, _ in _smoke_calls():
+        price_for(model)
 
 
 def test_env_overrides(monkeypatch):

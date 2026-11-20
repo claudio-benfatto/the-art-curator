@@ -7,11 +7,14 @@ The real `LlmClient` runs unchanged; only the wire is fake:
 - Converse gets a botocore `Stubber` on a real (credential-less) boto3 client, so request
   parameters are validated against the service model. Queue a forced-tool answer with
   `StubLlm.tool_reply`; what was sent is in `StubLlm.converse_requests`.
+- Embeddings (InvokeModel on the same boto3 client) share that `Stubber`. Queue a response
+  with `StubLlm.embed_reply`; the request bodies sent are in `StubLlm.embed_requests`.
 
 Rows go to `StubLlm.calls` instead of the database, unless a recorder is passed. Spans go to an
 in-memory exporter (`StubLlm.spans`) — exactly what Langfuse would receive.
 """
 
+import io
 import json
 from collections import deque
 from collections.abc import Sequence
@@ -20,13 +23,14 @@ from typing import Any
 import boto3
 import httpx2
 from anthropic import AsyncAnthropicBedrock, AsyncAnthropicBedrockMantle
+from botocore.response import StreamingBody
 from botocore.stub import Stubber
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from art_curator.db.models import LlmCall
-from art_curator.llm.client import LlmClient, Recorder
+from art_curator.llm.client import INPUT_TOKENS_HEADER, LlmClient, Recorder
 
 REGION = "eu-west-1"
 
@@ -64,6 +68,11 @@ class StubLlm:
         runtime.meta.events.register(
             "provide-client-params.bedrock-runtime.Converse",
             lambda params, **_: self.converse_requests.append(params),
+        )
+        self.embed_requests: list[dict[str, Any]] = []  # InvokeModel bodies, decoded
+        runtime.meta.events.register(
+            "provide-client-params.bedrock-runtime.InvokeModel",
+            lambda params, **_: self.embed_requests.append(json.loads(params["body"])),
         )
 
         # A private provider, so tests never touch the global one.
@@ -155,5 +164,25 @@ class StubLlm:
                 },
                 "metrics": {"latencyMs": 10},
                 "ResponseMetadata": {"RequestId": request_id},
+            },
+        )
+
+    def embed_reply(
+        self,
+        body: dict[str, Any],
+        *,
+        input_tokens: int | None = None,
+        request_id: str = "aws-embed-stub",
+    ) -> None:
+        """Queue an InvokeModel response carrying `body`, the embedding model's own JSON.
+        `input_tokens` goes in Bedrock's token-count header; None leaves the header out."""
+        raw = json.dumps(body).encode()
+        headers = {} if input_tokens is None else {INPUT_TOKENS_HEADER: str(input_tokens)}
+        self.converse_stub.add_response(
+            "invoke_model",
+            {
+                "body": StreamingBody(io.BytesIO(raw), len(raw)),
+                "contentType": "application/json",
+                "ResponseMetadata": {"RequestId": request_id, "HTTPHeaders": headers},
             },
         )

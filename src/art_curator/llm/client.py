@@ -8,12 +8,16 @@ callers name a model and nothing else changes:
 - **InvokeModel** (`global.` / `us.` / `eu.` … inference profiles) — the runtime endpoint, same
   Messages shape. Chat runs here on Opus 4.6. No top-level automatic caching (§ 6).
 - **Converse** (`converse_message`) — the runtime endpoint's model-agnostic shape, for
-  discovery, extraction, judge and embeddings.
+  discovery, extraction and judge.
+
+Embeddings (`embed`) also go over runtime InvokeModel, with each embedding model's own body:
+Converse does not serve embedding models.
 
 Streaming is not wrapped yet: `/chat` lands in P3 and will add a recorded stream here.
 """
 
 import asyncio
+import json
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -56,6 +60,20 @@ EPHEMERAL = {"type": "ephemeral"}
 AUTO_CACHE = EPHEMERAL
 
 Recorder = Callable[[LlmCall], Awaitable[None]]
+
+# Every embedding is this long whichever candidate made it, so one pgvector column holds either
+# and the A/B compares like with like. Titan V2 offers 256/512/1024, Cohere v4 256 to 1536.
+EMBED_DIMENSIONS = 1024
+# Which side of a search a text is on. Cohere encodes the two differently; Titan has one mode.
+EmbedInput = Literal["document", "query"]
+# Bedrock counts InvokeModel's input tokens in a response header. botocore does not model it, so
+# it stays in ResponseMetadata, lower-cased like every header there.
+INPUT_TOKENS_HEADER = "x-amzn-bedrock-input-token-count"
+
+
+class MissingUsageError(RuntimeError):
+    """A response carried no token count, so the call cannot be priced. Recorded as an error
+    rather than as a free call."""
 
 
 def is_profile_model(model: str) -> bool:
@@ -183,6 +201,28 @@ class LlmClient:
 
         return await self._recorded(PROVIDER_CONVERSE, purpose, model, params, call)
 
+    async def embed(
+        self, *, purpose: Purpose, model: str, text: str, input_type: EmbedInput
+    ) -> list[float]:
+        """One text, one vector of `EMBED_DIMENSIONS` floats, over runtime InvokeModel. The
+        request body is the embedding model's own (`_embed_request`), so only the families it
+        knows are accepted."""
+        request = _embed_request(model, text, input_type)
+
+        async def call() -> tuple[list[float], _Outcome]:
+            resp = await asyncio.to_thread(
+                self._runtime.invoke_model,
+                modelId=model,
+                body=json.dumps(request),
+                contentType="application/json",
+                accept="application/json",
+            )
+            body = json.loads(resp["body"].read())
+            vector = _embedding_from(model, body)
+            return vector, _outcome_from_embedding(resp, body, dimensions=len(vector))
+
+        return await self._recorded(PROVIDER_INVOKE, purpose, model, request, call)
+
     async def _recorded[T](
         self,
         provider: str,
@@ -292,6 +332,53 @@ def _outcome_from_converse(resp: dict[str, Any]) -> _Outcome:
         request_id=resp.get("ResponseMetadata", {}).get("RequestId"),
         stop_reason=resp.get("stopReason"),
         output=resp.get("output"),
+    )
+
+
+def _embed_family(model: str) -> Literal["titan", "cohere"]:
+    if model.startswith("amazon.titan-embed-text-v2"):
+        return "titan"
+    if model.startswith("cohere.embed-v4"):
+        return "cohere"
+    raise ValueError(f"{model} is not an embedding model llm/client.py knows how to call")
+
+
+def _embed_request(model: str, text: str, input_type: EmbedInput) -> dict[str, Any]:
+    if _embed_family(model) == "titan":
+        return {"inputText": text, "dimensions": EMBED_DIMENSIONS, "normalize": True}
+    return {
+        "texts": [text],
+        "input_type": "search_document" if input_type == "document" else "search_query",
+        "embedding_types": ["float"],
+        "output_dimension": EMBED_DIMENSIONS,
+    }
+
+
+def _embedding_from(model: str, body: dict[str, Any]) -> list[float]:
+    if _embed_family(model) == "titan":
+        return body["embedding"]
+    # Cohere answers with a list of vectors, one per text, or with a dict of such lists keyed by
+    # embedding type: Bedrock's docs show both shapes for `embedding_types: ["float"]`.
+    vectors = body["embeddings"]
+    if isinstance(vectors, dict):
+        vectors = vectors["float"]
+    [vector] = vectors
+    return vector
+
+
+def _outcome_from_embedding(
+    resp: dict[str, Any], body: dict[str, Any], *, dimensions: int
+) -> _Outcome:
+    # The header is Bedrock's own count, the one it bills; Titan also puts it in the body.
+    meta = resp.get("ResponseMetadata", {})
+    counted = meta.get("HTTPHeaders", {}).get(INPUT_TOKENS_HEADER, body.get("inputTextTokenCount"))
+    if counted is None:
+        raise MissingUsageError(f"no {INPUT_TOKENS_HEADER} header and no count in the body")
+    return _Outcome(
+        usage=Usage(input_tokens=int(counted)),
+        request_id=meta.get("RequestId"),
+        stop_reason=None,
+        output={"dimensions": dimensions},  # the span gets the vector's length, not the vector
     )
 
 
