@@ -1,10 +1,13 @@
 """`llm/client.py`: one `llm_calls` row per call, with the right tokens and cost (CLAUDE.md § 2)."""
 
 import asyncio
+from collections.abc import AsyncIterator
 from decimal import Decimal
+from typing import Any
 
 import pytest
-from anthropic import BadRequestError
+from anthropic import APIStatusError, BadRequestError, PermissionDeniedError
+from anthropic.types import Message
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from art_curator.db.models import LLM_PURPOSES
@@ -103,14 +106,16 @@ def test_unpriced_model_fails_before_calling():
     assert stub.calls == []
 
 
-def test_streaming_is_rejected_until_it_is_recorded():
+def test_create_message_refuses_to_stream():
+    # A stream is recorded only by stream_message, which reads it to the end.
     stub = StubLlm()
-    with pytest.raises(ValueError, match="stream"):
+    with pytest.raises(ValueError, match="stream_message"):
         asyncio.run(
             stub.client.create_message(
                 purpose="chat", model=OPUS, max_tokens=64, messages=MESSAGES, stream=True
             )
         )
+    assert stub.requests == [] and stub.calls == []
 
 
 def test_cache_layout_reaches_the_wire():
@@ -172,6 +177,172 @@ def test_invoke_rejects_top_level_cache_control():
                 cache_control=AUTO_CACHE,
             )
         )
+    assert stub.requests == [] and stub.calls == []
+
+
+# --- Streaming (PLAN.md § 8, PR 33) --------------------------------------------------------------
+
+USAGE = {
+    "input_tokens": 120,
+    "output_tokens": 45,
+    "cache_read_input_tokens": 4000,
+    "cache_creation_input_tokens": 900,
+}
+REPLY = "Three shows near Poblenou this weekend."
+
+
+def stream(stub: StubLlm, model: str, **params: Any) -> tuple[list[Any], Message]:
+    """Read one stream to the end: its events and its final message."""
+    params = {"max_tokens": 64, "messages": MESSAGES, **params}
+
+    async def main() -> tuple[list[Any], Message]:
+        async with stub.client.stream_message(purpose="chat", model=model, **params) as s:
+            events = [event async for event in s]
+            return events, await s.get_final_message()
+
+    return asyncio.run(main())
+
+
+@pytest.mark.parametrize(
+    ("model", "provider", "path"),
+    [
+        (CHAT, PROVIDER_INVOKE, f"/model/{CHAT}/invoke-with-response-stream"),
+        (OPUS, PROVIDER_MANTLE, "/v1/messages"),
+    ],
+)
+def test_a_stream_is_one_row_costed_as_the_same_call_unstreamed(model, provider, path):
+    streamed = StubLlm()
+    streamed.stream_reply(REPLY, model=model, request_id="req_s", **USAGE)
+    events, message = stream(streamed, model)
+
+    unstreamed = StubLlm()
+    unstreamed.reply(REPLY, model=model, **USAGE)
+    asyncio.run(
+        unstreamed.client.create_message(
+            purpose="chat", model=model, max_tokens=64, messages=MESSAGES
+        )
+    )
+
+    deltas = [e.delta.text for e in events if e.type == "content_block_delta"]
+    assert len(deltas) > 1 and "".join(deltas) == message.content[0].text == REPLY
+    assert streamed.paths[0].endswith(path)
+    [row], [same] = streamed.calls, unstreamed.calls
+    assert (row.provider, row.request_id, row.stop_reason) == (provider, "req_s", "end_turn")
+    tokens = (
+        "input_tokens",
+        "output_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    )
+    assert [getattr(row, t) for t in tokens] == [getattr(same, t) for t in tokens]
+    assert row.cost_usd == same.cost_usd > 0
+    assert row.error_type is None
+
+
+def test_a_streamed_request_is_the_unstreamed_one():
+    # InvokeModel takes `stream` out of the body and into the URL: the bodies are byte-identical,
+    # so a streamed turn reads the cache an unstreamed one wrote.
+    streamed, unstreamed = StubLlm(), StubLlm()
+    streamed.stream_reply(model=CHAT)
+    unstreamed.reply(model=CHAT)
+    stream(streamed, CHAT, messages=cached_tail(MESSAGES))
+    asyncio.run(
+        unstreamed.client.create_message(
+            purpose="chat", model=CHAT, max_tokens=64, messages=cached_tail(MESSAGES)
+        )
+    )
+    assert streamed.requests == unstreamed.requests
+
+
+def test_a_streamed_message_comes_back_whole():
+    blocks = [
+        {"type": "thinking", "thinking": "Weighing it.", "signature": "sig-1"},
+        {"type": "text", "text": "Let me look."},
+        {"type": "tool_use", "id": "t1", "name": "search_events", "input": {"near": "Gràcia"}},
+    ]
+    stub = StubLlm()
+    stub.stream_reply(content=blocks, stop_reason="tool_use", model=CHAT)
+    _, message = stream(stub, CHAT)
+
+    assert [b.to_dict(exclude_none=True) for b in message.content] == blocks
+    assert message.stop_reason == "tool_use"
+
+
+@pytest.mark.parametrize("model", [CHAT, OPUS])
+def test_a_broken_stream_is_a_row_with_the_tokens_it_reported(model):
+    stub = StubLlm()
+    stub.stream_reply(REPLY, model=model, break_after=4, **USAGE)  # start, block start, 2 words
+    with pytest.raises(APIStatusError):
+        stream(stub, model)
+
+    [row] = stub.calls
+    assert row.error_type is not None
+    # message_start's input and cache tokens are billed; the output count never arrived.
+    assert (row.input_tokens, row.cache_read_input_tokens, row.output_tokens) == (120, 4000, 0)
+    assert row.cost_usd > 0
+
+
+def test_a_stream_refused_before_it_starts_is_a_row():
+    stub = StubLlm()
+    stub.fail(403, request_id="req_denied")
+    with pytest.raises(PermissionDeniedError):
+        stream(stub, CHAT)
+
+    [row] = stub.calls
+    assert (row.error_type, row.request_id, row.cost_usd) == (
+        "PermissionDeniedError",
+        "req_denied",
+        Decimal(0),
+    )
+
+
+def test_a_stream_the_caller_abandons_is_a_row():
+    # What a client disconnecting mid-reply does to /chat: the generator reading the stream is
+    # closed at the event it was waiting on.
+    stub = StubLlm()
+    stub.stream_reply(REPLY, model=CHAT, **USAGE)
+
+    async def words() -> AsyncIterator[str]:
+        async with stub.client.stream_message(
+            purpose="chat", model=CHAT, max_tokens=64, messages=MESSAGES
+        ) as s:
+            async for event in s:
+                if event.type == "content_block_delta":
+                    yield event.delta.text
+
+    async def main() -> str:
+        reader = words()
+        first = await anext(reader)
+        await reader.aclose()
+        return first
+
+    assert asyncio.run(main()) == "Three "
+    [row] = stub.calls
+    assert row.error_type == "GeneratorExit"
+    assert row.input_tokens == 120
+
+
+def test_a_stream_left_unread_is_read_to_the_end_for_its_row():
+    stub = StubLlm()
+    stub.stream_reply(REPLY, model=CHAT, **USAGE)
+
+    async def main() -> None:
+        async with stub.client.stream_message(
+            purpose="chat", model=CHAT, max_tokens=64, messages=MESSAGES
+        ):
+            pass
+
+    asyncio.run(main())
+    [row] = stub.calls
+    assert (row.error_type, row.output_tokens, row.stop_reason) == (None, 45, "end_turn")
+
+
+def test_stream_message_refuses_a_stream_flag_and_unpriced_models():
+    stub = StubLlm()
+    with pytest.raises(ValueError, match="stream"):
+        stream(stub, CHAT, stream=True)
+    with pytest.raises(UnknownModelError):
+        stream(stub, "global.anthropic.claude-unpriced")
     assert stub.requests == [] and stub.calls == []
 
 

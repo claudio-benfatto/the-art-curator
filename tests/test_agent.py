@@ -16,18 +16,30 @@ supersedes the fact it names and nothing else, and forget leaves no rows of the 
 import asyncio
 import json
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from datetime import date, timedelta
 from typing import Any
 
 import pytest
 from alembic import command
+from anthropic import APIStatusError
 from sqlalchemy import text as sql_text
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from typer.testing import CliRunner
 
 from art_curator import cli
-from art_curator.agent.loop import CAPPED, MAX_TOOL_ROUNDS, Conversation, Curator, Turn
+from art_curator.agent.loop import (
+    CAPPED,
+    MAX_TOOL_ROUNDS,
+    Conversation,
+    Curator,
+    TextDelta,
+    ToolRunning,
+    Turn,
+    TurnDone,
+    TurnEvent,
+)
 from art_curator.agent.profile import Fact
 from art_curator.agent.prompt import (
     CALENDAR_DAYS,
@@ -350,6 +362,82 @@ def test_a_turn_is_one_trace_with_its_iteration_count():
         "tool.search_events",
         "tool.get_events",
     ]
+
+
+# --- streamed turns (PR 33) ---------------------------------------------------------------------
+
+LOOKING = [thinking(), text("Let me look."), tool_use("a")]
+ANSWER = "Two shows near Poblenou on Saturday."
+
+
+def streamed_turn(stub: StubLlm, *texts: str) -> tuple[Conversation, list[list[TurnEvent]]]:
+    """`turns`, streamed: each turn's events, as `/chat` reads them."""
+    curator = Curator(stub.client, FakeTools(), model=CHAT, effort="medium")
+    conversation = Conversation(conversation_context(TODAY))
+
+    async def main() -> list[list[TurnEvent]]:
+        return [[e async for e in curator.events(conversation, t)] for t in texts]
+
+    return conversation, asyncio.run(main())
+
+
+def test_a_streamed_turn_yields_tools_as_they_run_and_text_as_it_comes():
+    streamed, unstreamed = StubLlm(), StubLlm()
+    for queue in (streamed.stream_reply, unstreamed.reply):
+        queue(content=LOOKING, stop_reason="tool_use", model=CHAT)
+        queue(ANSWER, model=CHAT)
+
+    conversation, [events] = streamed_turn(streamed, "Saturday near Poblenou?")
+    same, [turn] = turns(unstreamed, FakeTools(), "Saturday near Poblenou?")
+
+    running = events.index(ToolRunning("search_events"))
+    before, after = events[:running], events[running + 1 : -1]
+    # The words before the tool call arrive too; the reply is the last response's text.
+    assert "".join(e.text for e in before) == "Let me look."
+    assert "".join(e.text for e in after) == ANSWER
+    assert all(isinstance(e, TextDelta) for e in before + after) and len(after) > 1
+    done = events[-1]
+    assert isinstance(done, TurnDone)
+    assert replace(done.turn, trace_id=None) == replace(turn, trace_id=None)
+    # The same requests, and the same history kept, as the turn unstreamed.
+    assert streamed.requests == unstreamed.requests
+    assert conversation.messages == same.messages
+    assert all(p.endswith("/invoke-with-response-stream") for p in streamed.paths)
+    assert [row.error_type for row in streamed.calls] == [None, None]
+
+
+def test_a_streamed_turn_the_reader_abandons_keeps_nothing_and_records_its_calls():
+    # A client that disconnects mid-reply: /chat stops reading and closes the generator.
+    stub = StubLlm()
+    stub.stream_reply(content=LOOKING, stop_reason="tool_use", model=CHAT, input_tokens=50)
+    stub.stream_reply(ANSWER, model=CHAT, input_tokens=70)
+    curator = Curator(stub.client, FakeTools(), model=CHAT, effort="medium")
+    conversation = Conversation(conversation_context(TODAY))
+
+    async def main() -> None:
+        events = curator.events(conversation, "Saturday near Poblenou?")
+        async for event in events:
+            if event == ToolRunning("search_events"):
+                break
+        assert isinstance(await anext(events), TextDelta)  # the answer has started
+        await events.aclose()
+
+    asyncio.run(main())
+    assert conversation.messages == []
+    assert [(row.error_type, row.input_tokens) for row in stub.calls] == [
+        (None, 50),
+        ("GeneratorExit", 70),
+    ]
+
+
+def test_a_stream_that_breaks_fails_the_turn_and_keeps_nothing():
+    stub = StubLlm()
+    stub.stream_reply(ANSWER, model=CHAT, break_after=3, input_tokens=70)
+
+    with pytest.raises(APIStatusError):
+        streamed_turn(stub, "Saturday?")
+    [row] = stub.calls
+    assert (row.input_tokens, row.error_type is not None) == (70, True)
 
 
 # --- prompt and tool definitions -----------------------------------------------------------------
