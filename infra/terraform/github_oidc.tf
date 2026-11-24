@@ -31,6 +31,15 @@ locals {
     "bedrock:GetFoundationModelAvailability",
     "bedrock:GetUseCaseForModelAccess",
   ]
+  # What reading quotas.tf takes: the data source lists quotas to find one by
+  # name, and the resource reads the default and any pending request.
+  service_quota_read = [
+    "servicequotas:GetServiceQuota",
+    "servicequotas:GetAWSDefaultServiceQuota",
+    "servicequotas:ListServiceQuotas",
+    "servicequotas:GetRequestedServiceQuotaChange",
+    "servicequotas:ListRequestedServiceQuotaChangeHistoryByQuota",
+  ]
 }
 
 data "aws_iam_policy_document" "github_assume_role" {
@@ -115,6 +124,13 @@ data "aws_iam_policy_document" "github_plan" {
     actions   = local.bedrock_agreement_read
     resources = ["*"]
   }
+
+  # quotas.tf. Most of these have no resource type, hence "*"; read-only.
+  statement {
+    sid       = "ReadServiceQuotas"
+    actions   = local.service_quota_read
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "github_plan" {
@@ -196,6 +212,37 @@ data "aws_iam_policy_document" "github_apply" {
       "aws-marketplace:ViewSubscriptions",
     ])
     resources = ["*"]
+  }
+
+  # quotas.tf: read, and file increase requests for Bedrock's quotas only.
+  statement {
+    sid       = "ReadServiceQuotas"
+    actions   = local.service_quota_read
+    resources = ["*"]
+  }
+
+  statement {
+    sid       = "RequestBedrockQuotaIncreases"
+    actions   = ["servicequotas:RequestServiceQuotaIncrease"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "servicequotas:service"
+      values   = ["bedrock"]
+    }
+  }
+
+  # Service Quotas creates its service-linked role on an account's first
+  # increase request, as the caller. Only that role, only for that service.
+  statement {
+    sid       = "CreateServiceQuotasLinkedRole"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["arn:${local.partition}:iam::${local.account_id}:role/aws-service-role/servicequotas.amazonaws.com/AWSServiceRoleForServiceQuotas"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["servicequotas.amazonaws.com"]
+    }
   }
 }
 
