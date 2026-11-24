@@ -3,6 +3,10 @@
 
 One place, a barri near the second space, is there for `search_events(near=...)`.
 
+Four items carry a vector, for `search_events(query=...)`: Col·lecció along the first axis, Visita
+between the first two, Prova U along the second, all by `EMBEDDED_BY`. The fair stand's vector is
+the first axis too, but `OTHER_EMBEDDER`'s, so a query by `EMBEDDED_BY` never ranks it.
+
 The GRAF events cover each rule `search_events` applies to them: a twin of an extracted show at
 the same venue, one at another space of the same organisation under its English title, a
 namesake whose dates do not overlap, a superseded occurrence and an event that left the window.
@@ -21,6 +25,7 @@ from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from art_curator import mcp_server
+from art_curator.db.models import EMBED_DIMENSIONS
 
 HOST = "https://galeria-exemple.test"
 LISTING_URL = f"{HOST}/ca/exposicions/"
@@ -33,6 +38,26 @@ LINK_MARKER = "text-de-l-enllac-7781"
 LISTING_TEXT = f"Exposicions {PAGE_MARKER} Prova U del 12 de setembre al 30 de novembre"
 LINKS = f'[{{"number": 1, "url": "{DETAIL_URL}", "text": "{LINK_MARKER}"}}]'
 HASH = "a" * 64
+
+EMBEDDED_BY = "cohere.embed-v4:0"  # a real candidate, so the curator's tool can embed a query
+OTHER_EMBEDDER = "amazon.titan-embed-text-v2:0"
+
+
+def vector(*leading: float) -> list[float]:
+    """EMBED_DIMENSIONS floats: `leading`, then zeros."""
+    return [*leading, *[0.0] * (EMBED_DIMENSIONS - len(leading))]
+
+
+def _vector_literal(*leading: float) -> str:
+    return "[" + ",".join(map(str, vector(*leading))) + "]"
+
+
+def _embedded(table: str, row_id: int, model: str, *leading: float) -> str:
+    return (
+        f"UPDATE {table} SET embedding = '{_vector_literal(*leading)}', embed_model = '{model}', "
+        f"embedded_hash = '{'e' * 64}' WHERE id = {row_id}"
+    )
+
 
 # Extraction markers that match the page's own hash: extracted, and nothing has moved since.
 _MARKS = "'ok', '{h}', 3, 'haiku', {items}, '2026-10-30 10:00+00'"
@@ -107,12 +132,14 @@ CORPUS = [
     """,
     # The latest sync ran at 03:00 UTC on 30 October; Retirat and one Nit Oberta occurrence were
     # last seen by the one before. Category 103 is an exhibition, 189 an opening, NULL other.
+    # GRAF titles Prova U as it often does, "Title. Artist".
     """
     INSERT INTO event_snapshots (id, source_event_id, venue_id, title, title_en,
                                  source_category_id, is_free, price_min, source_url, web_url_ca,
                                  last_seen_at)
     OVERRIDING SYSTEM VALUE VALUES
-      (1, 9001, 1, 'Prova U', NULL, 103, true, NULL, 'https://graf.test/e/9001', NULL,
+      (1, 9001, 1, 'Prova U. Artista Inventada', NULL, 103, true, NULL, 'https://graf.test/e/9001',
+       NULL,
        '2026-10-30 03:00+00'),
       (2, 9002, NULL, 'Fira', NULL, NULL, false, 12.50, 'https://graf.test/e/9002', NULL,
        '2026-10-30 03:00+00'),
@@ -138,6 +165,10 @@ CORPUS = [
       (6, 5, 6, '2026-11-01 10:00+00', '2026-11-30 18:00+00', '2026-10-20 03:00+00'),
       (7, 6, 7, '2026-11-03 10:00+00', '2026-11-20 18:00+00', '2026-10-30 03:00+00')
     """,
+    _embedded("exhibitions", 3, EMBEDDED_BY, 1.0),
+    _embedded("art_events", 2, EMBEDDED_BY, 0.6, 0.8),
+    _embedded("exhibitions", 1, EMBEDDED_BY, 0.0, 1.0),
+    _embedded("exhibitions", 4, OTHER_EMBEDDER, 1.0),
     """
     INSERT INTO llm_calls (created_at, provider, model, purpose, input_tokens, output_tokens,
                            cost_usd, latency_ms, error_type)

@@ -6,23 +6,35 @@
 # remembers of them before it starts (`profile`, as `remember` would have written it), and what
 # they say, turn by turn (`user`). Each turn's `expect` holds:
 #
-#   dates:     the days asked about. One day (`saturday`) or [first, last]. A day is today,
-#              tomorrow or a weekday, the first on or after today as the calendar lists it, and
-#              `+N` adds N days (`today+13` is the calendar's last day). `last` counts from
-#              `first`, so [saturday, sunday] is a weekend on any day of the week.
-#   area:      {near: <place>, km: <radius>}, only when the user gives a distance or limit. The
-#              place is resolved as `search_events` resolves `near`, and must name one place.
-#   free:      true when the user wants nothing that costs money (an unknown price passes).
-#   kinds:     only these kinds: exhibition, opening, talk, workshop, performance, screening,
-#              guided_tour, concert, fair, other. Only when the user is that specific.
-#   searches:  true if this turn must call search_events, false if it must not.
-#   remembers: topics this turn must `remember` (media, themes, area, budget, language, access,
-#              other); [] when it must remember nothing, such as a one-off plan.
+#   dates:         the days asked about. One day (`saturday`) or [first, last]. A day is today,
+#                  tomorrow or a weekday, the first on or after today as the calendar lists it,
+#                  and `+N` adds N days (`today+13` is the calendar's last day). `last` counts
+#                  from `first`, so [saturday, sunday] is a weekend on any day of the week.
+#   area:          {near: <place>, km: <radius>}, only when the user gives a distance or limit.
+#                  The place is resolved as `search_events` resolves `near`, and must name one
+#                  place. "I'm near the Raval" sets no radius: that is `searches_near`.
+#   free:          true when the user wants nothing that costs money (an unknown price passes).
+#   kinds:         only these kinds: exhibition, opening, talk, workshop, performance,
+#                  screening, guided_tour, concert, fair, other. Only when the user is that
+#                  specific. A gallery show is an exhibition: "galleries, not museums" is about
+#                  the venue, which no constraint holds; it is the judge's (taste).
+#   ends:          as `dates`: every item named must end on one of these days ("what closes
+#                  this weekend"). An item with no end date does not.
+#   searches:      true if this turn must call search_events successfully, false if it must
+#                  not. A search the tool refused (a place it could not pin down) does not count.
+#   searches_near: some successful search this turn measures from this place, give or take the
+#                  1.5 km in which the resolver takes two places for one spot. Where the user is
+#                  or starts from, said or remembered, when they set no distance.
+#   remembers:     exactly the topics this turn must `remember` (media, themes, area, budget,
+#                  language, access, other): one missing or one more fails. [] when it must
+#                  remember nothing, such as a one-off plan or someone else's need. Not the
+#                  language a user writes in: the reply follows each message's language, so
+#                  nothing would read it (left out after 0 of 4 on 2026-11-23).
 #
-# dates, area, free and kinds are hard constraints on every item the reply names, and carry over
-# to the next turns until a turn restates them (`null` drops one). searches and remembers are
-# about their own turn only. Leave out what the user did not ask for: a constraint the user never
-# set measures the scenario, not the curator.
+# dates, area, free, kinds and ends are hard constraints on every item the reply names, and
+# carry over to the next turns until a turn restates them (`null` drops one). searches,
+# searches_near and remembers are about their own turn only. Leave out what the user did not ask
+# for: a constraint the user never set measures the scenario, not the curator.
 #
 # Placed where the data is: the pilots with current shows sit in the Raval, Montjuïc, Poblenou and
 # the Eixample, plus Vic; elsewhere only GRAF's facts-only listings (PLAN.md § 9, Coverage).
@@ -33,7 +45,7 @@
 
 scenarios:
   - id: poblenou-video-saturday
-    persona: Lives near Poblenou, likes video art and installation. First conversation.
+    persona: Near Poblenou on Saturday afternoon; likes video art and installation. First conversation.
     turns:
       - user: >-
           I have Saturday afternoon in Barcelona, I like video art and installation, I'm near
@@ -41,8 +53,11 @@ scenarios:
         expect:
           dates: saturday
           searches: true
-          remembers: [media]
-      - user: Only what I can walk to from there, say within 2 km.
+          searches_near: Poblenou
+          remembers: [media]  # "I'm near Poblenou" is where they are now, not a lasting area
+      # "From there" read as the MACBA, where turn 1 had sent them, in one run of two
+      # (2026-11-23): the scenario named no place, so it measured the wording, not the curator.
+      - user: Only what I can walk to from Poblenou, say within 2 km.
         expect:
           area: {near: Poblenou, km: 2}
 
@@ -53,7 +68,8 @@ scenarios:
         expect:
           dates: [saturday, sunday]
           searches: true
-          remembers: []
+          searches_near: Raval
+          remembers: []  # not the Raval: a weekend is a one-off plan
       - user: I diumenge al matí, hi ha alguna visita guiada?
         expect:
           dates: sunday
@@ -81,6 +97,7 @@ scenarios:
         expect:
           dates: tomorrow
           searches: true
+          searches_near: Gràcia  # from the profile, unasked
           remembers: []
 
   - id: moved-to-gracia
@@ -93,11 +110,16 @@ scenarios:
         expect:
           dates: [saturday, sunday]
           searches: true
+          searches_near: Poblenou
+          remembers: []
       - user: Actually, I've just moved to Gràcia. What's close to there instead?
         expect:
           searches: true
+          searches_near: Gràcia  # a new search, not distances guessed from the old one
           remembers: [area]
 
+  # Outside the pilots: only GRAF's facts-only listings, so saying how little is on is a good
+  # answer, and so is pointing at Barcelona, which a hard Girona radius would wrongly fail.
   - id: girona-friday
     persona: Will be in Girona for work on Friday and has the evening free.
     turns:
@@ -105,6 +127,7 @@ scenarios:
         expect:
           dates: friday
           searches: true
+          searches_near: Girona
 
   - id: one-off-plan-near-macba
     persona: Showing their visiting mother around the Raval on Saturday.
@@ -115,8 +138,13 @@ scenarios:
         expect:
           dates: saturday
           searches: true
+          searches_near: MACBA
           remembers: []
+      # The need is the mother's, not the user's, and for one visit. No tool holds access
+      # details: the judge flags a reply that claims any.
       - user: She uses a wheelchair. Which of these are step-free?
+        expect:
+          remembers: []
 
   - id: eixample-gallery-hop
     persona: Collector who prefers small commercial galleries to museums.
@@ -127,22 +155,31 @@ scenarios:
         expect:
           dates: saturday
           searches: true
+          searches_near: Eixample
 
+  # "Canyelles" is a barri of Nou Barris and a town in the Garraf. The curator should ask which
+  # before it recommends anything: its search with the bare name is refused with both
+  # candidates, which does not count as searching.
   - id: ambiguous-canyelles
     persona: Staying in the Canyelles neighbourhood of Nou Barris this weekend.
     turns:
       - user: I'm staying in Canyelles this weekend. Anything within 3 km of there?
         expect:
           dates: [saturday, sunday]
+          searches: false
       - user: The one in Barcelona, in Nou Barris.
         expect:
           area: {near: "Canyelles, Nou Barris", km: 3}
           searches: true
+          searches_near: "Canyelles, Nou Barris"
 
+  # A show that closes on the Monday is seen for the last time that weekend: a reply that says
+  # so answers the question (the 2026-11-23 baseline named two, and said "closing Monday").
   - id: closing-this-weekend
     persona: Worried about missing shows before they close.
     turns:
       - user: What closes this weekend that I shouldn't miss?
         expect:
           dates: [saturday, sunday]
+          ends: [saturday, monday]
           searches: true

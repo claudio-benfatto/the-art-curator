@@ -17,19 +17,19 @@ from sqlalchemy import func, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from art_curator.agent.loop import Curator, Turn
+from art_curator.agent.loop import Turn, curator_for
 from art_curator.agent.prompt import local_today
 from art_curator.agent.store import ConversationStore, StoredConversation
-from art_curator.agent.tools import CuratorTools, to_json
+from art_curator.agent.tools import to_json
 from art_curator.clients.api import ChatFailed, CuratorApi, ReplyDone, TextChunk, ToolStatus
 from art_curator.config import Effort, get_settings
 from art_curator.db.models import LlmCall
 from art_curator.db.session import get_engine, get_sessionmaker
-from art_curator.eval import curation, curation_runner
+from art_curator.eval import curation, curation_runner, retrieval, retrieval_runner
 from art_curator.eval import extraction as evaluation
 from art_curator.eval import runner as eval_runner
 from art_curator.ingest import crawl as crawling
-from art_curator.ingest import extraction, graf, places, seeds
+from art_curator.ingest import embedding, extraction, graf, places, seeds
 from art_curator.ingest.http import FetchError, RobotsPolicy, open_client
 from art_curator.ingest.sync import (
     GrafSnapshot,
@@ -39,7 +39,7 @@ from art_curator.ingest.sync import (
     report,
     write_graf,
 )
-from art_curator.llm.client import EMBED_DIMENSIONS, get_llm_client
+from art_curator.llm.client import EMBED_DIMENSIONS, RequestPacer, get_llm_client
 from art_curator.llm.pricing import UnknownModelError, Usage, cost_usd, price_for
 from art_curator.obs import telemetry
 
@@ -575,6 +575,129 @@ async def _extract(venue: str | None, limit: int | None, *, dry_run: bool) -> _E
         await get_engine().dispose()
 
 
+@app.command()
+def embed() -> None:
+    """Embed the summaries extraction wrote, for semantic ranking (`search_events`'s `query`), with
+    EMBED_MODEL. Calls the embedding model: one call an item, a fraction of a cent for the pilots.
+
+    Only an item whose summary, themes or media changed since it was embedded, or that was
+    embedded by another model, is sent. A call the endpoint refuses exits 1 *after* committing
+    what was embedded before it.
+    """
+    model = get_settings().embed_model
+    if model is None:
+        typer.echo("FAIL: EMBED_MODEL is not set. eval-retrieval is what chooses it.")
+        raise typer.Exit(1)
+    try:
+        price_for(model)
+    except UnknownModelError as exc:
+        typer.echo(f"FAIL: {model} has no price in pricing.yaml, so its cost is unknown.")
+        raise typer.Exit(1) from exc
+    planned, run, calls, cost = asyncio.run(_embed(model))
+    typer.echo("Embed")
+    for line in embedding.report(model, planned, run):
+        typer.echo(f"  {line}")
+    typer.echo(f"  {'cost':<11} ${cost}   {calls} model calls")
+    if run.stopped:
+        raise typer.Exit(1)
+
+
+async def _embed(model: str) -> tuple[embedding.Plan, embedding.EmbedRun, int, Decimal]:
+    llm = get_llm_client()
+    try:
+        async with get_sessionmaker()() as session:
+            planned = embedding.plan(await embedding.load_items(session), model)
+        with llm.tracer.start_as_current_span("embed") as span:
+            trace_id, _ = telemetry.span_ids(span)
+            run = await embedding.embed_items(llm, model, planned.to_embed)
+        async with get_sessionmaker()() as session:
+            await embedding.write_embeddings(session, model, run.embedded)
+            await session.commit()
+            calls, cost = (
+                await session.execute(
+                    select(func.count(), func.coalesce(func.sum(LlmCall.cost_usd), 0)).where(
+                        LlmCall.trace_id == trace_id
+                    )
+                )
+            ).one()
+        return planned, run, calls, cost
+    finally:
+        telemetry.setup_telemetry().force_flush()
+        await get_engine().dispose()
+
+
+@app.command("eval-retrieval")
+def eval_retrieval(
+    model: Annotated[
+        list[str] | None,
+        typer.Option(
+            help="Only this embedding model; repeat it for more than one. Default: every "
+            "candidate the app role may call.",
+        ),
+    ] = None,
+    draft: Annotated[
+        Path | None,
+        typer.Option(
+            metavar="FILE",
+            help="Also write the unconfirmed queries to FILE, each with every model's top items "
+            "as candidate labels, for a person to check.",
+        ),
+    ] = None,
+) -> None:
+    """Score the embedding candidates on the queries in eval/gold/retrieval.yaml: each ranks every
+    item that has a summary against each query, and the report gives recall@5, recall@10 and MRR
+    against the labels. Calls each model once an item and once a query: well under a cent a model.
+
+    Writes nothing but the cost of the calls: the vectors `embed` keeps are left alone. Exits 1 if
+    the gold set is invalid, there is nothing to embed, or the endpoint refused a call.
+    """
+    try:
+        gold = retrieval.load_gold()
+    except ValidationError as exc:
+        typer.echo(f"FAIL: eval/gold/retrieval.yaml is invalid.\n{exc}")
+        raise typer.Exit(1) from exc
+    models = model or list(retrieval.CANDIDATES)
+    for candidate in models:
+        try:
+            price_for(candidate)
+        except UnknownModelError as exc:
+            typer.echo(f"FAIL: {candidate} has no price in pricing.yaml, so its cost is unknown.")
+            raise typer.Exit(1) from exc
+
+    pool, runs = asyncio.run(_eval_retrieval(gold, models))
+    if not pool:
+        typer.echo("FAIL: no exhibition or event has a summary. Run extract first.")
+        raise typer.Exit(1)
+    typer.echo("Eval retrieval")
+    for line in retrieval.report(gold, pool, runs):
+        typer.echo(f"  {line}")
+    if draft is not None:
+        draft.write_text(retrieval.draft(gold, pool, runs), encoding="utf-8")
+        typer.echo(f"  {'draft':<12} {draft}")
+    if any(run.stopped for run in runs):
+        raise typer.Exit(1)
+
+
+async def _eval_retrieval(
+    gold: retrieval.RetrievalGold, models: list[str]
+) -> tuple[list[embedding.Item], list[retrieval.ModelRun]]:
+    llm = get_llm_client()
+    sessions = get_sessionmaker()
+    try:
+        async with sessions() as session:
+            pool = await embedding.load_items(session)
+        if not pool:
+            return [], []
+        runs = [
+            await retrieval_runner.run_model(llm, sessions, candidate, gold, pool)
+            for candidate in models
+        ]
+        return pool, runs
+    finally:
+        telemetry.setup_telemetry().force_flush()
+        await get_engine().dispose()
+
+
 @app.command("eval-extraction")
 def eval_extraction(
     venue: Annotated[
@@ -798,14 +921,22 @@ def eval_curation(
     effort: Annotated[
         Effort | None, typer.Option(help="The chat effort to run instead of CHAT_EFFORT.")
     ] = None,
+    semantic: Annotated[
+        bool | None,
+        typer.Option(
+            "--semantic/--filters",
+            help="Run the curator with semantic ranking (search_events takes a query, ranked by "
+            "EMBED_MODEL's vectors) or with the filters alone. Default: semantic when EMBED_MODEL "
+            "is set, as the chat would be.",
+        ),
+    ] = None,
     arm: Annotated[
-        str,
+        str | None,
         typer.Option(
             help="A name for this run, printed in the report and the transcript's name: one arm "
-            "of an A/B or a sweep. Every arm runs the same curator until semantic ranking lands "
-            "(PR 35).",
+            "of an A/B or a sweep. Default: semantic or filters.",
         ),
-    ] = "baseline",
+    ] = None,
     today: Annotated[
         datetime | None,
         typer.Option(
@@ -830,10 +961,20 @@ def eval_curation(
             "in the system's temporary directory, outside the repo.",
         ),
     ] = None,
+    per_minute: Annotated[
+        int | None,
+        typer.Option(
+            min=0,
+            help="Calls a minute to any one model: one that would be one too many waits for the "
+            "minute to pass, instead of being refused. Default: REQUESTS_PER_MINUTE, Bedrock's "
+            "quota. 0: no waiting.",
+        ),
+    ] = None,
 ) -> None:
     """Run the scripted conversations in eval/gold/curation.yaml through the curator and score
     them. Calls the chat model: about two dollars a run with the judge, under one and a half
-    without it (PLAN.md § 8, P3).
+    without it (PLAN.md § 8, P3). Paced to Bedrock's requests-per-minute quota, so a run takes
+    at least a minute for every REQUESTS_PER_MINUTE calls.
 
     Each scenario runs as a throwaway user that is deleted afterwards, so nothing is left but the
     cost of the calls. The scores are a baseline, not a gate: the run exits 1 only if the
@@ -852,6 +993,13 @@ def eval_curation(
         raise typer.Exit(1) from exc
     model = model or settings.chat_model
     judge_model = settings.judge_model if judge else None
+    if semantic is None:
+        semantic = settings.embed_model is not None
+    if semantic and settings.embed_model is None:
+        typer.echo("FAIL: --semantic needs EMBED_MODEL, and the summaries embedded with it.")
+        raise typer.Exit(1)
+    embed_model = settings.embed_model if semantic else None
+    arm = arm or ("semantic" if semantic else "filters")
     for priced in filter(None, (model, judge_model)):
         try:
             price_for(priced)
@@ -860,7 +1008,17 @@ def eval_curation(
             raise typer.Exit(1) from exc
 
     day = today.date() if today else local_today()
-    info = curation.RunInfo(day, model, effort or settings.chat_effort, arm, judge_model)
+    if per_minute is None:
+        per_minute = settings.requests_per_minute
+    info = curation.RunInfo(
+        day,
+        model,
+        effort or settings.chat_effort,
+        arm,
+        judge_model,
+        embed_model,
+        per_minute=per_minute or None,
+    )
     if transcript is None:
         name = re.sub(r"[^A-Za-z0-9_.-]+", "-", arm)
         transcript = Path(tempfile.gettempdir()) / (
@@ -870,7 +1028,7 @@ def eval_curation(
     typer.echo("Eval curation")
     runs, problems = asyncio.run(_eval_curation(scenarios, info))
     if problems:
-        typer.echo("FAIL: an area in the scenarios names no single place.")
+        typer.echo("FAIL: the scenarios cannot be run as asked.")
         for problem in problems:
             typer.echo(f"  {problem}")
         raise typer.Exit(1)
@@ -885,14 +1043,24 @@ def eval_curation(
 async def _eval_curation(
     scenarios: list[curation.Scenario], info: curation.RunInfo
 ) -> tuple[list[curation.ScenarioRun], list[str]]:
-    """Every scenario's run, or none and why the scenarios' places cannot be checked."""
+    """Every scenario's run, or none and why not: a place the scenarios name that cannot be
+    checked, or a semantic arm with nothing embedded by its model to rank."""
     llm = get_llm_client()
+    if info.per_minute is not None:
+        llm.pacer = RequestPacer(info.per_minute)
     sessions = get_sessionmaker()
     try:
         async with sessions() as session:
             problems = await curation_runner.unresolved_places(
-                session, curation.area_places(scenarios)
+                session, curation.scenario_places(scenarios)
             )
+            if info.embed_model is not None:
+                items = await embedding.load_items(session)
+                if not any(item.embedded_with(info.embed_model) for item in items):
+                    problems.append(
+                        f"No summary is embedded with {info.embed_model}, so a query would rank "
+                        "nothing: run embed first."
+                    )
         if problems:
             return [], problems
         runs = []
@@ -904,6 +1072,7 @@ async def _eval_curation(
                 today=info.today,
                 model=info.model,
                 effort=info.effort,
+                embed_model=info.embed_model,
                 judge_model=info.judge_model,
             )
             typer.echo(f"  {curation.progress_line(run)}")
@@ -965,18 +1134,21 @@ def chat(
     store = ConversationStore(get_sessionmaker())
     typer.echo(
         f"The Art Curator · {settings.chat_model} · effort {settings.chat_effort} · today {day}"
-        f"\n{CHAT_HELP}"
+        + (f" · semantic ranking {settings.embed_model}" if settings.embed_model else "")
+        + f"\n{CHAT_HELP}"
     )
     # One event loop for the whole session: the database pool belongs to it. Input is read
     # outside it, so Ctrl-C at the prompt stops the program at once.
     with asyncio.Runner() as runner:
         try:
             user_id = runner.run(store.user(CLI_CLIENT, user))
-            curator = Curator(
+            curator = curator_for(
                 get_llm_client(),
-                CuratorTools(get_sessionmaker(), user_id),
+                get_sessionmaker(),
+                user_id,
                 model=settings.chat_model,
                 effort=settings.chat_effort,
+                embed_model=settings.embed_model,
             )
             stored = runner.run(store.current(user_id, day))
             if stored.saved:

@@ -6,7 +6,9 @@ Every row is invented (`tests/corpus.py`). That no tool returns page text is che
 """
 
 import asyncio
+import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from datetime import date, time
 from decimal import Decimal
@@ -25,22 +27,27 @@ from art_curator.queries import events as q
 from tests.corpus import (
     CHANGED_URL,
     DETAIL_URL,
+    EMBEDDED_BY,
     LISTING_TEXT,
     LISTING_URL,
     THIN_URL,
     call_tools,
     list_tools,
+    vector,
 )
 
 ON = date(2026, 10, 31)
 
 
-def _query(url: URL, query: Callable[..., Awaitable[Any]], **kwargs: Any) -> Any:
+def _query(url: URL, run: Callable[..., Awaitable[Any]], **kwargs: Any) -> Any:
+    """`run(session, **kwargs)` on the database at `url`. Not called `query`: search_events takes
+    a `query` of its own, which would collide."""
+
     async def main() -> Any:
         engine = create_async_engine(url)
         try:
             async with AsyncSession(engine) as session:
-                return await query(session, **kwargs)
+                return await run(session, **kwargs)
         finally:
             await engine.dispose()
 
@@ -185,7 +192,8 @@ def test_graf_events_are_one_row_per_occurrence(corpus_db):
 
     # Every occurrence ever stored, superseded and hidden ones included: `search_events` filters.
     assert [row.title for row in rows] == [
-        "Prova U", "Fira", "Assaig U", "Retirat", "Arxiu", "Nit Oberta", "Nit Oberta",
+        "Prova U. Artista Inventada", "Fira", "Assaig U", "Retirat", "Arxiu", "Nit Oberta",
+        "Nit Oberta",
     ]  # fmt: skip
     assert (rows[1].venue_name, rows[1].price_min) == (None, Decimal("12.50"))
 
@@ -195,8 +203,8 @@ def test_a_graf_occurrence_ends_on_the_day_it_ends_in_barcelona(corpus_db):
     still_on = _query(corpus_db, q.graf_events, venue_id=1, not_over_on=date(2026, 11, 1))
     over = _query(corpus_db, q.graf_events, venue_id=1, not_over_on=date(2026, 11, 2))
 
-    assert "Prova U" in [row.title for row in still_on]
-    assert "Prova U" not in [row.title for row in over]
+    assert "Prova U. Artista Inventada" in [row.title for row in still_on]
+    assert "Prova U. Artista Inventada" not in [row.title for row in over]
 
 
 # --- search and hydrate --------------------------------------------------------------------------
@@ -284,13 +292,14 @@ def test_nothing_on_is_an_empty_result(corpus_db):
 
 
 def test_a_graf_event_extraction_also_found_is_listed_once(corpus_db):
-    """Both GRAF rows run through 20–25 October: Prova U at the same venue, and Assaig U, whose
-    English title `PROVA Ú.` is Prova U, at the organisation's other space."""
+    """Both GRAF rows run through 20–25 October: "Prova U. Artista Inventada" at the same venue,
+    the title up to its first ". " being Prova U, and Assaig U, whose English title `PROVA Ú.` is
+    Prova U, at the organisation's other space."""
     result = _search(corpus_db, date_from=date(2026, 10, 20), date_to=date(2026, 10, 25))
 
     assert _ids(result) == ["x:1", "x:3"]
     hidden = [row.title for row in _query(corpus_db, q.graf_events, not_over_on=date(2026, 10, 25))]
-    assert {"Prova U", "Assaig U"} <= set(hidden)  # stored, only not searched
+    assert {"Prova U. Artista Inventada", "Assaig U"} <= set(hidden)  # stored, only not searched
 
 
 def test_search_shows_only_what_the_latest_sync_saw(corpus_db):
@@ -373,6 +382,30 @@ def test_total_counts_what_a_limit_cut(corpus_db):
     result = _search(corpus_db, **WEEKEND, limit=2)
 
     assert (_ids(result), result.total) == (["a:2", "g:4"], 6)
+
+
+# Along the first axis: Col·lecció's direction, by the model that embedded the corpus.
+QUERY = q.QueryVector(EMBEDDED_BY, vector(1.0))
+
+
+def test_a_query_keeps_the_closest_rows_when_the_limit_cuts(corpus_db):
+    """Col·lecció and Visita are closest to the query; they are kept over Visita's neighbours in
+    the date order, and still listed soonest to end first."""
+    result = _search(corpus_db, **WEEKEND, query=QUERY, limit=2)
+
+    assert (_ids(result), result.total) == (["a:2", "x:3"], 6)
+
+
+def test_a_query_ranks_only_vectors_of_its_own_model(corpus_db):
+    """The stand's vector points exactly at the query, but another model made it: it ranks with
+    the unembedded rows, after Prova U, the furthest of the query model's."""
+    result = _search(corpus_db, **WEEKEND, query=QUERY, limit=3)
+
+    assert _ids(result) == ["a:2", "x:1", "x:3"]
+
+
+def test_a_query_changes_nothing_when_everything_fits(corpus_db):
+    assert _search(corpus_db, **WEEKEND, query=QUERY).events == _search(corpus_db, **WEEKEND).events
 
 
 @pytest.mark.parametrize(
@@ -541,6 +574,17 @@ def test_a_tool_returns_the_query_rows_as_structured_content(corpus_db):
         ("Prova U", "2026-11-30"),
         ("Stand a la fira", "2026-11-08"),
     ]
+
+
+def test_no_output_schema_asks_for_a_time_with_an_offset():
+    """`format: time` is RFC 3339's full-time, offset included: Claude Code refused every GRAF
+    item `get_events` returned with a start time ("19:00:00"). A start time is a pattern."""
+    for tool in list_tools():
+        assert '"format": "time"' not in json.dumps(tool.output_schema), tool.name
+
+    art_events = next(tool for tool in list_tools() if tool.name == "art_events")
+    pattern = art_events.output_schema["$defs"]["ArtEventRow"]["properties"]["start_time"]
+    assert re.fullmatch(pattern["anyOf"][0]["pattern"], "19:00:00")
 
 
 def test_importing_the_server_leaves_logging_at_the_default_level():

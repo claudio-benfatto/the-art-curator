@@ -10,6 +10,7 @@ the runner reads them back from `llm_calls` as it does live. The judge's own tes
 import asyncio
 import json
 from collections.abc import Callable, Iterator
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
@@ -71,6 +72,12 @@ def search(*rows: dict[str, Any], total: int | None = None, near: str | None = N
     return ToolUse("search_events", {"date_from": "2026-11-07"}, json.dumps(result), False)
 
 
+def near_search(near: dict[str, Any]) -> ToolUse:
+    """A search with nothing found, measured from `near` (a PlaceRow as the tool sends it)."""
+    result = {"total": 0, "events": [], "near": near, "truncated": False}
+    return ToolUse("search_events", {"near": near["name"]}, json.dumps(result), False)
+
+
 def hydrate(*rows: dict[str, Any]) -> ToolUse:
     result = json.dumps({"events": list(rows), "not_found": []})
     return ToolUse("get_events", {"ids": [r["id"] for r in rows]}, result, False)
@@ -130,6 +137,8 @@ def test_a_range_ends_on_or_after_its_first_day_on_any_day_of_the_week():
         ("expect: {kinds: [party]}", "Input should be"),
         ("expect: {remembers: [hobbies]}", "Input should be"),
         ("expect: {area: {near: Poblenou}}", "Field required"),
+        ("expect: {ends: [sunday, today]}", "runs backwards"),
+        ("expect: {searches_near: ''}", "at least 1 character"),
         ("notes: anything", "Extra inputs are not permitted"),
     ],
 )
@@ -177,29 +186,58 @@ def test_constraints_carry_over_until_restated_and_null_drops_one():
 
 
 def test_each_constraint_is_checked_by_its_own_wide_search():
+    saturday, sunday = date(2026, 11, 7), date(2026, 11, 8)
     constraints = Constraints(
-        date(2026, 11, 7), date(2026, 11, 8), Area(near="Poblenou", km=1), True, ("talk",)
+        saturday, sunday, Area(near="Poblenou", km=1), True, ("talk",), sunday, sunday
     )
 
-    checks = dict(constraints.checks())
+    checks = {check.constraint: check for check in constraints.checks()}
 
-    assert list(checks) == ["dates", "area", "price", "kinds"]
-    assert checks["dates"]["date_from"] == date(2026, 11, 7)
+    assert list(checks) == ["dates", "area", "price", "kinds", "ends"]
+    assert checks["dates"].arguments["date_from"] == saturday
     for name in ("area", "price", "kinds"):
-        assert checks[name]["date_from"] == curation.ANY_DAY_FROM
-    assert checks["area"]["near"] == "Poblenou" and checks["area"]["radius_km"] == 1
-    assert checks["price"]["free_only"] and checks["kinds"]["kinds"] == ["talk"]
+        assert checks[name].arguments["date_from"] == curation.ANY_DAY_FROM
+        assert checks[name].meets(None)  # only `ends` reads a row's end
+    assert checks["area"].arguments["near"] == "Poblenou"
+    assert checks["area"].arguments["radius_km"] == 1
+    assert checks["price"].arguments["free_only"]
+    assert checks["kinds"].arguments["kinds"] == ["talk"]
+    assert checks["ends"].arguments["date_from"] == checks["ends"].arguments["date_to"] == sunday
+    assert checks["ends"].meets(sunday)
+    assert not checks["ends"].meets(saturday) and not checks["ends"].meets(None)
+    assert str(constraints) == (
+        "2026-11-07 – 2026-11-08, within 1 km of Poblenou, free, talk, ending 2026-11-08"
+    )
     assert Constraints().checks() == []
 
 
-def test_area_places_are_listed_once():
-    found = curation.area_places(
+def test_ends_resolves_and_carries_over_like_dates():
+    scenario = curation.Scenario(
+        id="ends",
+        persona="p",
+        turns=[
+            {"user": "1", "expect": {"ends": ["saturday", "sunday"]}},
+            {"user": "2", "expect": {}},
+            {"user": "3", "expect": {"ends": None}},
+        ],
+    )
+
+    first, second, third = scenario.constraints(WEDNESDAY)
+
+    assert (first.ends_from, first.ends_to) == (date(2026, 11, 7), date(2026, 11, 8))
+    assert second == first
+    assert (third.ends_from, third.ends_to) == (None, None)
+
+
+def test_scenario_places_are_listed_once():
+    found = curation.scenario_places(
         scenarios(
             ONE.replace("expect: {dates: saturday}", "expect: {area: {near: Vic, km: 5}}")
             + "      - user: again\n        expect: {area: {near: Vic, km: 9}}\n"
+            + "      - user: and\n        expect: {searches_near: Gràcia}\n"
         ).scenarios
     )
-    assert found == ["Vic"]
+    assert found == ["Vic", "Gràcia"]
 
 
 # --- what a turn did -----------------------------------------------------------------------------
@@ -274,6 +312,69 @@ def test_a_title_only_inside_a_longer_named_title_is_not_named_on_its_own():
     assert [n.ids for n in both] == [("x:1",), ("a:1",)]
 
 
+def test_a_title_is_named_by_a_piece_of_it_in_either_order():
+    items = seen(
+        ("g:45", "Misteri d'una forma. Jordi Alcaraz", 1.5),
+        ("x:108", "Basel Abbas i Ruanne Abou-Rahme. Presoners de l'amor. Fins al sol", 3.5),
+    )
+
+    named = curation.named_items(
+        "Jordi Alcaraz – Misteri d'una forma, then Basel Abbas i Ruanne Abou-Rahme at MACBA.",
+        items,
+    )
+
+    assert [n.ids for n in named] == [("g:45",), ("x:108",)]  # once each, in reply order
+
+
+def test_a_piece_names_a_title_only_if_it_is_two_words_and_its_own():
+    items = seen(
+        ("g:56", "Foudre. Nicolas Daubanes", 2.2),
+        ("g:57", "Encara. Nicolas Daubanes", 2.2),  # his second show: his name names neither
+        ("g:107", "Submón. Patricia Dauder", 2.0),
+    )
+
+    assert curation.named_items("Nicolas Daubanes opens on Saturday.", items) == []
+    assert curation.named_items("Submón is on.", items) == []  # one word
+    assert [n.ids for n in curation.named_items("Patricia Dauder is on.", items)] == [("g:107",)]
+
+
+def test_a_piece_inside_another_title_names_neither():
+    # The 2026-11-23 run: "Aurèlia Muñoz – Els Ocells-estels" was counted as "Aurèlia Muñoz. Ens".
+    items = seen(
+        ("x:368", "Aurèlia Muñoz. Ens", 0.1),
+        ("x:109", "Els Ocells-estels d'Aurèlia Muñoz", 0.1),
+    )
+
+    assert curation.named_items("Aurèlia Muñoz – Els Ocells-estels, in the atrium.", items) == []
+    assert [n.ids for n in curation.named_items("Aurèlia Muñoz. Ens is on.", items)] == [("x:368",)]
+
+
+def test_an_item_named_by_either_of_its_titles_is_named_once_under_its_first():
+    # GRAF gives a Catalan title and an English one; the reply wrote a bit of each.
+    items = {
+        "g:52": SeenItem(
+            "g:52",
+            (
+                "Present permanent. A cura de Vincenç Altaió",
+                "Permanent present. Curated by Vicenç Altaió",
+            ),
+            1.2,
+        ),
+        "g:47": SeenItem(
+            "g:47", ("El rapte d’Europa. Santi Moix", "The abduction of Europe. Santi Moix"), 1.4
+        ),
+    }
+
+    named = curation.named_items(
+        "Present permanent, curated by Vicenç Altaió; then Santi Moix next door.", items
+    )
+
+    assert named == [
+        Named("Present permanent. A cura de Vincenç Altaió", ("g:52",), 1.2),
+        Named("El rapte d’Europa. Santi Moix", ("g:47",), 1.4),  # his name, in both its titles
+    ]
+
+
 def test_items_under_one_title_are_named_together_at_the_nearest_distance():
     items = seen(("x:2", "Arxiu", None), ("g:7", "Arxiu", 3.4), ("g:9", "U", 0.1))
 
@@ -291,21 +392,58 @@ def test_order_is_nearest_first_among_items_with_a_distance():
     assert curation.in_distance_order(named(1.0, None)) is None
 
 
+def remembered(topic: str) -> ToolUse:
+    return ToolUse("remember", {"topic": topic, "fact": "Something."}, '{"id":3}', False)
+
+
+REFUSED_SEARCH = ToolUse("search_events", {"near": "Canyelles"}, "Could be any of…", True)
+
+
 def test_checks_say_what_the_turn_did_wrong():
-    remember = ToolUse("remember", {"topic": "area", "fact": "Lives in Gràcia."}, '{"id":3}', False)
     did_not = Expect(searches=True, remembers=("area", "media"))
     must_not = Expect(searches=False, remembers=())
 
-    assert curation.check_failures(did_not, [remember]) == [
+    assert curation.check_failures(did_not, [REFUSED_SEARCH, remembered("area")]) == [
         "did not search",
         "did not remember media",
     ]
-    assert curation.check_failures(must_not, [search(), remember]) == [
-        "searched again",
+    assert curation.check_failures(must_not, [search(), remembered("area")]) == [
+        "searched, which it should not have",
         "remembered area, which it should not have",
     ]
     assert curation.check_failures(Expect(), [search()]) == []
-    assert [curation.checks_made(e) for e in (did_not, must_not, Expect())] == [3, 2, 0]
+    with_near = Expect(searches_near="Poblenou")
+    assert [curation.checks_made(e) for e in (did_not, must_not, Expect(), with_near)] == [
+        4,
+        2,
+        0,
+        1,
+    ]
+
+
+def test_a_refused_search_is_not_searching():
+    asks_first = Expect(searches=False)
+
+    assert curation.check_failures(asks_first, [REFUSED_SEARCH]) == []
+
+
+def test_remembers_is_exactly_those_topics():
+    language_only = Expect(remembers=("language",))
+
+    assert curation.check_failures(language_only, [remembered("language")]) == []
+    assert curation.check_failures(
+        language_only, [remembered("language"), remembered("area"), remembered("budget")]
+    ) == ["remembered area, budget, which it should not have"]
+
+
+def test_search_origins_are_where_successful_searches_measured_from():
+    poblenou = {"name": "el Poblenou", "latitude": 41.4, "longitude": 2.2024}
+
+    origins = curation.search_origins(
+        [search(), REFUSED_SEARCH, near_search(poblenou), remembered("area")]
+    )
+
+    assert origins == [poblenou]
 
 
 # --- the report ----------------------------------------------------------------------------------
@@ -385,6 +523,34 @@ def test_the_report_gives_the_totals_and_what_each_exchange_got_wrong():
     assert "'Prova U'" in text and "'a five-minute walk'" in text and "did not search" in text
 
 
+def test_a_paced_run_says_so_and_how_long_it_waited_for_the_quota():
+    paced = replace(INFO, per_minute=5)
+    waited = replace(run(exchange()), waited_seconds=95.4)
+
+    text = "\n".join(curation.report(paced, [waited]))
+
+    assert "paced to 5 calls a minute a model" in text
+    assert "(waits for the quota left out)" in text
+    assert "waited 95 s in all for the requests-per-minute quota" in text
+    assert "waited 95 s for the quota" in curation.progress_line(waited)
+    unpaced = "\n".join(curation.report(INFO, [run(exchange())]))
+    assert "paced" not in unpaced and "quota" not in unpaced
+
+
+def test_a_semantic_arm_says_so_and_counts_the_searches_that_passed_a_query():
+    queried = ToolUse(
+        "search_events", {"date_from": "2026-11-07", "query": "video art"}, search().result, False
+    )
+    semantic = replace(INFO, arm="semantic", embed_model="cohere.embed-v4:0")
+
+    text = "\n".join(curation.report(semantic, [run(exchange(uses=(search(), queried)))]))
+
+    assert "semantic ranking cohere.embed-v4:0" in text
+    assert "queries      50% (1/2) of searches passed a query" in text
+    assert "filters only" in "\n".join(curation.report(INFO, [run(exchange())]))
+    assert "passed a query" not in "\n".join(curation.report(INFO, [run(exchange())]))
+
+
 def test_the_transcript_holds_each_conversation_for_a_person_to_judge():
     remembered = ("media: Likes video art.",)
     text = curation.transcript(
@@ -448,6 +614,59 @@ def test_named_items_are_checked_against_each_constraint_in_sql(eval_db):
         ("kinds", "Nit Oberta"),
         ("kinds", "Fira"),
     ]
+
+
+def test_ends_keeps_only_what_ends_on_the_days_asked(eval_db):
+    named = [
+        Named("Stand a la fira", ("x:4",), None),  # 6 to 8 November: ends on the Sunday
+        Named("Prova U", ("x:1",), 3.5),  # on until 30 November
+        Named("Col·lecció", ("x:3",), 3.5),  # no end date
+    ]
+    weekend = (date(2026, 11, 7), date(2026, 11, 8))
+    constraints = Constraints(ends_from=weekend[0], ends_to=weekend[1])
+
+    async def check(sessions: async_sessionmaker) -> list[curation.OffConstraint]:
+        async with sessions() as session:
+            return await curation_runner.off_constraint(session, named, constraints)
+
+    off = [(o.constraint, o.title) for o in _in_db(eval_db, check)]
+
+    assert off == [("ends", "Prova U"), ("ends", "Col·lecció")]
+
+
+# The corpus's one place, and Galeria Exemple ~3.5 km from it.
+POBLENOU = {"name": "el Poblenou", "kind": "barri", "latitude": 41.4, "longitude": 2.2024}
+GALERIA = {"name": "Galeria Exemple", "kind": "venue", "latitude": 41.38, "longitude": 2.17}
+
+
+def test_searches_near_passes_on_a_search_from_the_same_spot(eval_db):
+    expect = Expect(searches_near="Poblenou")
+    annex = {"name": "Annex Exemple", "kind": "venue", "latitude": 41.4, "longitude": 2.2}
+
+    async def check(sessions: async_sessionmaker) -> list[list[str]]:
+        async with sessions() as session:
+            return [
+                await curation_runner.near_failures(session, expect, uses)
+                for uses in (
+                    [near_search(GALERIA), near_search(POBLENOU)],
+                    [near_search(annex)],  # ~0.2 km away: the same spot
+                    [near_search(GALERIA), REFUSED_SEARCH],
+                    [search()],
+                    [],
+                )
+            ]
+
+    poblenou, annex_ok, galeria, nowhere, none = _in_db(eval_db, check)
+
+    assert poblenou == annex_ok == []
+    assert galeria == ["did not search near Poblenou (searched near: Galeria Exemple)"]
+    assert nowhere == none == ["did not search near Poblenou (searched near: no place)"]
+    assert _in_db(eval_db, lambda s: _near(s, Expect(), [])) == []
+
+
+async def _near(sessions: async_sessionmaker, expect: Expect, uses: list[ToolUse]) -> list[str]:
+    async with sessions() as session:
+        return await curation_runner.near_failures(session, expect, uses)
 
 
 def test_a_place_the_scenarios_cannot_pin_down_is_reported(eval_db):
@@ -517,6 +736,7 @@ def run_corpus(url: URL, stub_for: Callable[[async_sessionmaker], StubLlm], judg
             today=WEDNESDAY,
             model=CHAT,
             effort="medium",
+            embed_model=None,
             judge_model=CHAT if judge else None,
         )
 

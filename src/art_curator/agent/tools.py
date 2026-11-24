@@ -13,6 +13,10 @@ writes: a fact about the user it is bound to (`agent/profile.py`).
 
 `lat`/`lon` on `search_events` wait for a client that sends a location (P5): until then the only
 point the model could give is one it estimated, which is the distance arithmetic § 8 forbids.
+
+`query` on `search_events` is semantic ranking (PLAN.md § 8, P3), offered only when the tools are
+given a `QueryEmbedder`: the deployment set `EMBED_MODEL`, or an eval arm asked for it. Without one
+the model is sent the same tools as before, byte for byte.
 """
 
 import json
@@ -22,12 +26,14 @@ from datetime import date, time
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 
+from botocore.exceptions import BotoCoreError, ClientError
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from art_curator.agent import profile
 from art_curator.db.models import PROFILE_TOPICS
+from art_curator.llm.client import LlmClient
 from art_curator.llm.tools import flat_schema, validation_feedback
 from art_curator.queries import events as q
 
@@ -58,6 +64,19 @@ class SearchEventsInput(BaseModel):
     limit: int = Field(default=40, ge=1, le=100, description="Most rows to return.")
 
 
+class RankedSearchEventsInput(SearchEventsInput):
+    """`search_events` with semantic ranking: what the curator is sent when there is an embedder."""
+
+    query: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        description="What this person is after, in a few English words ('video art about "
+        "migration', 'abstract painting'). When more items match than `limit`, the ones closest "
+        "to it in meaning are kept rather than the soonest to end; rows still come nearest first.",
+    )
+
+
 class GetEventsInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -83,14 +102,57 @@ class RememberInput(BaseModel):
     )
 
 
+class RankingUnavailable(ValueError):
+    """The query could not be embedded: the model is told to search without it."""
+
+
+@dataclass(frozen=True)
+class QueryEmbedder:
+    """Turns a search's `query` into a vector, with the model `cli embed` embedded items with."""
+
+    llm: LlmClient
+    model: str
+
+    async def __call__(self, text: str) -> q.QueryVector:
+        try:
+            vector = await self.llm.embed(
+                purpose="embed", model=self.model, text=text, input_type="query"
+            )
+        except (BotoCoreError, ClientError) as exc:
+            raise RankingUnavailable(
+                f"Ranking by query is unavailable ({type(exc).__name__}); search again without "
+                "`query`."
+            ) from exc
+        return q.QueryVector(self.model, vector)
+
+
+def query_embedder(llm: LlmClient, embed_model: str | None) -> QueryEmbedder | None:
+    """The embedder for `EMBED_MODEL`, or None when it is unset: no semantic ranking."""
+    return QueryEmbedder(llm, embed_model) if embed_model else None
+
+
+@dataclass(frozen=True)
+class ToolContext:
+    """What a tool runs for: the user it is bound to, and the embedder, if there is one."""
+
+    user_id: int
+    embedder: QueryEmbedder | None = None
+
+
 async def _search_events(
-    session: AsyncSession, _user_id: int, args: SearchEventsInput
+    session: AsyncSession, context: ToolContext, args: SearchEventsInput
 ) -> dict[str, Any]:
-    result = await q.search_events(session, **args.model_dump())
+    arguments = args.model_dump()
+    text = arguments.pop("query", None)
+    if text is not None and context.embedder is not None:
+        arguments["query"] = await context.embedder(text)
+    result = await q.search_events(session, **arguments)
     return {**asdict(result), "truncated": result.total > len(result.events)}
 
 
-async def _get_events(session: AsyncSession, _user_id: int, args: GetEventsInput) -> dict[str, Any]:
+async def _get_events(
+    session: AsyncSession, _context: ToolContext, args: GetEventsInput
+) -> dict[str, Any]:
     found = await q.get_events(session, args.ids)
     returned = {detail.id for detail in found}
     asked = [f"{prefix}:{number}" for prefix, number in map(q.parse_event_id, args.ids)]
@@ -100,8 +162,10 @@ async def _get_events(session: AsyncSession, _user_id: int, args: GetEventsInput
     }
 
 
-async def _remember(session: AsyncSession, user_id: int, args: RememberInput) -> dict[str, Any]:
-    fact_id = await profile.remember(session, user_id, **args.model_dump())
+async def _remember(
+    session: AsyncSession, context: ToolContext, args: RememberInput
+) -> dict[str, Any]:
+    fact_id = await profile.remember(session, context.user_id, **args.model_dump())
     return {"id": fact_id, "replaced": args.replaces}
 
 
@@ -110,7 +174,7 @@ class Tool:
     name: str
     description: str
     input: type[BaseModel]
-    run: Callable[[AsyncSession, int, Any], Awaitable[dict[str, Any]]]  # session, user id, input
+    run: Callable[[AsyncSession, ToolContext, Any], Awaitable[dict[str, Any]]]
     writes: bool = False
 
     def definition(self) -> dict[str, Any]:
@@ -121,20 +185,21 @@ class Tool:
         }
 
 
+SEARCH_DESCRIPTION = (
+    "Exhibitions, art events and GRAF listings on at some point between two dates, as one "
+    "list. Each row: id (x: exhibition, a: art event, g: GRAF), kind, GRAF's own category, "
+    "title, venue, start and end (no end: an exhibition that may still be on), ends_in_days "
+    "(from date_from), distance_km (with `near`; null for items shown elsewhere or online), "
+    "at_venue, is_free (null: unknown, not free), artists, media, themes. No descriptions: "
+    "get_events has those. `total` is how many matched; `truncated` means the list was cut. "
+    "`near` in the result is the place the name was taken to mean. A name that matches "
+    "nothing, or several places far apart, is an error listing the candidates."
+)
+SEARCH = Tool("search_events", SEARCH_DESCRIPTION, SearchEventsInput, _search_events)
+RANKED_SEARCH = Tool("search_events", SEARCH_DESCRIPTION, RankedSearchEventsInput, _search_events)
+
 TOOLS = (
-    Tool(
-        "search_events",
-        "Exhibitions, art events and GRAF listings on at some point between two dates, as one "
-        "list. Each row: id (x: exhibition, a: art event, g: GRAF), kind, GRAF's own category, "
-        "title, venue, start and end (no end: an exhibition that may still be on), ends_in_days "
-        "(from date_from), distance_km (with `near`; null for items shown elsewhere or online), "
-        "at_venue, is_free (null: unknown, not free), artists, media, themes. No descriptions: "
-        "get_events has those. `total` is how many matched; `truncated` means the list was cut. "
-        "`near` in the result is the place the name was taken to mean. A name that matches "
-        "nothing, or several places far apart, is an error listing the candidates.",
-        SearchEventsInput,
-        _search_events,
-    ),
+    SEARCH,
     Tool(
         "get_events",
         "Everything held on up to 10 ids from search_events: our English summary (exhibitions "
@@ -154,9 +219,11 @@ TOOLS = (
         writes=True,
     ),
 )
-TOOLS_BY_NAME = {tool.name: tool for tool in TOOLS}
+# With semantic ranking: the same tools, `search_events` taking a `query`.
+RANKED_TOOLS = (RANKED_SEARCH, *TOOLS[1:])
 # What the model is sent, in a fixed order: tools render first, so they head the cached prefix.
 TOOL_DEFINITIONS = [tool.definition() for tool in TOOLS]
+RANKED_TOOL_DEFINITIONS = [tool.definition() for tool in RANKED_TOOLS]
 
 
 @dataclass(frozen=True)
@@ -191,16 +258,25 @@ def _json_default(value: Any) -> Any:
 
 class CuratorTools:
     """Runs one tool call for one user, each in its own transaction: read-only, except for a tool
-    that writes, and that one only ever about this user."""
+    that writes, and that one only ever about this user. With an `embedder`, `search_events`
+    takes a `query`; `definitions` is what the model must be sent to match."""
 
-    def __init__(self, sessionmaker: async_sessionmaker[AsyncSession], user_id: int) -> None:
+    def __init__(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        user_id: int,
+        embedder: QueryEmbedder | None = None,
+    ) -> None:
         self._sessionmaker = sessionmaker
-        self._user_id = user_id
+        self._context = ToolContext(user_id, embedder)
+        tools = TOOLS if embedder is None else RANKED_TOOLS
+        self._tools = {tool.name: tool for tool in tools}
+        self.definitions = TOOL_DEFINITIONS if embedder is None else RANKED_TOOL_DEFINITIONS
 
     async def __call__(self, name: str, tool_input: dict[str, Any]) -> ToolResult:
-        tool = TOOLS_BY_NAME.get(name)
+        tool = self._tools.get(name)
         if tool is None:
-            return ToolResult(f"No tool is called {name!r}; use {', '.join(TOOLS_BY_NAME)}.", True)
+            return ToolResult(f"No tool is called {name!r}; use {', '.join(self._tools)}.", True)
         try:
             args = tool.input.model_validate(tool_input)
         except ValidationError as exc:
@@ -210,6 +286,6 @@ class CuratorTools:
             async with self._sessionmaker() as session, session.begin():
                 if not tool.writes:
                     await session.execute(text("SET TRANSACTION READ ONLY"))
-                return ToolResult(to_json(await tool.run(session, self._user_id, args)))
-        except ValueError as exc:  # refusals: UnresolvedPlace, profile.UnknownFact and the like
+                return ToolResult(to_json(await tool.run(session, self._context, args)))
+        except ValueError as exc:  # refusals: UnresolvedPlace, UnknownFact, RankingUnavailable…
             return ToolResult(str(exc), True)

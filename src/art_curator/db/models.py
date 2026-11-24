@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import Any
 
 from geoalchemy2 import Geography, WKBElement
+from pgvector.sqlalchemy import VECTOR
 from sqlalchemy import (
     JSON,
     BigInteger,
@@ -59,6 +60,10 @@ EVENT_KINDS = (
     "opening", "talk", "workshop", "performance", "screening", "guided_tour", "concert", "fair",
     "other",
 )  # fmt: skip
+
+# Every embedding is this long whichever candidate made it, so one pgvector column holds either
+# and the A/B compares like with like. Titan V2 offers 256/512/1024, Cohere v4 256 to 1536.
+EMBED_DIMENSIONS = 1024
 
 # What `ingest/places.py` loads, most specific first: `resolve_place` prefers them in this order.
 PLACE_KINDS = ("barri", "district", "municipality")
@@ -328,6 +333,17 @@ class _Extracted:
     extract_version: Mapped[int]
     first_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # What `search_events(query=...)` ranks by (`ingest/embedding.py`): a vector of our own
+    # summary, themes and media, never of a page's text (CLAUDE.md § 1), with the model that made
+    # it and the hash of the text it was made from. All three or none (`EMBED_MARKER`).
+    embedding: Mapped[list[float] | None] = mapped_column(VECTOR(EMBED_DIMENSIONS))
+    embed_model: Mapped[str | None]
+    embedded_hash: Mapped[str | None]
+
+
+EMBED_MARKER = (
+    "(embedding IS NULL) = (embed_model IS NULL) AND (embedding IS NULL) = (embedded_hash IS NULL)"
+)
 
 
 class Exhibition(_Extracted, Base):
@@ -337,6 +353,7 @@ class Exhibition(_Extracted, Base):
         UniqueConstraint("venue_id", "title_key"),
         CheckConstraint(_one_of("confidence", EXTRACT_CONFIDENCES), name="confidence"),
         CheckConstraint(_all_of("media", MEDIA), name="media"),
+        CheckConstraint(EMBED_MARKER, name="embed_marker"),
     )
 
 
@@ -358,6 +375,7 @@ class ArtEvent(_Extracted, Base):
         CheckConstraint(_one_of("confidence", EXTRACT_CONFIDENCES), name="confidence"),
         CheckConstraint(_all_of("media", MEDIA), name="media"),
         CheckConstraint(_one_of("kind", EVENT_KINDS), name="kind"),
+        CheckConstraint(EMBED_MARKER, name="embed_marker"),
     )
 
 

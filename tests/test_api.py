@@ -20,10 +20,10 @@ from sqlalchemy.engine import URL
 from typer.testing import CliRunner
 
 from art_curator import cli
+from art_curator.agent import loop
 from art_curator.agent.loop import Conversation, Turn
 from art_curator.agent.prompt import conversation_context
 from art_curator.agent.store import StoredConversation
-from art_curator.api import main as api_main
 from art_curator.api.main import app, get_store, lifespan
 from art_curator.clients.api import (
     ChatFailed,
@@ -87,7 +87,7 @@ def api(monkeypatch) -> Iterator[StubLlm]:
     _clear_caches()
     stub = StubLlm()
     app.dependency_overrides[get_llm_client] = lambda: stub.client
-    monkeypatch.setattr(api_main, "CuratorTools", lambda *_: FakeTools())
+    monkeypatch.setattr(loop, "CuratorTools", lambda *_: FakeTools())
     yield stub
     app.dependency_overrides.clear()
     _clear_caches()
@@ -224,7 +224,7 @@ def test_a_turn_streams_its_tools_and_text_then_done(api, memory):
     assert all(p.endswith("/invoke-with-response-stream") for p in api.paths)
     assert "Weighing" not in repr(events)
     [turn] = memory.saved
-    assert turn.reply == ANSWER and turn.iteration_count == 1
+    assert turn.reply == f"Let me look.\n\n{ANSWER}" and turn.iteration_count == 1  # as streamed
     [stored] = memory.conversations.values()
     assert stored.saved == len(stored.conversation.messages) == 4
 
@@ -316,7 +316,7 @@ def queue_two_turns(stub: StubLlm, *, second_streamed: bool) -> None:
 
 def test_the_same_conversation_in_process_and_over_http(db_api, monkeypatch):
     monkeypatch.setattr(cli, "get_llm_client", lambda: db_api.client)
-    monkeypatch.setattr(cli, "CuratorTools", lambda *_: FakeTools())
+    monkeypatch.setattr(loop, "CuratorTools", lambda *_: FakeTools())
     monkeypatch.setattr(cli, "_turn_summary", _summary)
     monkeypatch.setattr(cli, "CuratorApi", InProcessApi)
 

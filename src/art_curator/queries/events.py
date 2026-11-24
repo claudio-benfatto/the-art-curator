@@ -21,12 +21,14 @@ Rules the code encodes:
 
 import re
 from collections.abc import Collection
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from datetime import date, datetime, time
 from decimal import Decimal
-from typing import Any
+from typing import Annotated, Any
 
 from geoalchemy2 import Geography, Geometry
+from pgvector.sqlalchemy import VECTOR
+from pydantic import WithJsonSchema
 from sqlalchemy import (
     Boolean,
     Date,
@@ -53,6 +55,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import CompoundSelect
 
 from art_curator.db.models import (
+    EMBED_DIMENSIONS,
     EVENT_KINDS,
     PLACE_KINDS,
     ArtEvent,
@@ -93,6 +96,14 @@ async def _rows[T](
     session: AsyncSession, row_type: type[T], query: Select | CompoundSelect
 ) -> list[T]:
     return [row_type(**row._mapping) for row in await session.execute(query)]
+
+
+# A time of day at the venue's clock, "19:00:00". Its JSON schema is a pattern, not pydantic's
+# `format: time`: that format is RFC 3339's full-time, which has an offset, so an MCP client that
+# checks formats refuses every start time the dev server returns (found 2026-11-23).
+LocalTime = Annotated[
+    time, WithJsonSchema({"type": "string", "pattern": r"^\d{2}:\d{2}(:\d{2}(\.\d+)?)?$"})
+]
 
 
 # --- venues --------------------------------------------------------------------------------------
@@ -297,7 +308,7 @@ class ExhibitionRow(_ItemRow):
 @dataclass(frozen=True)
 class ArtEventRow(_ItemRow):
     kind: str
-    start_time: time | None
+    start_time: LocalTime | None
     exhibition_id: int | None  # the show it belongs to, when the page said
 
 
@@ -492,6 +503,11 @@ async def graf_events(
 # A GRAF event that extraction also found is hidden (`_has_extracted_twin`), so one show is not
 # listed twice. Distance is to the venue's point; an item shown elsewhere (`at_venue` false) or
 # online has no place, so it has no distance and never falls inside a radius.
+#
+# A `query` (semantic ranking, PLAN.md § 8, P3) decides only which rows survive `limit`: the ones
+# whose vector is closest to it, the rows without one of its model last (GRAF events, and items
+# with no summary). The rows kept still come nearest first, so a query changes nothing until the
+# list is cut.
 
 KINDS = ("exhibition", *EVENT_KINDS)
 MAX_HYDRATE = 10  # ids per `get_events` call (PLAN.md § 5)
@@ -499,6 +515,7 @@ MAX_HYDRATE = 10  # ids per `get_events` call (PLAN.md § 5)
 EVENT_ID_PATTERN = r"^([xag]):([0-9]+)$"  # plain groups: tool schemas take it as is
 _EVENT_ID = re.compile(EVENT_ID_PATTERN)
 _NO_ARRAY = literal_column("ARRAY[]::text[]", ARRAY(Text))
+_NO_VECTOR = cast(null(), VECTOR(EMBED_DIMENSIONS))
 
 
 def parse_event_id(event_id: str) -> tuple[str, int]:
@@ -539,10 +556,11 @@ def _overlap(first_a: Any, last_a: Any, first_b: Any, last_b: Any) -> ColumnElem
 
 
 # What every source contributes to a search, in union order. `place_venue_id` is the venue whose
-# point locates the item, NULL when it is not at its venue.
+# point locates the item, NULL when it is not at its venue. `embedding` and `embed_model` are what
+# a query ranks by (`ingest/embedding.py`); GRAF events have neither.
 _CANDIDATE = (
     "id", "kind", "category", "title", "venue_id", "venue", "first_day", "last_day", "at_venue",
-    "is_free", "artists", "media", "themes", "place_venue_id",
+    "is_free", "artists", "media", "themes", "place_venue_id", "embedding", "embed_model",
 )  # fmt: skip
 
 
@@ -566,6 +584,8 @@ def _exhibition_candidates() -> Select:
         media=EXHIBITIONS.c.media,
         themes=EXHIBITIONS.c.themes,
         place_venue_id=case((EXHIBITIONS.c.at_venue, EXHIBITIONS.c.venue_id)),
+        embedding=EXHIBITIONS.c.embedding,
+        embed_model=EXHIBITIONS.c.embed_model,
     ).join_from(EXHIBITIONS, VENUES, VENUES.c.id == EXHIBITIONS.c.venue_id)
 
 
@@ -586,6 +606,8 @@ def _event_candidates() -> Select:
             media=EVENTS.c.media,
             themes=EVENTS.c.themes,
             place_venue_id=case((EVENTS.c.at_venue, EVENTS.c.venue_id)),
+            embedding=EVENTS.c.embedding,
+            embed_model=EVENTS.c.embed_model,
         )
         .join_from(EVENTS, VENUES, VENUES.c.id == EVENTS.c.venue_id)
         .where(or_(EVENTS.c.start_date.is_not(None), EVENTS.c.end_date.is_not(None)))
@@ -630,10 +652,16 @@ def _graf_live() -> list[ColumnElement[bool]]:
 def _has_extracted_twin() -> ColumnElement[bool]:
     """The GRAF overlap rule (PLAN.md § 8, P3): extraction found the same show at a venue of the
     same organisation (the same venue, or one sharing its `source_profile_id`), under the same
-    title (GRAF's own or its English one) and with dates that overlap. Exact, in SQL; a fuzzy
-    match waits for traces that show duplicates."""
+    title and with dates that overlap. Exact, in SQL. The same title is GRAF's own or its English
+    one, whole or up to its first ". ": GRAF writes "Title. Artist", and a venue page the title
+    alone (the 2026-11-23 eval listed àngels' "Viaje al centro de la tierra" twice, once as
+    "Viaje al centro de la tierra. Carlos Casas"). A translated title is not caught."""
     twins = union_all(_exhibition_candidates(), _event_candidates()).subquery("twins")
     twin_venue = VENUES.alias("twin_venue")
+    graf_titles = [SNAPSHOTS.c.title, SNAPSHOTS.c.title_en]
+    same_titles = [_match_key(title) for title in graf_titles] + [
+        _match_key(func.split_part(title, ". ", 1)) for title in graf_titles
+    ]
     return (
         exists()
         .select_from(twins.join(twin_venue, twin_venue.c.id == twins.c.venue_id))
@@ -642,9 +670,7 @@ def _has_extracted_twin() -> ColumnElement[bool]:
                 twin_venue.c.id == SNAPSHOTS.c.venue_id,
                 twin_venue.c.source_profile_id == VENUES.c.source_profile_id,
             ),
-            _match_key(twins.c.title).in_(
-                [_match_key(SNAPSHOTS.c.title), _match_key(SNAPSHOTS.c.title_en)]
-            ),
+            _match_key(twins.c.title).in_(same_titles),
             _overlap(twins.c.first_day, twins.c.last_day, _graf_first_day(), _graf_last_day()),
         )
     )
@@ -667,6 +693,8 @@ def _graf_candidates() -> Select:
             media=_NO_ARRAY,
             themes=_NO_ARRAY,
             place_venue_id=case((_graf_at_venue(), SNAPSHOTS.c.venue_id)),
+            embedding=_NO_VECTOR,
+            embed_model=cast(null(), Text),
         )
         .select_from(
             OCCURRENCES.join(SNAPSHOTS, SNAPSHOTS.c.id == OCCURRENCES.c.event_id).outerjoin(
@@ -832,10 +860,25 @@ class EventRow:
 
 
 @dataclass(frozen=True)
+class QueryVector:
+    """A search's `query`, embedded. Only items embedded by the same model are ranked by it: a
+    vector of another model's is not comparable."""
+
+    model: str
+    vector: list[float] = field(repr=False)
+
+
+@dataclass(frozen=True)
 class SearchResult:
     total: int  # rows that matched; more than len(events) when `limit` cut the list
     events: list[EventRow]
     near: PlaceRow | None = None  # what `near` was taken to mean, so a wrong guess shows
+
+
+def _listing_order(distance_km: Any, last_day: Any, first_day: Any, id_: Any) -> list[Any]:
+    """How a search lists its rows: nearest first (`distance_km` is NULL for every row when there
+    is no point), then the soonest to end, open-ended last."""
+    return [distance_km.nulls_last(), last_day.nulls_last(), first_day.nulls_first(), id_]
 
 
 async def search_events(
@@ -849,6 +892,7 @@ async def search_events(
     radius_km: float | None = None,
     kinds: Collection[str] | None = None,
     free_only: bool = False,
+    query: QueryVector | None = None,
     limit: int = 40,
 ) -> SearchResult:
     """Everything on at some point from `date_from` to `date_to` (days at the venues), from all
@@ -862,9 +906,10 @@ async def search_events(
     `kinds` keeps those of the listed KINDS. `free_only` drops what is known to cost money: only
     GRAF knows prices, so an extracted item stays, with `is_free` NULL.
 
-    Rows come nearest first when there is a point, then the soonest to end, open-ended last: if
-    `limit` cuts the list, what goes is what is furthest away and on longest. `total` says how
-    many matched, so a cut shows.
+    Rows come nearest first when there is a point, then the soonest to end, open-ended last. If
+    `limit` cuts the list, what goes is what is furthest away and on longest, or, with a `query`,
+    what is furthest from it in meaning, the rows it cannot rank first. `total` says how many
+    matched, so a cut shows.
     """
     if date_from > date_to:
         raise ValueError(f"date_from {date_from} is after date_to {date_to}")
@@ -892,7 +937,6 @@ async def search_events(
 
     distance_km: ColumnElement[float | None] = cast(null(), Float)
     within: list[ColumnElement[bool]] = []
-    order: list[Any] = [c.last_day.nulls_last(), c.first_day.nulls_first(), c.id]
     if lat is not None:
         point = cast(
             func.ST_SetSRID(func.ST_MakePoint(lon, lat), 4326), Geography("POINT", srid=4326)
@@ -901,11 +945,16 @@ async def search_events(
         distance_km = cast(
             func.round(cast(func.ST_Distance(place.c.geom, point) / 1000, Numeric), 1), Float
         )
-        order.insert(0, distance_km.nulls_last())
         if radius_km is not None:
             within.append(func.ST_DWithin(place.c.geom, point, radius_km * 1000))
+    # Which rows `limit` keeps: the listing order itself, unless a query ranks them first.
+    kept_first = _listing_order(distance_km, c.last_day, c.first_day, c.id)
+    if query is not None:
+        # Cosine distance; NULL for a row with no vector of the query's model.
+        meaning = case((c.embed_model == query.model, c.embedding.cosine_distance(query.vector)))
+        kept_first.insert(0, meaning.nulls_last())
 
-    query = (
+    selected = (
         select(
             c.id,
             c.kind,
@@ -929,15 +978,20 @@ async def search_events(
             or_(c.last_day.is_(None), c.last_day >= date_from),
             *within,
         )
-        .order_by(*order)
+        .order_by(*kept_first)
         .limit(limit)
     )
     if kinds is not None:
-        query = query.where(c.kind.in_(list(kinds)))
+        selected = selected.where(c.kind.in_(list(kinds)))
     if free_only:
-        query = query.where(c.is_free.is_not(False))
+        selected = selected.where(c.is_free.is_not(False))
+    if query is not None:
+        kept = selected.subquery("kept")
+        selected = select(*kept.c).order_by(
+            *_listing_order(kept.c.distance_km, kept.c.end, kept.c.start, kept.c.id)
+        )
 
-    rows = (await session.execute(query)).mappings().all()
+    rows = (await session.execute(selected)).mappings().all()
     events = [EventRow(**{k: v for k, v in row.items() if k != "total"}) for row in rows]
     return SearchResult(total=rows[0]["total"] if rows else 0, events=events, near=origin)
 
@@ -957,7 +1011,7 @@ class EventDetail:
     summary_en: str | None  # ours, never the page's (CLAUDE.md § 1); GRAF events have none
     start: date | None
     end: date | None  # an art event without one lasts its start day, as in search_events
-    start_time: time | None  # at the venue's clock; art events and GRAF occurrences only
+    start_time: LocalTime | None  # at the venue's clock; art events and GRAF occurrences only
     at_venue: bool
     is_free: bool | None  # GRAF only
     price_min: Decimal | None  # GRAF only

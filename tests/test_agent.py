@@ -11,6 +11,9 @@ what an in-memory conversation would; a conversation ends when idle or when its 
 
 PR 30: a fact remembered in one conversation is in the next one's context block, a correction
 supersedes the fact it names and nothing else, and forget leaves no rows of the user.
+
+PR 35: with an embedder, `search_events` takes a `query`, the model is sent that schema, and a
+query the endpoint cannot embed is an error the model can act on; without one, nothing changes.
 """
 
 import asyncio
@@ -39,6 +42,7 @@ from art_curator.agent.loop import (
     Turn,
     TurnDone,
     TurnEvent,
+    curator_for,
 )
 from art_curator.agent.profile import Fact
 from art_curator.agent.prompt import (
@@ -47,11 +51,19 @@ from art_curator.agent.prompt import (
     conversation_context,
 )
 from art_curator.agent.store import IDLE, ConversationStore
-from art_curator.agent.tools import TOOL_DEFINITIONS, CuratorTools, ToolResult
+from art_curator.agent.tools import (
+    RANKED_TOOL_DEFINITIONS,
+    TOOL_DEFINITIONS,
+    CuratorTools,
+    QueryEmbedder,
+    RankingUnavailable,
+    ToolResult,
+)
 from art_curator.config import get_settings
 from art_curator.db.models import PROFILE_TOPICS
 from art_curator.db.session import get_engine, get_sessionmaker
 from art_curator.queries import events as q
+from tests.corpus import EMBEDDED_BY, vector
 from tests.db import alembic_config, run_sql
 from tests.llm_stub import StubLlm
 
@@ -76,6 +88,8 @@ def text(reply: str) -> dict[str, Any]:
 
 class FakeTools:
     """Answers every call with `result` and remembers what it was asked."""
+
+    definitions = TOOL_DEFINITIONS  # what `curator_for` sends the model
 
     def __init__(self, result: ToolResult = NO_ROWS) -> None:
         self.result = result
@@ -201,6 +215,22 @@ def test_a_reply_cut_off_after_its_calls_ends_the_turn_and_the_next_text_joins_i
     user = stub.requests[1]["messages"][2]
     assert [b["type"] for b in user["content"]] == ["tool_result", "text"]
     assert [m["role"] for m in conversation.messages] == ["user", "assistant", "user", "assistant"]
+
+
+def test_an_answer_given_alongside_a_tool_call_is_the_reply():
+    """The model answers and remembers in one response, then ends with nothing more: the user
+    was answered, and the reply says so (eval-curation, 2026-11-23)."""
+    stub = StubLlm()
+    stub.reply(
+        content=[thinking(), text("Neither record says."), tool_use("a", "remember")],
+        stop_reason="tool_use",
+    )
+    stub.reply(content=[thinking()])
+
+    _, [turn] = turns(stub, FakeTools(), "Which are step-free?")
+
+    assert turn.reply == "Neither record says."
+    assert (turn.iteration_count, turn.stop_reason) == (1, "end_turn")
 
 
 # --- bad input → is_error ------------------------------------------------------------------------
@@ -392,9 +422,10 @@ def test_a_streamed_turn_yields_tools_as_they_run_and_text_as_it_comes():
 
     running = events.index(ToolRunning("search_events"))
     before, after = events[:running], events[running + 1 : -1]
-    # The words before the tool call arrive too; the reply is the last response's text.
+    # The words before the tool call arrive too, and the reply is all of it, as streamed.
     assert "".join(e.text for e in before) == "Let me look."
     assert "".join(e.text for e in after) == ANSWER
+    assert turn.reply == f"Let me look.\n\n{ANSWER}"
     assert all(isinstance(e, TextDelta) for e in before + after) and len(after) > 1
     done = events[-1]
     assert isinstance(done, TurnDone)
@@ -518,6 +549,99 @@ def test_dates_the_wrong_way_round_are_an_error(corpus_db):
     )
 
     assert result.is_error and "after" in result.content
+
+
+# --- semantic ranking (PR 35) --------------------------------------------------------------------
+
+
+def test_with_an_embedder_search_takes_a_query_and_nothing_else_changes():
+    plain = {tool["name"]: tool for tool in TOOL_DEFINITIONS}
+    ranked = {tool["name"]: tool for tool in RANKED_TOOL_DEFINITIONS}
+
+    assert list(ranked) == list(plain)
+    assert {name: ranked[name] for name in ("get_events", "remember")} == {
+        name: plain[name] for name in ("get_events", "remember")
+    }
+    search, plain_search = ranked["search_events"], plain["search_events"]
+    assert set(search["input_schema"]["properties"]) == {
+        *plain_search["input_schema"]["properties"],
+        "query",
+    }
+    assert search["input_schema"]["required"] == plain_search["input_schema"]["required"]
+    assert "query" not in json.dumps(TOOL_DEFINITIONS)
+
+
+def test_without_an_embedder_a_query_is_invalid_input():
+    result = asyncio.run(
+        CuratorTools(NoDatabase(), NOBODY)("search_events", {**SEARCH, "query": "x"})
+    )
+
+    assert result.is_error and "query: Extra inputs are not permitted" in result.content
+
+
+@pytest.mark.parametrize(
+    ("embed_model", "sent"),
+    [(None, TOOL_DEFINITIONS), (EMBEDDED_BY, RANKED_TOOL_DEFINITIONS)],
+    ids=["filters", "semantic"],
+)
+def test_the_curator_is_sent_the_tools_it_runs(embed_model, sent):
+    stub = StubLlm()
+    stub.reply(content=[text("Hello.")])
+    curator = curator_for(
+        stub.client, NoDatabase(), NOBODY, model=CHAT, effort="medium", embed_model=embed_model
+    )
+
+    asyncio.run(curator.turn(Conversation(conversation_context(TODAY)), "Hi"))
+
+    assert stub.requests[0]["tools"] == sent
+
+
+def test_a_query_the_endpoint_cannot_embed_says_to_search_without_it():
+    stub = StubLlm()
+    stub.converse_stub.add_client_error("invoke_model", service_error_code="ThrottlingException")
+
+    with pytest.raises(RankingUnavailable, match="search again without `query`"):
+        asyncio.run(QueryEmbedder(stub.client, EMBEDDED_BY)("abstract painting"))
+
+
+def test_a_search_with_a_query_keeps_what_is_closest_to_it(corpus_db):
+    """The query comes back along the first axis, Col·lecció's direction in the corpus."""
+    stub = StubLlm()
+    stub.embed_reply({"embeddings": [vector(1.0)]}, input_tokens=3)
+
+    async def main() -> ToolResult:
+        engine = create_async_engine(corpus_db)
+        tools = CuratorTools(
+            async_sessionmaker(engine, expire_on_commit=False),
+            NOBODY,
+            QueryEmbedder(stub.client, EMBEDDED_BY),
+        )
+        try:
+            return await tools(
+                "search_events",
+                {
+                    "date_from": "2026-11-05",
+                    "date_to": "2026-11-08",
+                    "query": "a collection",
+                    "limit": 2,
+                },
+            )
+        finally:
+            await engine.dispose()
+
+    result = asyncio.run(main())
+
+    assert not result.is_error, result.content
+    rows = json.loads(result.content)
+    assert [row["id"] for row in rows["events"]] == ["a:2", "x:3"] and rows["truncated"]
+    assert stub.embed_requests == [
+        {
+            "texts": ["a collection"],
+            "input_type": "search_query",
+            "embedding_types": ["float"],
+            "output_dimension": 1024,
+        }
+    ]
 
 
 # --- conversations kept in the database (PR 29) -------------------------------------------------

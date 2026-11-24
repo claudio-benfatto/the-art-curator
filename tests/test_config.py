@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from art_curator.cli import app
 from art_curator.config import Settings, get_settings
+from art_curator.eval import retrieval
 from art_curator.llm.pricing import price_for
 
 ENV_VARS = (
@@ -101,6 +102,11 @@ def test_smoke_workflow_calls_every_granted_model():
         *((m, "embed") for m in _tf_list_default("embed_candidate_model_ids")),
     }
     assert _smoke_calls() == granted
+
+
+def test_eval_retrieval_scores_every_granted_embedding_model():
+    """A candidate the check skips is never compared; one without a grant is a refused call."""
+    assert list(retrieval.CANDIDATES) == _tf_list_default("embed_candidate_model_ids")
 
 
 def test_every_smoke_model_is_priced():

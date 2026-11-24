@@ -1,0 +1,41 @@
+# The retrieval check for semantic ranking (PLAN.md § 8, P3): `eval-retrieval` embeds every item
+# that has a summary and every query below with each candidate model, ranks the items by
+# similarity, and scores the ranking against these labels. Its result picks EMBED_MODEL.
+#
+# query:      what the curator would pass as search_events's `query`: a few English words about
+#             what someone is after, as it would write them from what the user said. Written by
+#             people, never naming a show, so a query outlives the shows that answer it today.
+# confirmed:  true once a person has read the summary of every candidate (`get_events`, or the dev
+#             MCP's `exhibitions` and `art_events`) and kept the ones that answer the query.
+#             Unconfirmed queries are never scored.
+# relevant:   the items that answer it, as {venue, title}: the venue's name and the title as
+#             stored. Facts only: the loader refuses any other key (CLAUDE.md § 1).
+#
+# Labelling: `eval-retrieval --draft FILE` writes each unconfirmed query with both candidates' top
+# 8 items as its `relevant` list. Delete the ones that do not answer it, set `confirmed: true` and
+# move the query here. A query nothing in the pool answers stays, confirmed, with `relevant: []`:
+# it is not scored.
+#
+# Each run embeds the pool (~60 items) and these queries once per candidate: well under a cent.
+
+queries:
+  - query: video art and moving image installations
+  - query: large-scale immersive installation
+  - query: documentary photography
+  - query: sculpture and three-dimensional work
+  - query: abstract painting
+  - query: figurative painting and portraiture
+  - query: drawing and works on paper
+  - query: textile, fibre and craft-based art
+  - query: ceramics and clay
+  - query: sound art and listening
+  - query: performance and live art
+  - query: feminist art and women artists
+  - query: migration, borders and displacement
+  - query: colonial history and its legacies
+  - query: ecology, landscape and climate
+  - query: the city, architecture and urban space
+  - query: archives, memory and personal history
+  - query: the body, gender and identity
+  - query: technology, digital and internet culture
+  - query: twentieth-century Catalan modern art
