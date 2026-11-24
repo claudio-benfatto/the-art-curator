@@ -15,11 +15,15 @@ Converse does not serve embedding models.
 
 `stream_message` is `create_message` streamed, for `/chat`: the same routing and the same row,
 written when the stream ends or breaks, from what it reported by then.
+
+A client given a `RequestPacer` keeps every call under a requests-per-minute quota by waiting
+before it, on all four paths alike.
 """
 
 import asyncio
 import json
 import time
+from collections import defaultdict, deque
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -36,7 +40,7 @@ from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from art_curator.config import get_settings
-from art_curator.db.models import LlmCall
+from art_curator.db.models import EMBED_DIMENSIONS, LlmCall
 from art_curator.db.session import get_sessionmaker
 from art_curator.llm.pricing import Usage, cost_usd, price_for
 from art_curator.obs import telemetry
@@ -64,9 +68,8 @@ AUTO_CACHE = EPHEMERAL
 
 Recorder = Callable[[LlmCall], Awaitable[None]]
 
-# Every embedding is this long whichever candidate made it, so one pgvector column holds either
-# and the A/B compares like with like. Titan V2 offers 256/512/1024, Cohere v4 256 to 1536.
-EMBED_DIMENSIONS = 1024
+# Every embedding is EMBED_DIMENSIONS long whichever candidate made it: `db.models` sizes the
+# pgvector column with it, so one column holds either model's vectors.
 # Which side of a search a text is on. Cohere encodes the two differently; Titan has one mode.
 EmbedInput = Literal["document", "query"]
 # Bedrock counts InvokeModel's input tokens in a response header. botocore does not model it, so
@@ -131,6 +134,51 @@ def db_recorder(sessionmaker: async_sessionmaker[AsyncSession]) -> Recorder:
     return record
 
 
+class RequestPacer:
+    """Keeps the calls to each model under a requests-per-minute quota by waiting instead of
+    being refused. Bedrock counts requests per model per minute (Opus 4.6: 5 on this account,
+    2026-11-23), and a refused call stops an eval run partway.
+
+    A call that would be one too many in the last WINDOW_SECONDS waits until the oldest of those
+    calls leaves the window. Calls to one model take their turns in order; other models are not
+    held up. Only this process's calls are counted: two processes on one model share the quota
+    but not the count."""
+
+    # A minute, and a second's margin: our clock and Bedrock's do not start the minute together.
+    WINDOW_SECONDS = 61.0
+
+    def __init__(
+        self,
+        per_minute: int,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        if per_minute < 1:
+            raise ValueError("a pacer allows at least one call a minute")
+        self.per_minute = per_minute
+        self.waited_seconds = 0.0  # every wait so far, added up
+        self._clock = clock
+        self._sleep = sleep
+        self._sent: defaultdict[str, deque[float]] = defaultdict(deque)  # model -> call times
+        self._turns: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+    async def wait_for_turn(self, model: str) -> None:
+        """Return once a call to `model` fits under the quota, and count that call."""
+        async with self._turns[model]:
+            sent = self._sent[model]
+            while True:
+                now = self._clock()
+                while sent and now - sent[0] >= self.WINDOW_SECONDS:
+                    sent.popleft()
+                if len(sent) < self.per_minute:
+                    break
+                delay = self.WINDOW_SECONDS - (now - sent[0])
+                await self._sleep(delay)
+                self.waited_seconds += delay
+            sent.append(self._clock())
+
+
 @dataclass(frozen=True)
 class _Outcome:
     usage: Usage
@@ -160,12 +208,16 @@ class LlmClient:
         runtime: Any,  # boto3 bedrock-runtime client (untyped)
         record: Recorder,
         tracer: trace.Tracer | None = None,
+        pacer: RequestPacer | None = None,
     ) -> None:
         self._mantle = mantle
         self._invoke = invoke
         self._runtime = runtime
         self._record = record
         self._tracer = tracer or telemetry.get_tracer()
+        # None: calls go out as soon as they are made. A caller that must stay under a quota
+        # (`eval-curation`) sets one.
+        self.pacer = pacer
 
     async def create_message(self, *, purpose: Purpose, model: str, **params: Any) -> Message:
         """Messages API. Routed by model ID: an inference-profile ID (`global.` …) goes to the
@@ -296,6 +348,9 @@ class LlmClient:
         if purpose not in PURPOSES:
             raise ValueError(f"unknown purpose {purpose!r}")
         price_for(model)  # unpriced model: fail before spending anything
+        if self.pacer is not None:
+            # Before the span and the clock start: a wait for the quota is not the call's latency.
+            await self.pacer.wait_for_turn(model)
 
         # The span records and re-raises exceptions itself (status ERROR).
         with self._tracer.start_as_current_span(

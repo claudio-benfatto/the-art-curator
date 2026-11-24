@@ -2,7 +2,7 @@
 
 Scope, decisions and build order. Operational rules (the things that are easy to get wrong) live in [CLAUDE.md](CLAUDE.md).
 
-**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PRs 26–34 built (§ 8); 31's baseline not run yet.
+**Status:** P0 done, signed off 2026-09-23. P1 built — PRs 11–16 (§ 8); done when the `GRAF` workflow runs green against live GRAF. P2 done: PRs 17–25 merged (24's baseline 2026-11-09; 25's judge not run live yet). P3 in progress: PRs 26–35 built (§ 8); 31's baseline, a pair of reruns and a third run 2026-11-23: checks 32 of 32 on the third; the sensible read is next.
 **Last updated:** 2026-11-20 (rev. 17)
 
 ---
@@ -67,18 +67,17 @@ src/art_curator/
   llm/pricing.py           pricing.yaml → cost per call
   llm/extract.py           page → Exhibition[]
   llm/judge.py             summary faithfulness (P2) · curation_judge.py: taste + unsupported claims (P3)
-  llm/embed.py             summary → vector (via client.py)
   queries/events.py        shared query module (incl. search_events, get_events, resolve_place)
   ingest/                  http.py, graf.py, matching.py, sync.py (P1) · crawl.py, discover.py, extraction.py (P2) · places.py, embedding.py (P3)
   agent/                   loop.py, tools.py, prompt.py, profile.py, store.py (conversations)
   routes/itinerary.py      P4
   obs/                     telemetry.py
-  eval/                    extraction.py, runner.py (P2) · curation.py, curation_runner.py (P3)
+  eval/                    extraction.py, runner.py (P2) · curation.py, curation_runner.py, retrieval.py, retrieval_runner.py (P3)
   api/main.py              POST /chat (SSE), POST /feedback, /users/{client}/{user}/profile (GET, DELETE) and /conversation (DELETE)
   clients/api.py           the HTTP client: cli chat --api (P3), the Telegram bot (P5)
   clients/telegram_bot.py  P5
   mcp_server.py            dev-time only
-  cli.py                   smoke, sync-graf, discover, crawl, extract, eval-extraction · load-places, chat, eval-curation, embed
+  cli.py                   smoke, sync-graf, discover, crawl, extract, eval-extraction · load-places, chat, eval-curation, embed, eval-retrieval
 ```
 
 ---
@@ -95,7 +94,7 @@ Each table lands in the phase that first writes it — no speculative schema.
 | | `venue_pages.kind` (listing/detail) + extraction markers (status, hash, `EXTRACT_VERSION`, model, item count; no text) | P2 |
 | | `venue_seeds` (venue, listing URL, page type, confidence, dated-item count, language, status, model, `discovered_at`; no free text) | P2 |
 | | `exhibitions` (venue, title, dates, artists, `summary_en`, themes, media, source_url, confidence, model, hash) · `art_events` (same + `exhibition_id`) | P2 |
-| | `embedding` + embed markers on both (model, hash of the embedded text) | P3, gated (§ 8) |
+| | `embedding` (pgvector, 1024) + `embed_model`, `embedded_hash` on both; all three or none | P3 (PR 35) |
 | Reference | `places` (kind barri/district/municipality, source code, name, aliases, `within`, point; Open Data BCN CC BY 4.0 + IDESCAT/ICGC open licence) | P3 |
 | User | `users` (`client`, `external_id`) · `conversations` (context block, `ended_at`) · `messages` (API content blocks as sent, `trace_id`, `iteration_count`) · `profile_facts` (append-only, `superseded_by`) · `feedback` | P3 |
 | | `itineraries` | P4 |
@@ -109,12 +108,12 @@ Each table lands in the phase that first writes it — no speculative schema.
 
 | Tool | Returns |
 |---|---|
-| `search_events(date_from, date_to, near? \| lat+lon?, radius_km?, kinds?, free_only?, query?, limit)` | Compact rows (~50 tok): prefixed id, kind, title, venue, start/end, `ends_in_days`, `distance_km`, `at_venue`, `is_free`, artists/media/themes; plus `total` matched. plus `near`, the place it resolved to. `query` lands in 35 |
+| `search_events(date_from, date_to, near? \| lat+lon?, radius_km?, kinds?, free_only?, query?, limit)` | Compact rows (~50 tok): prefixed id, kind, title, venue, start/end, `ends_in_days`, `distance_km`, `at_venue`, `is_free`, artists/media/themes; plus `total` matched. plus `near`, the place it resolved to. `query` only with `EMBED_MODEL` (PR 35) |
 | `get_events(ids ≤ 10)` | `summary_en`, all facts, venue name/address/website, source/detail URL, price |
 | `remember(topic, fact, replaces?)` | Profile fact id |
 | `build_itinerary(event_ids, start_time, start_lat, start_lon)` | Order + maps link — P4 |
 
-The model does no date/distance arithmetic: dates are ISO strings read off a calendar, places are names resolved in SQL. `lat`/`lon` reach the agent's tool with a client location (P5); until then the only point the model could give is an estimate. `get_venue` folded into `get_events` (§ 8, P3). `query` is gated (§ 8, P3).
+The model does no date/distance arithmetic: dates are ISO strings read off a calendar, places are names resolved in SQL. `lat`/`lon` reach the agent's tool with a client location (P5); until then the only point the model could give is an estimate. `get_venue` folded into `get_events` (§ 8, P3). `query` picks which rows survive `limit` (§ 8, P3, Semantic ranking).
 
 ---
 
@@ -145,7 +144,7 @@ Embeddings are noise. Chat starts on Opus 4.6; measure a cheaper or newer model 
 1. **`sync-graf`** — venue terms (~570), profiles (158), events (live window, 56–104 → snapshot). Facts only. A term (space) is joined to a profile (organisation, carries the URL); the join and `is_pilot` are recomputed every run, never accumulated (CLAUDE.md § The GRAF API).
 2. **`crawl`** — robots check, accepted seeds + detail URLs from extraction, ≤8 pages/site, all visible text, `content_hash` (§ 8).
 3. **`extract`** — skip unchanged hash; schema-validated `Exhibition[]` with original English summary.
-4. **`embed`** — embed `summary_en` + themes for new/changed exhibitions (P3).
+4. **`embed`** — embed `summary_en` + themes + media of every exhibition and art event with a summary, skipping unchanged text and model (P3).
 5. **`resolve`** — match venue-extracted ↔ GRAF on venue + date overlap + fuzzy title.
 
 **Pilot venues:** MACBA, Fundació Joan Miró, CaixaForum Barcelona, La Escocesa, ESPRONCEDA, àngels barcelona, ADN Galeria, Chiquita Room, ProjecteSD, Galeria Marc Domènech, RocioSantaCruz, Pigment Gallery, FUGA Gallery, Dilalica, ethall, Sala Parés, House of Chappaz, Galería Alegría, #plantauno, ACVic.
@@ -306,7 +305,8 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 | Forget | `DELETE /users/{client}/{user}/profile` deletes the user's facts and conversations. Lands in P3 | P5 stays client-only |
 | Identity | `users(client, external_id)` unique, `client` an opaque string; routes name a user as `{client}/{user}`, never by our id. One bearer token per deployment (`API_TOKEN`; unset, the API will not start), API bound to localhost until P7 | The backend never learns what the client is (CLAUDE.md § 3) |
 | Streaming | `LlmClient.stream_message`: one `llm_calls` row when the stream ends or breaks. SSE events: `status` (tool running), `text` deltas, `done` (message id, `iteration_count`), `error`. Thinking is not forwarded. The turn is saved before `done`; a disconnect saves nothing. Needs `bedrock:InvokeModelWithResponseStream` (PR 32) | A row on every path, as for unstreamed calls |
-| Semantic ranking | **Gated:** built only if `eval-curation` shows `search_events` truncating (`total` > returned) in a real share of scenarios. Then: embed `summary_en` + themes + media (GRAF rows have no summary, so none); the model writes `query` in English, so the embedding model need not be multilingual; `query` reorders the filtered set, unembedded rows last | A few dozen current extracted items plus GRAF's window fit in one result; ranking cannot beat "the model sees everything" until they stop fitting |
+| Semantic ranking | **Gated:** used only if `eval-curation` shows `search_events` truncating (`total` > returned) in a real share of scenarios and the A/B favours it. Embed `summary_en` + themes + media (GRAF rows have no summary, so none); the model writes `query` in English, so the embedding model need not be multilingual. `query` picks which rows survive `limit` (closest first, unembedded and other-model rows last); the kept rows are still listed nearest first. Offered only when `EMBED_MODEL` is set: unset, the tools are byte-identical to before | A few dozen current extracted items plus GRAF's window fit in one result; ranking cannot beat "the model sees everything" until they stop fitting. Selecting, not reordering, keeps the prompt's nearest-first rule true |
+| Embedding model | `eval-retrieval`: ~20 English queries (`eval/gold/retrieval.yaml`) labelled with `{venue, title}`, pool = every item with a summary, recall@5/@10 + MRR per candidate, embedded in memory. `--draft` pools both candidates' top 8 for a person to label | Items are never deleted, so labels do not rot; pooling keeps the labels from favouring either model |
 | Curation eval | `eval/gold/curation.yaml`: ~10 scripted conversations (persona, turns, constraints, relative dates only), placed where the pilots are. Per exchange: titles in the reply matched to tool results (grounding), hard constraints checked in SQL on the matched ids, a judge (`JUDGE_MODEL`) for taste fit and invented items, and iteration count, cost, cache share and latency. Transcripts go to a file outside the repo for the human read. Runs on the live DB, so arms are compared on the same day | Expected answers rot as shows close; constraints do not |
 
 ```
@@ -322,16 +322,91 @@ PR 21 depends only on the client and can run in parallel with 17–20. `discover
 | 28 | `agent/`: tool schemas + pydantic validation, static system prompt, conversation-start context, the loop (cap, final `tool_choice: none`, `cached_tail` on every call, thinking + effort, trace with `iteration_count`). `cli chat` in-process, in memory, `--today`. SDK pin | Stubbed: cap holds; bad input → `is_error`; breakpoint on the last block every call; thinking blocks replayed unchanged. Live: the § 1 question answered over the pilots |
 | 29 | Migration 0009: `users`, `conversations`, `messages`, `feedback`; classified in `test_no_verbatim.py`. Replay from the DB, conversation expiry; `cli chat` resumes, `/new`, `/good`, `/bad` | Turn n+1's request starts with turn n's, byte for byte (tested). Live: a resumed turn within 5 min reads the cache |
 | 30 | Migration 0010: `profile_facts`. `agent/profile.py`: `remember`, snapshot, supersede, forget | A fact remembered in one conversation is in the next one's context; forget leaves no rows |
-| 31 | `eval/curation.py` + `eval/gold/curation.yaml` + `cli eval-curation` (`--effort`, `--model`, `--arm`) | Baseline in § 8; two runs agree within noise; truncation share and cost per exchange reported. Built (10 scenarios, 15 turns); baseline not run yet |
+| 31 | `eval/curation.py` + `eval/gold/curation.yaml` + `cli eval-curation` (`--effort`, `--model`, `--arm`) | Baseline in § 8; two runs agree within noise; truncation share and cost per exchange reported. Baseline, a pair of reruns and a third run 2026-11-23 (below): within noise on every metric but nearest-first order; third run 32 of 32 checks |
 | 32 | Terraform: `InvokeModelWithResponseStream` on the chat profile; IAM + `pricing.yaml` for two embedding candidates (Titan Text Embeddings V2, Cohere Embed v4, in-region) and one cheaper chat candidate (Sonnet 4.6); `LlmClient.embed`; the Smoke workflow calls each | Gated CI apply green (the first one since the 09-23 laptop apply: read the plan); Smoke green through OIDC. Built and applied through CI; Smoke not run yet |
 | 33 | `LlmClient.stream_message` (recorded stream, row on a broken stream) + a recorded-stream stub; the loop yields events; the Smoke chat leg streams | Stubbed: one row per stream, a broken one included; cost equals the unstreamed path's. Smoke green on the streamed chat call (PR 32's grant). Built (a `chat streamed` Smoke leg beside the unstreamed one); Smoke not run yet |
 | 34 | `api/`: `POST /chat` (SSE), `POST /feedback`, `DELETE /users/{client}/{user}/profile`, plus `GET` profile and `DELETE …/conversation` for `cli chat`'s `/profile` and `/new`; bearer token; Compose `api`; `clients/api.py`; `cli chat --api URL` | The same conversation in-process and over HTTP; boundary test covers `api/`. Built; DB tests not run outside CI, image not built |
-| 35 | *(gated)* `LlmClient.embed` batching if needed (one text a call since PR 32), migration 0011: `embedding` + markers, `cli embed` (skip unchanged), model chosen by a ~20-query retrieval check, `query` on `search_events` | A/B reported by `eval-curation`; decision recorded |
+| 35 | *(gated)* migration 0011: `embedding` + markers; `cli embed` (skip unchanged; one call an item, no batching needed); `eval-retrieval` (~20 queries); `query` on `search_events` with `EMBED_MODEL`; `eval-curation --semantic/--filters` | A/B reported by `eval-curation`; decision recorded. Built; labels, retrieval check and A/B not run |
 | 36 | Sign-off (docs): chat cost, cache share, latency, iteration distribution into § 6 and § 8; decide loop vs workflow, chat model and effort | P3 done-when met |
 
 PR 32 depends on nothing and can go first; 33–34 do not block the eval, which runs in-process. PR 31 is the checkpoint: everything after it is plumbing or optional. Writing the scenarios is human work, like P2's labels.
 
 **Cost:** an eval run ≈ 10 first turns × ~$0.12 + 5 follow-ups × ~$0.04 ≈ $1.40, plus ~$0.50 of Opus judge; the repeat run for noise goes `--no-judge`, so a baseline is ~$3. An effort sweep or A/B multiplies it. Embeddings are noise (§ 6).
+
+**Baseline, 2026-11-23** (Opus 4.6, effort `medium`, filters only, judge Opus 4.6; 10 scenarios, 15 exchanges; paced to 5 requests a minute, waits left out of latency):
+
+| Metric | Result | Done-when |
+|---|---|---|
+| Off constraint (dates / area / price / kinds) | 0 | met |
+| Off `ends` | 2, both closing the Monday and said so ("closing Monday, last weekend visit"): the scenario was too strict, now `[saturday, monday]` | — |
+| Items no tool returned | 0 shows; Girona's reply names 2 venues to check (Bòlit, Museu d'Art de Girona) | not quite |
+| Unsupported claims (judge) | 24 in 13 of 15 exchanges | — |
+| Checks | 30 of 34: one-off area remembered, a companion's need remembered, language not remembered ×2 | — |
+| Taste (judge) | 9 fits, 2 partly, 0 misses, 4 none (nothing to recommend) | — |
+| Named | 43, median 2 an exchange, max 7: undercounted, shortened and reordered titles were missed (now matched by title piece) | — |
+| Nearest first | 6 of 9: the 3 misses grouped shows by venue or street | — |
+| Rounds | 1: 4, 2: 11 (none used 3 or 4) | recorded |
+| Truncated | 8 of 13 searches, in 7 of 10 scenarios | gate for semantic ranking: **open** |
+| Cache | 85% of input on 19 calls past a 4096-token prefix | met (> 80%) |
+| Cost | $1.18 for 41 chat calls, $0.078 an exchange (first turns $0.10–0.13, follow-ups ~$0.04); judge $0.54 for 11 calls | met (§ 6: $0.12 / $0.04) |
+| Latency | p50 16.3 s, p95 25.4 s an exchange | — |
+| Sensible (person) | not yet read | ≥ 8 of 10 |
+
+- **Model knowledge stated as record: most of the 24 claims.** "Celebrated Canadian artist", "one of Catalonia's most inventive sculptors", "Barcelona's oldest gallery", "a photography-focused gallery" (given as the taste reason). PR 28's fault, still there.
+- **Geography of its own** (CLAUDE.md § 8): "Alzueta and ADN are both in the Eixample" in the reply that puts Alzueta in Gràcia; MACBA "about 3.5 km away now" from Gràcia, never measured.
+- **A truncated search is never narrowed**: all 8 went straight to `get_events`, and no turn used round 3. So the rounds say "workflow", but only because the prompt's narrowing rule went unused.
+- **One empty reply** (wheelchair follow-up): `Turn.reply` held only the last response's text, so an answer given alongside a `remember` call was lost to `cli chat` and the eval, though `/chat` streamed it. Fixed: the reply is every response's text.
+- Right: Canyelles asked which one, then searched the barri; Girona said how little it knew; ADN's openings and the closing dates were read off the records.
+- **Quota:** Opus 4.6 is allowed 5 requests a minute (3M tokens). The first attempt was refused on its second scenario; the run is now paced (`REQUESTS_PER_MINUTE`), 375 s of waits, and `infra/terraform/quotas.tf` asks for 50.
+
+Changed after the baseline (prompt and eval; the next run measures them): the prompt forbids reputations and history from elsewhere, geography of its own, remembering one-off places and companions' needs; it asks for a narrower search when truncated, for language when not English, for an answer in text every message, and says records hold nothing on access. The eval matches a title by its pieces and gives `closing-this-weekend` `ends: [saturday, monday]`.
+
+**Reruns, 2026-11-23**, after those changes, same setup: A with the judge, B `--no-judge`. A pair, so the second is the noise check:
+
+| Metric | A | B | Baseline |
+|---|---|---|---|
+| Checks | 32 of 34 | 32 of 34 | 30 of 34 |
+| Unsupported claims (judge) | 17 in 9 of 15 exchanges; ~8 real | — | 24 in 13 of 15 |
+| Off constraint | 9 area, 1 kinds: none the curator's (below) | 0 | 0 (+2 `ends`) |
+| Named | 78, median 6 | 74, median 5 | 43 (not comparable: matcher changed) |
+| Nearest first | 6 of 10 | 2 of 9 | 6 of 9 |
+| Rounds | 0: 1, 1: 3, 2: 10, 3: 1 | 0: 1, 1: 3, 2: 9, 3: 2 | 1: 4, 2: 11 |
+| Truncated | 9 of 14 searches | 8 of 14 | 8 of 13 |
+| Cost an exchange | $0.0895 (judge $0.56) | $0.0854 | $0.078 |
+| Cache | 83% | 86% | 85% |
+| Latency p50 / p95 | 18.3 / 33.6 s | 16.5 / 25.9 s | 16.3 / 25.4 s |
+
+- **Within noise** on everything but nearest-first order (6 of 10 against 2 of 9): replies group shows by venue or street, which the item-by-item check reads as out of order. Read it in the transcript, not off the number.
+- **Fixed by the prompt:** no one-off area or companion's need remembered; the wheelchair turn answered in text; after the move to Gràcia it searched again instead of judging distances. Unsupported claims fell, and fewer are reputations.
+- **The judge is wrong about half the time.** Of A's 17 claims, ~9 are on record: "closes Friday the 27th" (UnaDonaUna ends Friday 11-27), "recién inaugurada" (starts 11-26), a paraphrase of House of Chappaz's summary, ADN's openings from that turn's search. The real ones are editorial: "Carlos Casas works are worth checking", "al cor del Raval", Valid Foto read as photography, "very visual and tactile" for a show with no summary. A list to read, not a score.
+- **A's off items were the eval's.** 9 area: turn 2 said "from there" after turn 1 sent the user to the MACBA, and A measured from there. 1 kinds: an artist's name, a piece of one title, credited to her other show. Both fixed (below).
+- **Duplicates in the tools:** àngels' and House of Chappaz's shows came back twice, extracted and from GRAF ("Title. Artist"); the overlap rule wanted the exact title.
+- **Still the curator's:** `language` remembered 0 of 4 (dropped, below); a truncated search never narrowed, which filters cannot do by taste (semantic ranking's gate, above); Poblenou's first reply sends the user 3.5 km to the MACBA without saying how far.
+
+Changed after the reruns: `named` counts an item once across its two GRAF titles, and a title piece names nothing when another title contains it; Poblenou's turn 2 names Poblenou; `language` left out of what the curator remembers, in the prompt and the scenarios (nothing reads it: the reply follows each message's language); the GRAF overlap rule also matches GRAF's title up to its first ". "; the dev MCP schemas give a start time as a pattern, not `format: time`.
+
+**Third run, 2026-11-23**, after those changes, with the judge:
+
+| Metric | Third run | A / B |
+|---|---|---|
+| Checks | **32 of 32** | 32 of 34 both |
+| Off constraint | 0 | 10 / 0 |
+| Unsupported claims (judge) | 15 in 12 of 15 exchanges; ~10 real | 17 in 9 of 15 / — |
+| Named | 56 (each item once now; duplicates hidden) | 78 / 74 |
+| Nearest first | 4 of 8 | 6 of 10 / 2 of 9 |
+| Rounds | 0: 1, 1: 3, 2: 11 | about the same |
+| Truncated | 7 of 13 searches | 9 of 14 / 8 of 14 |
+| Cost an exchange | $0.0802 | $0.0895 / $0.0854 |
+| Latency p50 / p95 | 12.9 / 24.5 s | 18.3 / 33.6 s, 16.5 / 25.9 s |
+
+- **An invented address**, the one fault that sends someone to the wrong place: Galeria Mayoral "on Passeig de Gràcia — right in the heart of it", never hydrated, record Consell de Cent 286. Search rows carry the venue's name and no address, so the model filled it in.
+- **Access guessed** against the prompt: MACBA "a large public museum, so likely have good accessibility" (with "confirm with the venue").
+- **Smaller slips, the same few kinds:** a reputation ("Douglas is known for video and photographic work"), a venue type ("given the kind of space it is"), geography ("a dos minuts de la plaça", "next door" for Trafalgar 32 and 37), editorial ("suele haber algo de beber"), and "ahir" for an earlier turn of the same conversation.
+- **profile-opens**: searched events only, found little, and offered exhibitions instead of showing them; both reruns searched exhibitions. One run: read it, don't tune on it.
+- **The judge** still flags what the records support: Bofill's 1979 settlement (Anna Moreno's summary), the MACBA collection show's summary.
+- **Stop tuning on single runs:** 15 exchanges cannot tell a fix from noise, and what is left recurs in small numbers. The P3 bar is now the human sensible read.
+
+Changed after the third run: the prompt takes an item's address only from its `get_events` record, and gives none to an item it did not hydrate (not measured).
 
 ---
 

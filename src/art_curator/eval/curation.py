@@ -14,24 +14,26 @@ and calling the judge is `eval/curation_runner.py`.
 Per exchange (one user turn and the curator's reply):
 
 - **Named items**: the items the tools returned in the conversation so far whose title, as the
-  tool gave it, appears in the reply, compared as `title_key` over whole words. The prompt asks
-  for titles as given, so a title the reply shortens or translates is not counted. A title found
-  only inside a longer named one ("Aurèlia Muñoz. Ens" inside "Visites comentades a Aurèlia
-  Muñoz. Ens") is not named on its own. A named item may still be one the reply advises against:
-  the transcript shows which.
+  tool gave it, appears in the reply, compared as `title_key` over whole words. A title is also
+  named by one piece of it at ". " ("Title. Artist", either piece, in either order), if that piece
+  has two words or more and no other title seen has it. A title the reply translates is not
+  counted. A title found only inside a longer named one ("Aurèlia Muñoz. Ens" inside "Visites
+  comentades a Aurèlia Muñoz. Ens") is not named on its own. A named item may still be one the
+  reply advises against: the transcript shows which.
 - **Off constraint**: a named item outside the turn's dates, area, price or kinds, decided in SQL
   by the runner. A title passes a constraint if any item under it does: a GRAF listing and the
   venue's own record of a show share a title, and so do the dates of a repeated tour.
 - **Order**: whether the named items come nearest first, by the distances the search gave.
-- **Checks**: whether the turn searched, and remembered the topics it should, where the scenario
-  says.
+- **Checks**: whether the turn searched (a search that came back as an error does not count),
+  searched from the place it should, and remembered exactly the topics it should, where the
+  scenario says.
 - **Judge** (`llm/curation_judge.py`): taste fit, and the reply's claims nothing on record
   supports, which is where an invented item shows.
 - **Cost**: tool rounds, model calls, tokens and cache, cost and latency, from `llm_calls`.
 
 Constraints carry over from turn to turn, so a turn states only what changed ("and on Sunday?"
-restates `dates`); `null` drops one. `searches` and `remembers` are about one turn and never
-carry.
+restates `dates`); `null` drops one. `searches`, `searches_near` and `remembers` are about one
+turn and never carry.
 
 Every reply and transcript holds our own text, facts and our summaries: no venue page reaches a
 conversation (CLAUDE.md § 1).
@@ -116,8 +118,8 @@ class Area(BaseModel):
 
 
 class Expect(BaseModel):
-    """What one turn asks for. The first four are hard constraints on every item the reply names,
-    and carry over to the turns after; the last two are checks on this turn alone."""
+    """What one turn asks for. The first five are hard constraints on every item the reply names,
+    and carry over to the turns after; the last three are checks on this turn alone."""
 
     model_config = _SCENARIO
 
@@ -127,15 +129,25 @@ class Expect(BaseModel):
     area: Area | None = None
     free: bool | None = None  # true: nothing known to cost money; an unknown price passes
     kinds: tuple[Kind, ...] | None = None
-    searches: bool | None = None  # this turn calls search_events (true) or does not (false)
-    remembers: tuple[Topic, ...] | None = None  # topics it must remember; [] means nothing
+    # One day, or [first, last], as `dates`: every item named must end on one of those days.
+    # An item with no end date does not.
+    ends: tuple[DaySpec, DaySpec] | None = None
+    # This turn calls search_events successfully (true) or does not (false). A search the tool
+    # refused, such as a place it could not pin down, does not count.
+    searches: bool | None = None
+    # Some successful search this turn measures from this place, as `search_events` resolves
+    # `near`. For where the user is, without the distance limit `area` would set.
+    searches_near: str | None = Field(default=None, min_length=1)
+    # Exactly the topics this turn must remember: one missing or one more is a failure. []
+    # means nothing.
+    remembers: tuple[Topic, ...] | None = None
 
-    @field_validator("dates", mode="before")
+    @field_validator("dates", "ends", mode="before")
     @classmethod
     def _one_day_or_two(cls, value: Any) -> Any:
         return (value, value) if isinstance(value, str) else value
 
-    @field_validator("dates")
+    @field_validator("dates", "ends")
     @classmethod
     def _forwards(cls, value: tuple[str, str] | None) -> tuple[str, str] | None:
         if value is not None:
@@ -148,7 +160,7 @@ class Expect(BaseModel):
         return value
 
 
-CARRIED = ("dates", "area", "free", "kinds")
+CARRIED = ("dates", "area", "free", "kinds", "ends")
 
 
 class Fact(BaseModel):
@@ -168,6 +180,27 @@ class ScenarioTurn(BaseModel):
 
 
 @dataclass(frozen=True)
+class ConstraintCheck:
+    """One constraint, as a search: an item meets it if the search returns a row of it that
+    `meets` accepts."""
+
+    constraint: str  # dates, area, price, kinds or ends
+    arguments: dict[str, Any]  # for search_events
+    ends_between: tuple[date, date] | None = None  # `ends`: the row's end must be one of these
+
+    def meets(self, end: date | None) -> bool:
+        """Whether a row the search returned, ending on `end`, meets the constraint."""
+        if self.ends_between is None:
+            return True
+        first, last = self.ends_between
+        return end is not None and first <= end <= last
+
+
+def _span(first: date, last: date) -> str:
+    return f"{first}" if first == last else f"{first} – {last}"
+
+
+@dataclass(frozen=True)
 class Constraints:
     """A turn's hard constraints with its dates resolved: what every item it names must meet."""
 
@@ -176,10 +209,11 @@ class Constraints:
     area: Area | None = None
     free: bool = False
     kinds: tuple[str, ...] | None = None
+    ends_from: date | None = None
+    ends_to: date | None = None
 
-    def checks(self) -> list[tuple[str, dict[str, Any]]]:
-        """`(constraint, search_events arguments)` for each constraint there is: an item meets
-        the constraint if that search returns it. One search per constraint, wide on everything
+    def checks(self) -> list[ConstraintCheck]:
+        """One check for each constraint there is. One search per constraint, wide on everything
         else, so an item off two constraints is reported off both."""
         wide: dict[str, Any] = {
             "date_from": ANY_DAY_FROM,
@@ -188,26 +222,35 @@ class Constraints:
         }
         checks = []
         if self.date_from is not None:
-            checks.append(("dates", {**wide, "date_from": self.date_from, "date_to": self.date_to}))
+            dates = {**wide, "date_from": self.date_from, "date_to": self.date_to}
+            checks.append(ConstraintCheck("dates", dates))
         if self.area is not None:
-            checks.append(("area", {**wide, "near": self.area.near, "radius_km": self.area.km}))
+            area = {**wide, "near": self.area.near, "radius_km": self.area.km}
+            checks.append(ConstraintCheck("area", area))
         if self.free:
-            checks.append(("price", {**wide, "free_only": True}))
+            checks.append(ConstraintCheck("price", {**wide, "free_only": True}))
         if self.kinds is not None:
-            checks.append(("kinds", {**wide, "kinds": list(self.kinds)}))
+            checks.append(ConstraintCheck("kinds", {**wide, "kinds": list(self.kinds)}))
+        if self.ends_from is not None and self.ends_to is not None:
+            # What ends on one of those days is on that day, so the search finds it there; its
+            # end, which the search reads off the record, says whether it ends then.
+            on_those_days = {**wide, "date_from": self.ends_from, "date_to": self.ends_to}
+            between = (self.ends_from, self.ends_to)
+            checks.append(ConstraintCheck("ends", on_those_days, ends_between=between))
         return checks
 
     def __str__(self) -> str:
         parts = []
-        if self.date_from is not None:
-            same = self.date_from == self.date_to
-            parts.append(f"{self.date_from}" if same else f"{self.date_from} – {self.date_to}")
+        if self.date_from is not None and self.date_to is not None:
+            parts.append(_span(self.date_from, self.date_to))
         if self.area is not None:
             parts.append(f"within {self.area.km:g} km of {self.area.near}")
         if self.free:
             parts.append("free")
         if self.kinds is not None:
             parts.append("/".join(self.kinds))
+        if self.ends_from is not None and self.ends_to is not None:
+            parts.append(f"ending {_span(self.ends_from, self.ends_to)}")
         return ", ".join(parts) or "none"
 
 
@@ -227,21 +270,29 @@ class Scenario(BaseModel):
             for name in CARRIED:
                 if name in turn.expect.model_fields_set:
                     carried[name] = getattr(turn.expect, name)
-            dates = carried.get("dates")
-            first = last = None
-            if dates is not None:
-                first = resolve_day(dates[0], today)
-                last = resolve_day(dates[1], today, on_or_after=first)
+            date_from, date_to = _resolve_span(carried.get("dates"), today)
+            ends_from, ends_to = _resolve_span(carried.get("ends"), today)
             resolved.append(
                 Constraints(
-                    date_from=first,
-                    date_to=last,
+                    date_from=date_from,
+                    date_to=date_to,
                     area=carried.get("area"),
                     free=bool(carried.get("free")),
                     kinds=carried.get("kinds"),
+                    ends_from=ends_from,
+                    ends_to=ends_to,
                 )
             )
         return resolved
+
+
+def _resolve_span(span: tuple[str, str] | None, today: date) -> tuple[date | None, date | None]:
+    """`[first, last]` as days seen from `today`, `last` counted from `first`; (None, None) for
+    no span."""
+    if span is None:
+        return None, None
+    first = resolve_day(span[0], today)
+    return first, resolve_day(span[1], today, on_or_after=first)
 
 
 class Scenarios(BaseModel):
@@ -268,14 +319,15 @@ class Scenarios(BaseModel):
         return [s for s in self.scenarios if s.id in ids]
 
 
-def area_places(scenarios: Sequence[Scenario]) -> list[str]:
-    """Every place the scenarios' area constraints name, once each."""
-    names = [
-        turn.expect.area.near
-        for scenario in scenarios
-        for turn in scenario.turns
-        if turn.expect.area is not None
-    ]
+def scenario_places(scenarios: Sequence[Scenario]) -> list[str]:
+    """Every place the scenarios check against (`area` and `searches_near`), once each."""
+    names = []
+    for scenario in scenarios:
+        for turn in scenario.turns:
+            if turn.expect.area is not None:
+                names.append(turn.expect.area.near)
+            if turn.expect.searches_near is not None:
+                names.append(turn.expect.searches_near)
     return list(dict.fromkeys(names))
 
 
@@ -347,35 +399,75 @@ class Named:
     distance_km: float | None  # the nearest of its items, by the search's measure
 
 
+def title_parts(title: str) -> list[str]:
+    """The pieces of a title at ". ": GRAF writes "Title. Artist", and a reply may give either
+    piece alone, or both the other way round ("Jordi Alcaraz – Misteri d'una forma"). Not split
+    at dashes: "Espiral del temps – Plaça dels Àngels – MACBA" would be named by an address."""
+    return [part for part in title.split(". ") if part]
+
+
 def named_items(reply: str, seen: Mapping[str, SeenItem]) -> list[Named]:
-    """The titles of `seen` the reply names, in the order it first names them."""
+    """The titles of `seen` the reply names, in the order it first names them. A title is named
+    by itself, or by one of its parts (`title_parts`) of two words or more that no other title
+    seen has, whole or within it: "Jordi Alcaraz" names "Misteri d'una forma. Jordi Alcaraz"
+    unless he has a second show among them, and "Aurèlia Muñoz" names neither "Aurèlia Muñoz.
+    Ens" nor "Els Ocells-estels d'Aurèlia Muñoz" when both were seen.
+
+    An item is named once, under its first title, though the reply may name it by either of its
+    titles (GRAF's own and its English one)."""
     items: dict[str, list[SeenItem]] = {}  # title key -> every item seen under it
     shown: dict[str, str] = {}  # title key -> the title as the tool gave it
+    counted_as: dict[str, str] = {}  # title key -> the key it is counted under: its item's first
+    owners: dict[str, set[str]] = {}  # part key -> the keys counted for the titles with that part
     for item in seen.values():
-        for title in item.titles:
-            key = title_key(title)
-            if len(key) >= MIN_TITLE_CHARS:
-                items.setdefault(key, []).append(item)
-                shown.setdefault(key, title)
+        keyed = [(title_key(title), title) for title in item.titles]
+        usable = [(key, title) for key, title in keyed if len(key) >= MIN_TITLE_CHARS]
+        if not usable:
+            continue
+        first = usable[0][0]
+        for key, title in usable:
+            items.setdefault(key, []).append(item)
+            shown.setdefault(key, title)
+            counted_as.setdefault(key, first)
+            for part in title_parts(title):
+                owners.setdefault(title_key(part), set()).add(counted_as[key])
+
+    def in_another_title(part: str, owner: str) -> bool:
+        return any(_spans(part, f" {key} ") for key in items if counted_as[key] != owner)
+
+    # What a reply may write for each title: its whole key, then the parts only it has.
+    names = {key: counted_as[key] for key in items}
+    for part, counted in owners.items():
+        if part in names or len(counted) != 1 or len(part.split()) < 2:
+            continue
+        [owner] = counted
+        if not in_another_title(part, owner):
+            names[part] = owner
 
     text = f" {title_key(reply)} "
-    found = {key: spans for key in items if (spans := _spans(key, text))}
+    found = {name: spans for name in names if (spans := _spans(name, text))}
 
-    def only_inside_longer_titles(key: str) -> bool:
-        longer = [span for other, spans in found.items() if len(other) > len(key) for span in spans]
+    def only_inside_longer_names(name: str) -> bool:
+        longer = [
+            span for other, spans in found.items() if len(other) > len(name) for span in spans
+        ]
         return all(
             any(outer[0] <= start and end <= outer[1] for outer in longer)
-            for start, end in found[key]
+            for start, end in found[name]
         )
 
-    named = sorted(
-        (key for key in found if not only_inside_longer_titles(key)), key=lambda key: found[key][0]
-    )
+    first_named: dict[str, int] = {}  # counted key -> where the reply first names it, by any name
+    for name, spans in found.items():
+        if not only_inside_longer_names(name):
+            key = names[name]
+            first_named[key] = min(first_named.get(key, spans[0][0]), spans[0][0])
+
     result = []
-    for key in named:
-        ids = tuple(dict.fromkeys(item.id for item in items[key]))
-        distances = [item.distance_km for item in items[key] if item.distance_km is not None]
-        result.append(Named(shown[key], ids, min(distances) if distances else None))
+    for counted in sorted(first_named, key=first_named.__getitem__):
+        under = [item for key, its in items.items() if counted_as[key] == counted for item in its]
+        ids = tuple(dict.fromkeys(item.id for item in under))
+        distances = [item.distance_km for item in under if item.distance_km is not None]
+        result.append(Named(shown[counted], ids, min(distances) if distances else None))
     return result
 
 
@@ -397,35 +489,51 @@ def in_distance_order(named: Sequence[Named]) -> bool | None:
     return distances == sorted(distances)
 
 
+def search_origins(uses: Iterable[ToolUse]) -> list[dict[str, Any]]:
+    """The place each successful search measured from (its result's `near`), in order. A search
+    without `near` measured from nowhere and is left out."""
+    origins = []
+    for use in uses:
+        if use.name == "search_events" and not use.is_error:
+            near = use.parsed().get("near")
+            if near is not None:
+                origins.append(near)
+    return origins
+
+
 def check_failures(expect: Expect, uses: Sequence[ToolUse]) -> list[str]:
     """What the turn did that the scenario says it should not have, or did not do that it
-    should."""
+    should. `searches_near` needs the database, so the runner checks it (`near_failures`)."""
     failures = []
-    searched = any(use.name == "search_events" for use in uses)
+    searched = any(use.name == "search_events" and not use.is_error for use in uses)
     if expect.searches is True and not searched:
         failures.append("did not search")
     if expect.searches is False and searched:
-        failures.append("searched again")
+        failures.append("searched, which it should not have")
     if expect.remembers is not None:
-        topics = {
-            use.input.get("topic") for use in uses if use.name == "remember" and not use.is_error
+        remembered = {
+            str(use.input.get("topic"))
+            for use in uses
+            if use.name == "remember" and not use.is_error
         }
-        failures += [
-            f"did not remember {topic}" for topic in expect.remembers if topic not in topics
-        ]
-        if not expect.remembers and topics:
-            failures.append(f"remembered {', '.join(sorted(topics))}, which it should not have")
+        missing = [topic for topic in expect.remembers if topic not in remembered]
+        extra = sorted(remembered - set(expect.remembers))
+        failures += [f"did not remember {topic}" for topic in missing]
+        if extra:
+            failures.append(f"remembered {', '.join(extra)}, which it should not have")
     return failures
 
 
 def checks_made(expect: Expect) -> int:
-    """How many checks `check_failures` makes on a turn with `expect`: one for `searches`, one
-    per topic to remember, and one for "remember nothing"."""
+    """How many checks a turn with `expect` gets: one for `searches`, one for `searches_near`,
+    and for `remembers` one per topic to remember plus one for "nothing else"."""
     made = 0
     if expect.searches is not None:
         made += 1
+    if expect.searches_near is not None:
+        made += 1
     if expect.remembers is not None:
-        made += max(len(expect.remembers), 1)
+        made += len(expect.remembers) + 1
     return made
 
 
@@ -453,7 +561,7 @@ class CallUsage:
 @dataclass(frozen=True)
 class OffConstraint:
     title: str
-    constraint: str  # dates, area, price or kinds
+    constraint: str  # dates, area, price, kinds or ends
 
 
 @dataclass(frozen=True)
@@ -499,6 +607,7 @@ class ScenarioRun:
     judge_error: str = ""
     judge_calls: tuple[CallUsage, ...] = ()
     stopped: str = ""  # what the endpoint said when it refused a call; the run ends here
+    waited_seconds: float = 0.0  # spent waiting for the requests-per-minute quota, judge included
 
     @property
     def judged(self) -> list[tuple[Exchange, Verdict | None]]:
@@ -518,6 +627,16 @@ class RunInfo:
     effort: str
     arm: str
     judge_model: str | None  # None when the judge was not asked
+    embed_model: str | None = None  # semantic ranking's model; None: the filters alone
+    per_minute: int | None = None  # calls a minute to one model it was paced to; None: unpaced
+
+    @property
+    def ranking(self) -> str:
+        return f"semantic ranking {self.embed_model}" if self.embed_model else "filters only"
+
+    @property
+    def pacing(self) -> str:
+        return f"paced to {self.per_minute} calls a minute a model" if self.per_minute else ""
 
 
 def percentile(values: Sequence[float], share: float) -> float:
@@ -567,7 +686,9 @@ def report(info: RunInfo, runs: Sequence[ScenarioRun]) -> list[str]:
         f"arm {info.arm}",
         f"{info.model}",
         f"effort {info.effort}",
+        info.ranking,
         f"judge {info.judge_model}" if info.judge_model else "not judged",
+        info.pacing,
     )
     stopped = [run for run in runs if run.stopped]
     block(
@@ -621,6 +742,14 @@ def report(info: RunInfo, runs: Sequence[ScenarioRun]) -> list[str]:
         f"{_share(len(truncated), len(searches))} of searches",
         f"in {len(cut_runs)} of {len(runs)} scenarios",
     )
+    if info.embed_model:
+        queried = [
+            use
+            for e in exchanges
+            for use in e.uses
+            if use.name == "search_events" and not use.is_error and use.input.get("query")
+        ]
+        block("queries", f"{_share(len(queried), len(searches))} of searches passed a query")
     costs = [e.cost_usd for e in exchanges]
     total = sum(costs, Decimal(0))
     block(
@@ -646,7 +775,11 @@ def report(info: RunInfo, runs: Sequence[ScenarioRun]) -> list[str]:
         f"p50 {percentile(seconds, 0.5):.1f} s",
         f"p95 {percentile(seconds, 0.95):.1f} s",
         f"max {max(seconds):.1f} s an exchange",
+        "(waits for the quota left out)" if info.per_minute else "",
     )
+    waited = sum(run.waited_seconds for run in runs)
+    if waited:
+        block("quota", f"waited {waited:.0f} s in all for the requests-per-minute quota")
     stops = Counter(e.stop_reason for e in exchanges if e.stop_reason != "end_turn")
     if stops:
         block("stops", ", ".join(f"{n} {reason}" for reason, n in stops.items()))
@@ -688,7 +821,8 @@ def transcript(info: RunInfo, runs: Sequence[ScenarioRun]) -> str:
     """Every conversation as Markdown, for the person who judges whether each one is sensible
     (PLAN.md § 8, P3 done-when). Kept outside the repo: it is a run's output, not a label."""
     out = [
-        f"# eval-curation {info.today} · arm {info.arm} · {info.model} · effort {info.effort}",
+        f"# eval-curation {info.today} · arm {info.arm} · {info.model} · effort {info.effort}"
+        f" · {info.ranking}",
         "",
         "For each scenario, read the conversation and mark it sensible or not: would a person "
         "who knows the Barcelona art scene be glad of these answers? The P3 bar is four in five.",
@@ -750,4 +884,6 @@ def progress_line(run: ScenarioRun) -> str:
     cost = sum((e.cost_usd for e in run.exchanges), Decimal(0))
     seconds = sum(e.seconds for e in run.exchanges)
     line = f"{run.scenario.id:<32} {len(run.exchanges)} exchanges   ${cost:.4f}   {seconds:.0f} s"
+    if run.waited_seconds:
+        line += f"   waited {run.waited_seconds:.0f} s for the quota"
     return line + (f"   stopped: {run.stopped}" if run.stopped else "")

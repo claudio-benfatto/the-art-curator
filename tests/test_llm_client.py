@@ -19,6 +19,7 @@ from art_curator.llm.client import (
     PROVIDER_MANTLE,
     PURPOSES,
     MissingUsageError,
+    RequestPacer,
     cached_tail,
     db_recorder,
     is_profile_model,
@@ -533,3 +534,78 @@ def test_db_recorder_writes_the_row(migrated_db):
     )
     # 10 × 5 + 5 × 25 = 175 µ$
     assert rows == [("smoke", 10, 5, Decimal("0.000175"))]
+
+
+# --- pacing --------------------------------------------------------------------------------------
+
+
+class FakeTime:
+    """A clock that only moves when the pacer sleeps, so a test waits for nothing."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+        self.slept: list[float] = []
+
+    def clock(self) -> float:
+        return self.now
+
+    async def sleep(self, seconds: float) -> None:
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def test_a_call_one_over_the_quota_waits_for_the_oldest_to_leave_the_minute():
+    time = FakeTime()
+    pacer = RequestPacer(2, clock=time.clock, sleep=time.sleep)
+
+    async def calls() -> None:
+        await pacer.wait_for_turn(CHAT)  # at 0
+        time.now = 10.0
+        await pacer.wait_for_turn(CHAT)  # at 10: two in the window
+        await pacer.wait_for_turn(CHAT)  # one too many: waits until the first is a window old
+
+    asyncio.run(calls())
+
+    # The first call went out 10 s before, so the third waits out the rest of its window.
+    assert time.slept == [RequestPacer.WINDOW_SECONDS - 10.0]
+    assert time.now == RequestPacer.WINDOW_SECONDS
+    assert pacer.waited_seconds == RequestPacer.WINDOW_SECONDS - 10.0
+
+
+def test_each_model_has_its_own_count():
+    time = FakeTime()
+    pacer = RequestPacer(1, clock=time.clock, sleep=time.sleep)
+
+    async def calls() -> None:
+        await pacer.wait_for_turn(CHAT)
+        await pacer.wait_for_turn(HAIKU)  # another model's quota: no wait
+
+    asyncio.run(calls())
+
+    assert time.slept == [] and pacer.waited_seconds == 0
+
+
+def test_a_pacer_allows_at_least_one_call_a_minute():
+    with pytest.raises(ValueError, match="at least one"):
+        RequestPacer(0)
+
+
+def test_a_paced_client_waits_before_the_call_and_records_every_call():
+    time = FakeTime()
+    stub = StubLlm()
+    stub.client.pacer = RequestPacer(2, clock=time.clock, sleep=time.sleep)
+    for _ in range(3):
+        stub.reply()
+
+    async def three() -> None:
+        for _ in range(3):
+            await stub.client.create_message(
+                purpose="chat", model=CHAT, max_tokens=64, messages=MESSAGES
+            )
+
+    asyncio.run(three())
+
+    assert len(stub.calls) == 3  # waited, never refused
+    assert time.slept == [RequestPacer.WINDOW_SECONDS]
+    # The wait is before the clock starts: no row carries a minute of latency.
+    assert all(row.latency_ms < 1000 * RequestPacer.WINDOW_SECONDS for row in stub.calls)

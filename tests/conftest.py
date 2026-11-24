@@ -62,3 +62,12 @@ def corpus_db(fresh_database: Callable) -> Iterator[URL]:
         command.upgrade(alembic_config(url), "head")
         run_sql(url, *CORPUS)
         yield url
+
+
+@pytest.fixture
+def writable_corpus_db(fresh_database: Callable) -> Iterator[URL]:
+    """`corpus_db`, but the test's own: for a test that writes to it."""
+    with fresh_database() as url:
+        command.upgrade(alembic_config(url), "head")
+        run_sql(url, *CORPUS)
+        yield url

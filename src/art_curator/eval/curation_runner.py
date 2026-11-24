@@ -27,10 +27,9 @@ from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from art_curator.agent import profile
-from art_curator.agent.loop import Conversation, Curator
+from art_curator.agent.loop import Conversation, curator_for
 from art_curator.agent.prompt import conversation_context
 from art_curator.agent.store import ConversationStore
-from art_curator.agent.tools import CuratorTools
 from art_curator.db.models import LlmCall, User
 from art_curator.eval import curation
 from art_curator.eval.curation import CallUsage, Constraints, Named, OffConstraint, ScenarioRun
@@ -61,18 +60,21 @@ async def run_scenario(
     today: date,
     model: str,
     effort: str,
+    embed_model: str | None,
     judge_model: str | None,
 ) -> ScenarioRun:
     """Run `scenario` as a new user whose calendar starts on `today`, check every exchange, and
-    judge the conversation if `judge_model` is given."""
+    judge the conversation if `judge_model` is given. With `embed_model`, the curator's searches
+    may rank by a `query` (semantic ranking); without, it has the filters alone."""
     user_id = await ConversationStore(sessions).user(
         EVAL_CLIENT, f"{scenario.id}-{uuid.uuid4().hex[:8]}"
     )
+    waited_before = _quota_waits(llm)
     try:
-        run = await _converse(llm, sessions, scenario, user_id, today, model, effort)
-        if judge_model is None or run.stopped or not run.exchanges:
-            return run
-        return await _judge(llm, sessions, judge_model, run)
+        run = await _converse(llm, sessions, scenario, user_id, today, model, effort, embed_model)
+        if judge_model is not None and not run.stopped and run.exchanges:
+            run = await _judge(llm, sessions, judge_model, run)
+        return replace(run, waited_seconds=_quota_waits(llm) - waited_before)
     finally:
         async with sessions() as session, session.begin():
             await session.execute(delete(User).where(User.id == user_id))
@@ -86,25 +88,30 @@ async def _converse(
     today: date,
     model: str,
     effort: str,
+    embed_model: str | None,
 ) -> ScenarioRun:
     async with sessions() as session, session.begin():
         for fact in scenario.profile:
             await profile.remember(session, user_id, fact.topic, fact.fact)
         context = conversation_context(today, await profile.snapshot(session, user_id))
     conversation = Conversation(context)
-    curator = Curator(llm, CuratorTools(sessions, user_id), model=model, effort=effort)
+    curator = curator_for(
+        llm, sessions, user_id, model=model, effort=effort, embed_model=embed_model
+    )
 
     exchanges = []
     stopped = ""
     for turn, constraints in zip(scenario.turns, scenario.constraints(today), strict=True):
         before = len(conversation.messages)
         started = time.perf_counter()
+        waited_before = _quota_waits(llm)
         try:
             done = await curator.turn(conversation, turn.user)
         except APIError as exc:
             stopped = f"{type(exc).__name__}: {exc}"
             break
-        seconds = time.perf_counter() - started
+        # What a person would wait: the turn without our own waits for the quota.
+        seconds = time.perf_counter() - started - (_quota_waits(llm) - waited_before)
 
         uses = curation.tool_uses(conversation.messages[before:])
         seen = curation.seen_items(curation.tool_uses(conversation.messages))
@@ -112,6 +119,8 @@ async def _converse(
         async with sessions() as session, session.begin():
             await session.execute(text("SET TRANSACTION READ ONLY"))
             off = await off_constraint(session, named, constraints)
+            failures = curation.check_failures(turn.expect, uses)
+            failures += await near_failures(session, turn.expect, uses)
             calls = await usage(session, done.trace_id)
         exchanges.append(
             curation.Exchange(
@@ -126,13 +135,18 @@ async def _converse(
                 seconds=seconds,
                 named=tuple(named),
                 off=tuple(off),
-                failures=tuple(curation.check_failures(turn.expect, uses)),
+                failures=tuple(failures),
             )
         )
 
     async with sessions() as session:
         remembered = [f"{f.topic}: {f.fact}" for f in await profile.snapshot(session, user_id)]
     return ScenarioRun(scenario, context, tuple(exchanges), tuple(remembered), stopped=stopped)
+
+
+def _quota_waits(llm: LlmClient) -> float:
+    """Seconds the client's pacer has waited so far, in all; 0 with no pacer."""
+    return llm.pacer.waited_seconds if llm.pacer is not None else 0.0
 
 
 async def _judge(
@@ -168,12 +182,56 @@ async def off_constraint(
     if not named:
         return []
     off = []
-    for constraint, arguments in constraints.checks():
-        meets = {row.id for row in (await q.search_events(session, **arguments)).events}
+    for check in constraints.checks():
+        rows = (await q.search_events(session, **check.arguments)).events
+        meets = {row.id for row in rows if check.meets(row.end)}
         off += [
-            OffConstraint(item.title, constraint) for item in named if not meets & set(item.ids)
+            OffConstraint(item.title, check.constraint)
+            for item in named
+            if not meets & set(item.ids)
         ]
     return off
+
+
+# The resolver takes two places this close for one spot, so a search from either is a search
+# from there: "Poblenou" the barri, or a venue in it.
+SAME_SPOT_KM = q.MERGE_RADIUS_KM
+
+_WITHIN = text(
+    "SELECT ST_DWithin("
+    "ST_SetSRID(ST_MakePoint(:lon_a, :lat_a), 4326)::geography, "
+    "ST_SetSRID(ST_MakePoint(:lon_b, :lat_b), 4326)::geography, "
+    ":metres)"
+)
+
+
+async def near_failures(
+    session: AsyncSession, expect: curation.Expect, uses: Sequence[curation.ToolUse]
+) -> list[str]:
+    """The `searches_near` check: whether some successful search of the turn measured from
+    within SAME_SPOT_KM of the place the scenario names. Distances in PostGIS, as everywhere
+    (CLAUDE.md § 8). [] when the turn has no such check, or meets it."""
+    if expect.searches_near is None:
+        return []
+    wanted = (await q.resolve_place(session, expect.searches_near)).place
+    if wanted is None:  # `unresolved_places` refuses the scenarios before any run
+        raise ValueError(f"searches_near {expect.searches_near!r} names no single place")
+    origins = curation.search_origins(uses)
+    for origin in origins:
+        same_spot = await session.scalar(
+            _WITHIN,
+            {
+                "lon_a": wanted.longitude,
+                "lat_a": wanted.latitude,
+                "lon_b": origin["longitude"],
+                "lat_b": origin["latitude"],
+                "metres": SAME_SPOT_KM * 1000,
+            },
+        )
+        if same_spot:
+            return []
+    searched_from = ", ".join(origin["name"] for origin in origins) or "no place"
+    return [f"did not search near {expect.searches_near} (searched near: {searched_from})"]
 
 
 async def usage(session: AsyncSession, trace_id: str | None) -> list[CallUsage]:

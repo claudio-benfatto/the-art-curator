@@ -51,6 +51,14 @@ variable "chat_model_id" {
   default     = "anthropic.claude-opus-4-6-v1"
 }
 
+# quotas.tf. The account default is 5, which one busy conversation exceeds.
+# Keep config.py's REQUESTS_PER_MINUTE at what AWS actually grants.
+variable "chat_requests_per_minute" {
+  description = "Requests a minute to ask AWS for on chat_model_id's global cross-region quota. Above the current limit, an apply files an increase request."
+  type        = number
+  default     = 50
+}
+
 variable "extract_model_id" {
   description = "Bedrock catalog model ID for extraction, invoked via its global. inference profile."
   type        = string

@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal, Self
 
-from pydantic import SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Opus 4.6 takes low/medium/high/max: no xhigh (CLAUDE.md § 5).
@@ -27,10 +27,16 @@ class Settings(BaseSettings):
     # for this account until AWS resolves it (CLAUDE.md, Current state). Must match Terraform's
     # extract_model_id with a `global.` prefix, or the app role's IAM denies it.
     extract_model: str = "global.anthropic.claude-haiku-4-5-20251001-v1:0"
-    embed_model: str | None = None  # chosen by measurement in P3
+    # Semantic ranking (`search_events` takes a `query`) and `cli embed`. Unset: no ranking, and
+    # the curator is sent the tools without `query`. `eval-retrieval` chooses it.
+    embed_model: str | None = None
     # The summary-faithfulness judge (`eval-extraction --judge`). Blank means the chat model,
     # which is already in the app role's IAM and in pricing.yaml; any other ID needs both.
     judge_model: str = ""
+    # Bedrock's requests-per-minute quota for one model, which `eval-curation` paces its calls
+    # to rather than be refused (`llm/client.RequestPacer`). 5 for Opus 4.6 on this account
+    # (2026-11-23); infra/terraform/quotas.tf asks for more. Raise it when AWS grants it.
+    requests_per_minute: int = Field(default=5, ge=1)
 
     # Async driver for the app; Alembic uses the same URL. Default is the Compose `db` service.
     database_url: str = "postgresql+asyncpg://art_curator:art_curator@localhost:5432/art_curator"

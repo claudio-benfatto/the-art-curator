@@ -14,8 +14,10 @@ evidence for whether the loop is needed at all.
 
 `events` is the turn as it happens, for `/chat`: each tool as it starts, the reply's text as it
 streams, then the `Turn`. Text is forwarded from every response, so words the model writes
-before a tool call arrive too, ahead of that tool's `ToolRunning`; `Turn.reply` is the last
-response's text alone. Thinking is not forwarded. `turn` runs the same loop unstreamed and
+before a tool call arrive too, ahead of that tool's `ToolRunning`. `Turn.reply` is the same
+text, every response's, so `cli chat` and the eval read what `/chat` showed: a model that
+answers alongside a tool call and then ends with nothing more has still answered. Thinking is
+not forwarded. `turn` runs the same loop unstreamed and
 returns the `Turn`: what `cli chat` and the eval use, and the only path open to a chat model
 without the streaming grant.
 """
@@ -25,9 +27,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from anthropic.types import Message
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from art_curator.agent.prompt import SYSTEM_PROMPT
-from art_curator.agent.tools import TOOL_DEFINITIONS, ToolResult
+from art_curator.agent.tools import TOOL_DEFINITIONS, CuratorTools, ToolResult, query_embedder
 from art_curator.llm.client import LlmClient, cached_tail, static_prefix
 from art_curator.obs import telemetry
 
@@ -69,7 +72,9 @@ class ToolCall:
 
 @dataclass(frozen=True)
 class Turn:
-    reply: str  # the text of the last response; empty when it had none (a refusal, say)
+    # The text of every response of the turn, in order: what `/chat` streamed. Empty when none
+    # had any (a refusal, say).
+    reply: str
     iteration_count: int  # tool rounds run, at most MAX_TOOL_ROUNDS
     stop_reason: str | None  # of the last response
     trace_id: str | None  # shared by every llm_calls row of the turn
@@ -101,11 +106,22 @@ TurnEvent = ToolRunning | TextDelta | TurnDone
 
 
 class Curator:
-    def __init__(self, llm: LlmClient, run_tool: RunTool, *, model: str, effort: str) -> None:
+    def __init__(
+        self,
+        llm: LlmClient,
+        run_tool: RunTool,
+        *,
+        model: str,
+        effort: str,
+        tool_definitions: list[dict[str, Any]] = TOOL_DEFINITIONS,
+    ) -> None:
+        """`tool_definitions` are what the model is sent; they must match what `run_tool` runs
+        (`CuratorTools.definitions`)."""
         self._llm = llm
         self._run_tool = run_tool
         self._model = model
         self._effort = effort
+        self._tool_definitions = tool_definitions
 
     async def turn(self, conversation: Conversation, text: str) -> Turn:
         """Answer `text`, calling tools as the model asks, and append the exchange to
@@ -123,6 +139,7 @@ class Curator:
         appended just before `TurnDone`: a turn that fails, or that the reader stops reading,
         leaves the conversation as it was, and its model calls are recorded all the same."""
         messages = conversation.with_user_text(text)
+        texts: list[str] = []  # every response's text blocks, in order: the reply
         tool_calls: list[ToolCall] = []
         rounds = 0
         with self._llm.tracer.start_as_current_span("chat.turn") as span:
@@ -146,6 +163,7 @@ class Curator:
                         purpose="chat", model=self._model, **params
                     )
                 messages.append({"role": "assistant", "content": _replayable(response)})
+                texts += [block.text for block in response.content if block.type == "text"]
                 calls = [block for block in response.content if block.type == "tool_use"]
                 if not calls:
                     break
@@ -173,13 +191,12 @@ class Curator:
                 }
             )
         conversation.messages = messages
-        reply = "\n\n".join(block.text for block in response.content if block.type == "text")
-        yield TurnDone(Turn(reply, rounds, response.stop_reason, trace_id, tool_calls))
+        yield TurnDone(Turn("\n\n".join(texts), rounds, response.stop_reason, trace_id, tool_calls))
 
     def _params(self, messages: list[dict[str, Any]], *, final: bool) -> dict[str, Any]:
         params: dict[str, Any] = {
             "system": static_prefix(SYSTEM_PROMPT),
-            "tools": TOOL_DEFINITIONS,
+            "tools": self._tool_definitions,
             "thinking": {"type": "adaptive"},
             "output_config": {"effort": self._effort},
             "max_tokens": MAX_TOKENS,
@@ -194,6 +211,21 @@ class Curator:
             result = await self._run_tool(call.name, call.input)
             span.set_attribute("art_curator.tool.is_error", result.is_error)
             return result
+
+
+def curator_for(
+    llm: LlmClient,
+    sessions: async_sessionmaker[AsyncSession],
+    user_id: int,
+    *,
+    model: str,
+    effort: str,
+    embed_model: str | None,
+) -> Curator:
+    """The curator over its own tools, bound to one user: what `cli chat`, `/chat` and the eval
+    run. With `embed_model`, `search_events` takes a `query` ranked by that model's vectors."""
+    tools = CuratorTools(sessions, user_id, query_embedder(llm, embed_model))
+    return Curator(llm, tools, model=model, effort=effort, tool_definitions=tools.definitions)
 
 
 def _replayable(response: Message) -> list[dict[str, Any]]:

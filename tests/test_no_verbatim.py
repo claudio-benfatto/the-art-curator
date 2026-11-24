@@ -38,9 +38,14 @@ is fetched through every tool to check that neither marker comes back.
 Agent half (P3): the curator's tools put the same query results into a chat, which goes on spans
 (and to Langfuse, when it is on) and, since PR 29, into `messages`. The same page is fetched
 through each of them.
+
+Embedding half (P3, PR 35): a vector is a persistent store of the text it was made from, so only
+our own text may go in: the summary, themes and media, never a title, a page or GRAF's prose. The
+retrieval labels, like extraction's, are facts.
 """
 
 import asyncio
+import inspect
 import json
 import re
 from datetime import date
@@ -52,7 +57,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from art_curator.agent.tools import TOOL_DEFINITIONS, CuratorTools, ToolResult
 from art_curator.db.models import Base
+from art_curator.eval import retrieval
 from art_curator.eval.extraction import GoldItem, GoldPage, GoldSet, load_gold
+from art_curator.ingest import embedding
 from art_curator.ingest.graf import DROP_KEYS, DROP_PREFIXES, banned_keys, scrub
 from art_curator.llm import extract, judge
 from art_curator.llm.extract import MAX_SHARED_WORDS, longest_shared_run
@@ -138,8 +145,10 @@ def test_extraction_tables_hold_no_sentence_but_our_summary(table):
         "last_seen_at",
     }  # fmt: skip
     event_only = {"kind", "start_time", "exhibition_id"} if table == "art_events" else set()
+    # A vector of our own text (`test_only_our_own_text_is_embedded`), and its markers.
+    embedded = {"embedding", "embed_model", "embedded_hash"}
     columns = set(Base.metadata.tables[table].columns.keys())
-    assert columns == shared | event_only | SHORT_TEXT | OWN_PROSE[table]
+    assert columns == shared | event_only | embedded | SHORT_TEXT | OWN_PROSE[table]
 
 
 def test_models_carry_no_third_party_prose():
@@ -631,3 +640,57 @@ def test_no_agent_tool_returns_page_text(corpus_db):
         assert LINK_MARKER not in result.content, f"{name} returned a page's link text"
     # Not vacuous: the listing's items came back, by their facts and our summaries.
     assert '"source_url":"' + LISTING_URL in result.content
+
+
+# --- Embeddings: only our own text becomes a vector ----------------------------------------------
+
+
+def test_an_embedding_is_made_from_our_summary_themes_and_media_alone():
+    """Adding a parameter here is a copyright decision (CLAUDE.md § 1): whatever it carries is
+    kept, as a vector, for as long as the item is."""
+    assert list(inspect.signature(embedding.document).parameters) == [
+        "summary_en",
+        "themes",
+        "media",
+    ]
+
+
+def test_only_our_own_text_is_embedded(corpus_db):
+    async def main() -> list[embedding.Item]:
+        engine = create_async_engine(corpus_db)
+        try:
+            async with async_sessionmaker(engine)() as session:
+                return await embedding.load_items(session)
+        finally:
+            await engine.dispose()
+
+    [item] = asyncio.run(main())  # the one item in the corpus with a summary
+    assert item.document == "Drawings on paper, made for this show."
+    assert PAGE_MARKER not in item.document and LINK_MARKER not in item.document
+    assert item.title not in item.document
+
+
+RETRIEVAL_FIELDS = {
+    retrieval.RetrievalGold: {"queries"},
+    retrieval.Query: {"query", "confirmed", "relevant"},
+    retrieval.Label: {"venue", "title"},
+}
+
+
+@pytest.mark.parametrize("model", RETRIEVAL_FIELDS, ids=lambda model: model.__name__)
+def test_retrieval_labels_are_facts_only(model):
+    assert set(model.model_fields) == RETRIEVAL_FIELDS[model]
+    assert model.model_config.get("extra") == "forbid"
+
+
+def test_committed_retrieval_labels_parse_under_that_schema():
+    retrieval.load_gold()
+
+
+def test_a_summary_planted_in_a_retrieval_label_is_refused():
+    planted = (
+        "queries:\n  - query: abstract painting\n    relevant:\n"
+        "      - {venue: Galeria Exemple, title: Prova U, summary_en: Drawings on paper.}\n"
+    )
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        retrieval.load_gold(planted)

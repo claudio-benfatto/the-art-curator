@@ -33,10 +33,9 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from art_curator.agent.loop import Curator, TextDelta, ToolRunning, TurnDone
+from art_curator.agent.loop import TextDelta, ToolRunning, TurnDone, curator_for
 from art_curator.agent.prompt import local_today
 from art_curator.agent.store import ConversationStore
-from art_curator.agent.tools import CuratorTools
 from art_curator.config import Settings, get_settings
 from art_curator.db.session import get_engine, get_sessionmaker
 from art_curator.llm.client import LlmClient, get_llm_client
@@ -132,11 +131,13 @@ async def chat(
     try:
         user_id = await store.user(request.client, request.user)
         stored = await store.current(user_id, request.today or local_today())
-        curator = Curator(
+        curator = curator_for(
             llm,
-            CuratorTools(sessions, user_id),
+            sessions,
+            user_id,
             model=settings.chat_model,
             effort=settings.chat_effort,
+            embed_model=settings.embed_model,
         )
         async for event in curator.events(stored.conversation, request.text):
             match event:
